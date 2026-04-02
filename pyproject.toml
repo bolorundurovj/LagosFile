@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "lagosfile"
+version = "0.1.0"
+description = "LagosFile desktop application for tax filing"
+authors = ["Your Name <your.email@example.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "lagosfile"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+flet = "^0.83.1"
+tortoise-orm = "^1.1.7"
+cryptography = "^46.0.6"
+httpx = "^0.28.1"
+reportlab = "^4.4.10"
+hypothesis = "^6.151.10"
+pytest = "^9.0.2"
+pytest-asyncio = "^1.3.0"
+pydantic = "^2.12.5"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+pytest-asyncio = "^1.3.0"
+
+[tool.pytest.ini_options]
+testpaths = ["lagosfile/tests"]
+asyncio_mode = "auto"
+addopts = "-v"
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.hypothesis]
+deadline = 500  # Increase deadline for slower tests
