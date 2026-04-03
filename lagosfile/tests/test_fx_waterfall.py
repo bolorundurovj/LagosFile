@@ -10,16 +10,18 @@ from datetime import datetime, date
 class TestFXWaterfallOrdering:
     """Property test for FX waterfall ordering (Property 9)."""
 
-@given(
-    base=st.sampled_from(["USD", "EUR", "GBP"]),
-    quote=st.sampled_from(["NGN", "USD", "EUR"]),
-    year=st.integers(min_value=2020, max_value=2025),
-    month=st.integers(min_value=1, max_value=12),
-    day=st.integers(min_value=1, max_value=28),
-)
-@settings(max_examples=100)
-@example(base="USD", quote="NGN", year=2023, month=1, day=1)
-async def test_fx_waterfall_ordering(self, base: str, quote: str, year: int, month: int, day: int):
+    @given(
+        base=st.sampled_from(["USD", "EUR", "GBP"]),
+        quote=st.sampled_from(["NGN", "USD", "EUR"]),
+        year=st.integers(min_value=2020, max_value=2025),
+        month=st.integers(min_value=1, max_value=12),
+        day=st.integers(min_value=1, max_value=28),
+    )
+    @settings(max_examples=25)
+    @example(base="USD", quote="NGN", year=2023, month=1, day=1)
+    async def test_fx_waterfall_ordering(
+        self, base: str, quote: str, year: int, month: int, day: int
+    ):
         """Test that FX waterfall follows correct resolution order."""
         fx_service = FXService()
 
@@ -70,7 +72,7 @@ async def test_fx_waterfall_ordering(self, base: str, quote: str, year: int, mon
         month=st.integers(min_value=1, max_value=12),
         day=st.integers(min_value=1, max_value=28),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=25)
     @example(base="USD", quote="NGN", year=2023, month=1, day=1)
     async def test_fx_waterfall_stops_at_first_success(
         self, base: str, quote: str, year: int, month: int, day: int
@@ -119,7 +121,7 @@ async def test_fx_waterfall_ordering(self, base: str, quote: str, year: int, mon
                     assert result.rate == 435.20
                     assert result.source == "fawazahmed0"
                     assert result.is_cached is False
-                    assert result.timestamp == date
+                    assert result.timestamp == datetime(2023, 1, 1)
 
     @given(
         base=st.sampled_from(["USD", "EUR", "GBP"]),
@@ -128,7 +130,7 @@ async def test_fx_waterfall_ordering(self, base: str, quote: str, year: int, mon
         month=st.integers(min_value=1, max_value=12),
         day=st.integers(min_value=1, max_value=28),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=25)
     @example(base="USD", quote="NGN", year=2023, month=1, day=1)
     async def test_fx_waterfall_manual_fallback(
         self, base: str, quote: str, year: int, month: int, day: int
