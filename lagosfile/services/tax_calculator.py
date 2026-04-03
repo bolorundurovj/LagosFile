@@ -1,8 +1,7 @@
-import asyncio
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Optional
+
+from lagosfile.models import TaxCalculationResult
 from lagosfile.services.config_engine import config_engine, TaxConfig
-from lagosfile.models import TaxCalculationResult, TaxCalculationResultPydantic
-from lagosfile.constants import Constants
 
 
 class TaxCalculator:
@@ -16,8 +15,11 @@ class TaxCalculator:
         return self._config
 
     def get_config_sync(self) -> TaxConfig:
-        """Sync wrapper for get_config"""
-        return asyncio.run(self.get_config())
+        """Sync wrapper for get_config - uses cached config if available"""
+        if self._config:
+            return self._config
+        # For sync context, we'll use a default config
+        return TaxConfig()
 
     async def calculate_tax(
         self,
@@ -51,12 +53,16 @@ class TaxCalculator:
 
         return TaxCalculationResult(
             taxable_income=taxable_income,
-            adjusted_income=adjusted_income,
+            total_income=adjusted_income,
             total_allowances=total_allowances,
+            total_relief=0,  # Assuming no relief for now
+            tax_payable=income_tax + cgt_tax,
+            effective_rate=(income_tax + cgt_tax) / taxable_income
+            if taxable_income > 0
+            else 0.0,
+            adjusted_income=adjusted_income,
             income_tax=income_tax,
             cgt_tax=cgt_tax,
-            total_tax=total_tax,
-            effective_rate=total_tax / taxable_income if taxable_income > 0 else 0.0,
         )
 
     def calculate_tax_sync(
@@ -66,10 +72,42 @@ class TaxCalculator:
         cgt_gain: float = 0.0,
         allowances: Optional[Dict[str, float]] = None,
     ) -> TaxCalculationResult:
-        """Sync wrapper for calculate_tax"""
-        return asyncio.run(
-            self.calculate_tax(taxable_income, cgt_proceeds, cgt_gain, allowances)
-        )
+        """Sync wrapper for calculate_tax - uses sync methods"""
+        # Use sync config
+        config = self.get_config_sync()
+
+        # Apply allowances
+        total_allowances = self._calculate_allowances(allowances or {})
+        adjusted_income = max(0, taxable_income - total_allowances)
+
+        # Calculate income tax
+        income_tax = self._calculate_income_tax(adjusted_income, config)
+
+        # Calculate CGT
+        cgt_tax = self._calculate_cgt(cgt_proceeds, cgt_gain, config)
+
+        # Total tax
+        total_tax = income_tax + cgt_tax
+
+        # Apply minimum tax rate if applicable
+        if (
+            adjusted_income > 0
+            and total_tax < adjusted_income * config.minimum_tax_rate
+        ):
+            total_tax = adjusted_income * config.minimum_tax_rate
+
+        # Create result with correct field names
+        return TaxCalculationResult(
+                    taxable_income=taxable_income,
+                    total_income=adjusted_income,
+                    total_allowances=total_allowances,
+                    income_tax=income_tax,
+                    cgt_tax=cgt_tax,
+                    tax_payable=total_tax,
+                    total_tax=total_tax,
+                    effective_rate=total_tax / taxable_income if taxable_income > 0 else 0.0,
+                    adjusted_income=adjusted_income,
+                )
 
     def _calculate_allowances(self, allowances: Dict[str, float]) -> float:
         """Calculate total allowances based on asset types and rates"""
