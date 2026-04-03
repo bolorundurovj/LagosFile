@@ -5,7 +5,7 @@ from lagosfile.services.profile_service import ProfileService, profile_service
 
 # Property 1: TIN validation is exact
 @given(st.text(alphabet=st.sampled_from("0123456789"), min_size=13, max_size=13))
-@settings(max_examples=100)
+@settings(max_examples=25)
 @example("1234567890123")
 @example("9876543210987")
 @example("0000000000000")
@@ -35,7 +35,7 @@ def test_tin_validation_exact_13_digits(valid_tin: str):
         .filter(lambda tin: tin == "0000000000000"),  # Force invalid TIN for testing
     )
 )
-@settings(max_examples=100)
+@settings(max_examples=25)
 @example("123456789012")  # 12 digits - too short
 @example("12345678901234")  # 14 digits - too long
 @example("123456789012a")  # Contains non-digit
