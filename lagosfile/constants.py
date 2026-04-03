@@ -1,35 +1,36 @@
-import os
 from pathlib import Path
 
 
 class Constants:
-    # Base directory for all LagosFile data
+    # Base directory for all LagosFile data: ~/LagosFile/
     BASE_DIR = Path.home() / "LagosFile"
 
-    # Document root directory
+    # Document root directory: ~/LagosFile/documents/
     DOCUMENT_ROOT = BASE_DIR / "documents"
 
-    # Error log file path
+    # Error log file path: ~/LagosFile/errors.log
     ERROR_LOG = BASE_DIR / "errors.log"
 
-    # Salt file path for encryption
-    SALT_FILE = BASE_DIR / "salt.bin"
+    # Salt file path for PIN-keyed encryption: ~/LagosFile/.salt
+    SALT_FILE = BASE_DIR / ".salt"
 
-    # Encrypted database file path
+    # Encrypted SQLite database path: ~/LagosFile/lagosfile.db.enc
     ENCRYPTED_DB = BASE_DIR / "lagosfile.db.enc"
 
-    # Temporary file path for atomic writes
+    # Temporary file path for atomic DB writes
     TEMP_DB = BASE_DIR / "lagosfile.db.enc.tmp"
 
-    # Ensure base directory exists
     @classmethod
-    def ensure_base_dir(cls):
+    def ensure_dirs(cls) -> None:
+        """Create required directories if they do not exist."""
         cls.BASE_DIR.mkdir(parents=True, exist_ok=True)
         cls.DOCUMENT_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # Get document storage path for a specific TIN and YOA
     @classmethod
-    def get_document_path(
-        cls, tin: str, yoa: int, entry_id: str, entry_type: str
-    ) -> Path:
-        return cls.DOCUMENT_ROOT / tin / str(yoa) / entry_type / entry_id
+    def get_document_path(cls, tin: str, yoa: int, entry_id: str) -> Path:
+        """Return the storage path for documents attached to an income/allowance/relief entry.
+
+        Path format: ~/LagosFile/documents/<TIN>/<YOA>/<entry_id>/
+        Requirement 4.8, 14.5
+        """
+        return cls.DOCUMENT_ROOT / tin / str(yoa) / entry_id
