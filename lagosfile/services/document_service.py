@@ -1,78 +1,97 @@
-import os
+"""
+Document service for LagosFile.
+
+Handles file size validation and attaching supporting documents to filing entries.
+
+Requirements: 4.6, 4.7, 4.8, 14.5, 14.6
+"""
+
 import shutil
-from typing import Optional
 from pathlib import Path
+
+from lagosfile.constants import Constants
 from lagosfile.models import Document
-from lagosfile.services.base_service import BaseService
+
+
+# 100MB in bytes — enforced before any disk write (Requirement 14.6)
+MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
 
 
 class FileTooLargeError(Exception):
-    """Exception raised when file size exceeds limit."""
+    """Raised when an attached file exceeds the 100MB per-file limit.
 
-    pass
+    Requirement 4.7: display "File exceeds the 100MB limit. Please attach a smaller file."
+    """
 
 
-class DocumentService(BaseService):
-    """Document service handling file validation and attachment."""
+class DocumentService:
+    """Service for validating and attaching supporting documents to filing entries."""
 
-    MAX_FILE_SIZE_MB = 100  # 100MB limit
+    def validate_size(self, file_path: str) -> None:
+        """Check that *file_path* does not exceed 100MB.
 
-    async def validate_size(self, file_path: str) -> None:
-        """Validate file size is within limit."""
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        if file_size_mb > self.MAX_FILE_SIZE_MB:
+        Args:
+            file_path: Absolute or relative path to the file to check.
+
+        Raises:
+            FileTooLargeError: If the file size exceeds MAX_FILE_SIZE_BYTES.
+        """
+        size = Path(file_path).stat().st_size
+        if size > MAX_FILE_SIZE_BYTES:
             raise FileTooLargeError(
-                f"File size {file_size_mb:.2f}MB exceeds {self.MAX_FILE_SIZE_MB}MB limit"
+                "File exceeds the 100MB limit. Please attach a smaller file."
             )
 
-    async def attach(self, entry_id: int, entry_type: str, file_path: str) -> Document:
-        """Attach a document to an entry, copying it to the documents directory."""
-        # Validate file size first
-        await self.validate_size(file_path)
+    async def attach(
+        self,
+        entry_id: str,
+        entry_type: str,
+        file_path: str,
+        tin: str,
+        yoa: int,
+    ) -> Document:
+        """Validate, copy, and record a supporting document for a filing entry.
 
-        # Get the document root directory
-        document_root = Path.home() / "LagosFile" / "documents"
-        document_root.mkdir(parents=True, exist_ok=True)
+        Steps:
+        1. Validate file size (raises FileTooLargeError if > 100MB).
+        2. Copy the file to ``~/LagosFile/documents/<TIN>/<YOA>/<entry_id>/``.
+        3. Save a ``Document`` ORM record and return it.
 
-        # Create the target directory structure
-        # Note: We need taxpayer ID and YOA, but since we don't have that here,
-        # we'll use a simplified structure for now
-        entry_dir = document_root / str(entry_id)
-        entry_dir.mkdir(parents=True, exist_ok=True)
+        Args:
+            entry_id:   UUID string of the parent entry (income, allowance, or relief).
+            entry_type: One of ``"income_entry"``, ``"capital_allowance"``, ``"relief_entry"``.
+            file_path:  Source path of the file to attach.
+            tin:        Taxpayer Identification Number (used to build the storage path).
+            yoa:        Year of Assessment (used to build the storage path).
 
-        # Generate target file path
-        file_name = Path(file_path).name
-        target_path = entry_dir / file_name
+        Returns:
+            The saved ``Document`` ORM instance.
 
-        # Copy the file
-        shutil.copy2(file_path, target_path)
+        Raises:
+            FileTooLargeError: If the file exceeds 100MB.
+        """
+        # Step 1 — size check before any disk write (Requirement 14.6)
+        self.validate_size(file_path)
 
-        # Create and save document record
-        document = Document(
-            filing_id=entry_id,  # Assuming entry_id is filing_id for now
-            file_path=str(target_path),
-            document_type=entry_type,
-            uploaded_at=datetime.now(),
+        source = Path(file_path)
+        file_name = source.name
+        file_type = source.suffix.lstrip(".").lower()
+        file_size_bytes = source.stat().st_size
+
+        # Step 2 — copy to canonical path (Requirements 4.8, 14.5)
+        dest_dir: Path = Constants.get_document_path(tin, yoa, entry_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / file_name
+        shutil.copy2(str(source), str(dest_path))
+
+        # Step 3 — persist ORM record
+        document = await Document.create(
+            parent_entry_id=entry_id,
+            parent_entry_type=entry_type,
+            file_path=str(dest_path),
+            file_name=file_name,
+            file_type=file_type,
+            file_size_bytes=file_size_bytes,
         )
-        await document.save()
 
         return document
-
-    async def get_document_path(self, document_id: int) -> Optional[str]:
-        """Get the file path for a document."""
-        document = await Document.get_or_none(id=document_id)
-        if document:
-            return document.file_path
-        return None
-
-    async def delete_document(self, document_id: int) -> bool:
-        """Delete a document and its file."""
-        document = await Document.get_or_none(id=document_id)
-        if document and document.file_path:
-            try:
-                os.remove(document.file_path)
-                await document.delete()
-                return True
-            except Exception:
-                return False
-        return False
