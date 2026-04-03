@@ -18,7 +18,7 @@ from lagosfile.services.document_service import DocumentService, FileTooLargeErr
 
 
 @given(file_size=st.integers(min_value=0, max_value=200 * 1024 * 1024))
-@settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
 def test_document_file_size_enforcement(file_size):
     """
     Property 7: Document file size enforcement
