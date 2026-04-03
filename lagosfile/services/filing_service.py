@@ -4,7 +4,7 @@ Filing Service — draft lifecycle management.
 Handles create_draft, save_step, confirm, duplicate, amend,
 list_filings, and get_filing_detail operations.
 
-Requirements: 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.8
+Requirements: 3.1, 3.4, 3.5, 4.2, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.8
 """
 
 from datetime import datetime
@@ -17,6 +17,22 @@ from lagosfile.models import (
     ReliefEntry,
 )
 from lagosfile.services.config_engine import ConfigEngine
+
+
+def calculate_bik_taxable_value(cost: float) -> float:
+    """Calculate the taxable value of a benefit-in-kind.
+
+    Per NTA 2025, the taxable value of a benefit-in-kind is 5% of its cost.
+
+    Args:
+        cost: The cost of the benefit-in-kind in Naira.
+
+    Returns:
+        The taxable value (5% of cost).
+
+    Requirements: 4.2
+    """
+    return cost * 0.05
 
 
 class FilingService:
