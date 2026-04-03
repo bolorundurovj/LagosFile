@@ -1,203 +1,146 @@
-import hypothesis.strategies as st
-from hypothesis import given, settings, example
+"""
+Property 11: FX rate caching on successful fetch
+
+# Feature: lagos-file, Property 11: FX rate caching on successful fetch
+
+Validates: Requirements 5.9, 16.3
+
+After a successful API fetch, FXCache must contain a record for that
+currency pair, date, and source immediately after the fetch.
+"""
+
 import pytest
+from datetime import date
 from unittest.mock import AsyncMock, patch
-from lagosfile.services.fx_service import FXService, FXResult
-from datetime import datetime
-from lagosfile.services.base_service import BaseAsyncService
-import asyncio
+
+from hypothesis import given, settings, HealthCheck
+from hypothesis import strategies as st
+from tortoise import Tortoise
+
+from lagosfile.models import FXCache
+from lagosfile.services.fx_service import FXResult, FXService
 
 
-class TestFXRateCaching:
-    """Property test for FX rate caching on successful fetch (Property 11)."""
+# ---------------------------------------------------------------------------
+# DB fixture — fresh in-memory DB per test
+# ---------------------------------------------------------------------------
 
-    @classmethod
-    async def setUpClass(cls):
-        """Initialize database for all tests in this class."""
-        cls.fx_service = FXService()
-        await cls.fx_service.initialize()
-
-    @classmethod
-    async def tearDownClass(cls):
-        """Close database connection."""
-        await Tortoise.close_connections()
-
-    @given(
-        base=st.sampled_from(["USD", "EUR", "GBP"]),
-        quote=st.sampled_from(["NGN", "USD", "EUR"]),
-        year=st.integers(min_value=2020, max_value=2025),
-        month=st.integers(min_value=1, max_value=12),
-        day=st.integers(min_value=1, max_value=28),
-        rate=st.floats(min_value=1.0, max_value=1000.0),
+@pytest.fixture(autouse=True)
+async def tortoise_db():
+    """Fresh in-memory DB per test."""
+    await Tortoise.init(
+        db_url="sqlite://:memory:",
+        modules={"models": ["lagosfile.models"]},
     )
-    @settings(max_examples=25)
-    @example(base="USD", quote="NGN", year=2023, month=1, day=1, rate=435.20)
-    async def test_fx_rate_caching_on_successful_fetch(
-        self, base: str, quote: str, year: int, month: int, day: int, rate: float
-    ):
-        """Test that successful API fetches are cached."""
-        fx_service = FXService()
+    await Tortoise.generate_schemas()
+    yield
+    await Tortoise.close_connections()
 
-        # Mock the first API source to succeed
-        with patch.object(
-            fx_service, "_try_fawazahmed0", new_callable=AsyncMock
-        ) as mock_fawazahmed0:
-            with patch.object(
-                fx_service, "_try_exchangerate_api", new_callable=AsyncMock
-            ) as mock_exchangerate:
-                with patch.object(
-                    fx_service, "_try_cached_rate", new_callable=AsyncMock
-                ) as mock_cached:
-                    # Configure mocks - first succeeds, others not called
-                    mock_fawazahmed0.return_value = FXResult(
-                        rate=rate,
-                        source="fawazahmed0",
-                        is_cached=False,
-                        timestamp=datetime(2023, 1, 1),
-                    )
-                    mock_exchangerate.return_value = FXResult(
-                        rate=None, source="exchangerate-api", is_cached=False
-                    )
-                    mock_cached.return_value = FXResult(
-                        rate=None, source="cache", is_cached=False
-                    )
 
-                    # Call the service
-                    result = await fx_service.resolve_rate(
-                        base, quote, f"{year:04d}-{month:02d}-{day:02d}"
-                    )
+# ---------------------------------------------------------------------------
+# Strategies
+# ---------------------------------------------------------------------------
 
-                    # Verify the first call succeeded
-                    assert result.rate == rate
-                    assert result.source == "fawazahmed0"
-                    assert result.is_cached is False
+currencies = st.sampled_from(["USD", "EUR", "GBP", "JPY"])
+target_dates = st.dates(min_value=date(2020, 1, 1), max_value=date(2025, 12, 31))
+rates = st.floats(min_value=1.0, max_value=2000.0, allow_nan=False, allow_infinity=False)
 
-                    # Verify caching was called
-                    mock_fawazahmed0.assert_awaited_once()
-                    mock_exchangerate.assert_not_awaited()
-                    mock_cached.assert_not_awaited()
 
-    @given(
-        base=st.sampled_from(["USD", "EUR", "GBP"]),
-        quote=st.sampled_from(["NGN", "USD", "EUR"]),
-        year=st.integers(min_value=2020, max_value=2025),
-        month=st.integers(min_value=1, max_value=12),
-        day=st.integers(min_value=1, max_value=28),
-        rate=st.floats(min_value=1.0, max_value=1000.0),
+# ---------------------------------------------------------------------------
+# Property 11: After a successful fawazahmed0 fetch, FXCache has a record
+# ---------------------------------------------------------------------------
+
+@given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
+@settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
+async def test_caching_after_fawazahmed0_success(tortoise_db, base, quote, target_date, rate):
+    """
+    **Validates: Requirements 5.9, 16.3**
+
+    After a successful fawazahmed0 fetch, FXCache must contain a record
+    for that currency pair, date, and source.
+    """
+    svc = FXService()
+
+    # Mock _try_fawazahmed0 to return a known rate without hitting the network
+    success_result = FXResult(
+        rate=rate,
+        source="fawazahmed0",
+        rate_date=target_date,
+        is_cached=False,
+        cache_date=None,
     )
-    @settings(max_examples=25)
-    @example(base="USD", quote="NGN", year=2023, month=1, day=1, rate=435.20)
-    async def test_fx_cache_prevents_repeated_api_calls(
-        self, base: str, quote: str, year: int, month: int, day: int, rate: float
-    ):
-        """Test that cached rates are used instead of repeated API calls."""
-        fx_service = FXService()
 
-        # First call - should succeed and cache
-        with patch.object(
-            fx_service, "resolve_rate", new_callable=AsyncMock
-        ) as mock_resolve:
-            mock_resolve.return_value = FXResult(
-                rate=rate,
-                source="fawazahmed0",
-                is_cached=False,
-                timestamp=datetime(2023, 1, 1),
-            )
+    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
+         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock), \
+         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock):
 
-            result1 = await fx_service.resolve_rate(
-                base, quote, f"{year:04d}-{month:02d}-{day:02d}"
-            )
-            assert result1.rate == rate
-            assert result1.source == "fawazahmed0"
+        mock_f.return_value = success_result
 
-            # Second call - should use cache (mock the cache to return the rate)
-            mock_resolve.return_value = FXResult(
-                rate=rate,
-                source="cache",
-                is_cached=True,
-                timestamp=datetime(2023, 1, 1),
-            )
+        result = await svc.resolve_rate(base, quote, target_date)
 
-            result2 = await fx_service.resolve_rate(
-                base, quote, f"{year:04d}-{month:02d}-{day:02d}"
-            )
+    # The result must come from fawazahmed0
+    assert result.source == "fawazahmed0"
+    assert result.rate == rate
 
-            # Verify second call used cache
-            mock_resolve.assert_awaited()
+    # FXCache must now contain a record for this pair, date, and source
+    cached = await FXCache.filter(
+        base_currency=base,
+        quote_currency=quote,
+        rate_date=target_date,
+        source="fawazahmed0",
+    ).first()
 
-            assert result2.rate == rate
-            assert result2.source == "cache"
-            assert result2.is_cached is True
-            assert result2.timestamp == datetime(2023, 1, 1)
-
-    @given(
-        base=st.sampled_from(["USD", "EUR", "GBP"]),
-        quote=st.sampled_from(["NGN", "USD", "EUR"]),
-        year=st.integers(min_value=2020, max_value=2025),
-        month=st.integers(min_value=1, max_value=12),
-        day=st.integers(min_value=1, max_value=28),
-        rate1=st.floats(min_value=1.0, max_value=1000.0),
-        rate2=st.floats(min_value=1.0, max_value=1000.0),
+    assert cached is not None, (
+        f"FXCache must contain a record for {base}/{quote} on {target_date} "
+        f"from fawazahmed0 after a successful fetch"
     )
-    @settings(max_examples=25)
-    @example(
-        base="USD", quote="NGN", year=2023, month=1, day=1, rate1=435.20, rate2=440.50
+    assert cached.rate == rate
+
+
+# ---------------------------------------------------------------------------
+# Property 11 (variant): After a successful exchangerate-api fetch, FXCache has a record
+# ---------------------------------------------------------------------------
+
+@given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
+@settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
+async def test_caching_after_exchangerate_api_success(tortoise_db, base, quote, target_date, rate):
+    """
+    **Validates: Requirements 5.9, 16.3**
+
+    After a successful exchangerate-api fetch (fawazahmed0 failed), FXCache
+    must contain a record for that currency pair, today's date, and source.
+    """
+    svc = FXService()
+    today = date.today()
+
+    success_result = FXResult(
+        rate=rate,
+        source="exchangerate-api",
+        rate_date=today,
+        is_cached=False,
+        cache_date=None,
     )
-    async def test_fx_cache_overwrites_on_new_success(
-        self,
-        base: str,
-        quote: str,
-        year: int,
-        month: int,
-        day: int,
-        rate1: float,
-        rate2: float,
-    ):
-        """Test that new successful fetches overwrite existing cache."""
-        fx_service = FXService()
 
-        # First successful fetch (caches rate1)
-        with patch.object(
-            fx_service, "_try_fawazahmed0", new_callable=AsyncMock
-        ) as mock_fawazahmed0:
-            with patch.object(
-                fx_service, "_try_exchangerate_api", new_callable=AsyncMock
-            ) as mock_exchangerate:
-                with patch.object(
-                    fx_service, "_try_cached_rate", new_callable=AsyncMock
-                ) as mock_cached:
-                    mock_fawazahmed0.return_value = FXResult(
-                        rate=rate1,
-                        source="fawazahmed0",
-                        is_cached=False,
-                        timestamp=datetime(2023, 1, 1),
-                    )
-                    mock_exchangerate.return_value = FXResult(
-                        rate=None, source="exchangerate-api", is_cached=False
-                    )
-                    mock_cached.return_value = FXResult(
-                        rate=None, source="cache", is_cached=False
-                    )
+    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
+         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
+         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock):
 
-                    result1 = await fx_service.resolve_rate(
-                        base, quote, f"{year:04d}-{month:02d}-{day:02d}"
-                    )
-                    assert result1.rate == rate1
+        mock_f.return_value = None
+        mock_e.return_value = success_result
 
-                    # Second successful fetch with different rate (should overwrite cache)
-                    mock_fawazahmed0.return_value = FXResult(
-                        rate=rate2,
-                        source="fawazahmed0",
-                        is_cached=False,
-                        timestamp=datetime(2023, 1, 1),
-                    )
+        result = await svc.resolve_rate(base, quote, target_date)
 
-                    result2 = await fx_service.resolve_rate(
-                        base, quote, f"{year:04d}-{month:02d}-{day:02d}"
-                    )
+    assert result.source == "exchangerate-api"
+    assert result.rate == rate
 
-                    # Verify cache was updated with new rate
-                    assert result2.rate == rate2
-                    assert result2.source == "fawazahmed0"
-                    assert result2.is_cached is False
-                    assert result2.timestamp == datetime(2023, 1, 1)
+    # FXCache must now contain a record for this pair, today's date, and source
+    cached = await FXCache.filter(
+        base_currency=base,
+        quote_currency=quote,
+        source="exchangerate-api",
+    ).first()
+
+    assert cached is not None, (
+        f"FXCache must contain a record for {base}/{quote} from exchangerate-api "
+        f"after a successful fetch"
+    )
