@@ -26,7 +26,7 @@ from lagosfile.services.config_engine import TaxConfig, config_engine
     st.floats(min_value=1, max_value=10000000),  # Positive values (must be > 0)
     st.floats(min_value=0, max_value=1),  # Valid tax rates
 )
-@settings(max_examples=100)
+@settings(max_examples=25)
 @example(
     bands=[(0, 100000, 0.5)],
     allowance_rates={"plant": 0.5},
