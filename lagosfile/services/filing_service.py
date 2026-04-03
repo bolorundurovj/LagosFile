@@ -19,6 +19,24 @@ from lagosfile.models import (
 from lagosfile.services.config_engine import ConfigEngine
 
 
+def calculate_annual_allowance(asset_cost: float, annual_allowance_rate: float) -> float:
+    """Calculate the annual capital allowance amount for an asset.
+
+    Per NTA 2025 Requirement 6.5, the annual allowance amount is computed as
+    asset_cost * annual_allowance_rate (straight-line, no initial allowance).
+
+    Args:
+        asset_cost: The cost of the asset in Naira.
+        annual_allowance_rate: The annual allowance rate from Tax_Config (e.g. 0.25).
+
+    Returns:
+        The annual allowance amount (asset_cost * annual_allowance_rate).
+
+    Requirements: 6.5
+    """
+    return asset_cost * annual_allowance_rate
+
+
 def calculate_bik_taxable_value(cost: float) -> float:
     """Calculate the taxable value of a benefit-in-kind.
 
