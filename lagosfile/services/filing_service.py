@@ -19,7 +19,9 @@ from lagosfile.models import (
 from lagosfile.services.config_engine import ConfigEngine
 
 
-def calculate_annual_allowance(asset_cost: float, annual_allowance_rate: float) -> float:
+def calculate_annual_allowance(
+    asset_cost: float, annual_allowance_rate: float
+) -> float:
     """Calculate the annual capital allowance amount for an asset.
 
     Per NTA 2025 Requirement 6.5, the annual allowance amount is computed as
@@ -308,6 +310,29 @@ class FilingService:
             "capital_allowances",
             "relief_entries",
         )
+        return filing
+
+    # ------------------------------------------------------------------
+    # mark_submitted
+    # ------------------------------------------------------------------
+
+    async def mark_submitted(self, filing_id: str) -> Filing:
+        """Mark a Confirmed filing as Submitted.
+
+        Only allowed on Confirmed filings; raises ValueError otherwise.
+
+        Requirements: 12.8
+        """
+        filing = await Filing.get(id=filing_id)
+
+        if filing.status != "Confirmed":
+            raise ValueError(
+                f"Only Confirmed filings can be marked as Submitted; "
+                f"current status is '{filing.status}'"
+            )
+
+        filing.status = "Submitted"
+        await filing.save()
         return filing
 
     # ------------------------------------------------------------------
