@@ -1,13 +1,14 @@
 """
 Filing Service — draft lifecycle management.
 
-Handles create_draft, save_step, confirm, duplicate, and amend operations.
+Handles create_draft, save_step, confirm, duplicate, amend,
+list_filings, and get_filing_detail operations.
 
-Requirements: 3.1, 3.4, 3.5, 10.4, 10.5, 10.8
+Requirements: 3.1, 3.4, 3.5, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.8
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from lagosfile.models import (
     CapitalAllowance,
@@ -190,6 +191,90 @@ class FilingService:
             )
 
         return new_filing
+
+    # ------------------------------------------------------------------
+    # list_filings
+    # ------------------------------------------------------------------
+
+    async def list_filings(
+        self,
+        taxpayer_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Return a paginated list of filings for a taxpayer with metric counts.
+
+        Args:
+            taxpayer_id: UUID string of the Taxpayer record.
+            page: 1-based page number.
+            page_size: Number of records per page.
+            filters: Optional dict with keys:
+                - ``yoa`` (int): filter by year_of_assessment
+                - ``status`` (str): filter by status (Draft/Confirmed/Submitted)
+
+        Returns:
+            A dict with keys:
+                - ``filings``: list of Filing objects for the current page
+                - ``total``: total matching records
+                - ``page``: current page number
+                - ``page_size``: page size used
+                - ``metrics``: dict with ``total``, ``submitted``, ``confirmed``, ``drafts``
+        """
+        filters = filters or {}
+
+        # Build the base queryset for this taxpayer
+        qs = Filing.filter(taxpayer_id=taxpayer_id)
+
+        # Apply optional filters
+        if "yoa" in filters:
+            qs = qs.filter(year_of_assessment=filters["yoa"])
+        if "status" in filters:
+            qs = qs.filter(status=filters["status"])
+
+        total = await qs.count()
+        offset = (page - 1) * page_size
+        filings = await qs.offset(offset).limit(page_size)
+
+        # Metric counts are always over the full taxpayer scope (no filters)
+        all_qs = Filing.filter(taxpayer_id=taxpayer_id)
+        metrics = {
+            "total": await all_qs.count(),
+            "submitted": await all_qs.filter(status="Submitted").count(),
+            "confirmed": await all_qs.filter(status="Confirmed").count(),
+            "drafts": await all_qs.filter(status="Draft").count(),
+        }
+
+        return {
+            "filings": filings,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "metrics": metrics,
+        }
+
+    # ------------------------------------------------------------------
+    # get_filing_detail
+    # ------------------------------------------------------------------
+
+    async def get_filing_detail(self, filing_id: str) -> Filing:
+        """Return a Filing with all related entries prefetched.
+
+        Prefetches ``income_entries``, ``capital_allowances``, and
+        ``relief_entries`` so callers can access them without extra queries.
+
+        Args:
+            filing_id: UUID string of the Filing record.
+
+        Returns:
+            The Filing with prefetched relations.
+        """
+        filing = await Filing.get(id=filing_id).prefetch_related(
+            "income_entries",
+            "capital_allowances",
+            "relief_entries",
+        )
+        return filing
 
     # ------------------------------------------------------------------
     # amend
