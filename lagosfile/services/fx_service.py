@@ -156,7 +156,7 @@ class FXService:
         to avoid unique constraint violations.
         """
         try:
-            await FXCache.get_or_create(
+            await FXCache.update_or_create(
                 base_currency=base,
                 quote_currency=quote,
                 rate_date=rate_date,
