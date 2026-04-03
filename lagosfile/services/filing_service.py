@@ -12,6 +12,7 @@ from lagosfile.services.config_engine import ConfigEngine
 from lagosfile.services.document_service import DocumentService
 from lagosfile.services.fx_service import FXService
 from lagosfile.services.base_service import BaseAsyncService
+from tortoise import Tortoise
 
 
 class FilingService(BaseAsyncService):
