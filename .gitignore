@@ -19,3 +19,4 @@ __pycache__/
 *.swo
 *.DS_Store
 *.egg-info/
+/docs
