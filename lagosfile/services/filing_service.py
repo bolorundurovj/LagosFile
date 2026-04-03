@@ -1,226 +1,223 @@
-from typing import List, Optional, Dict, Any
+"""
+Filing Service — draft lifecycle management.
+
+Handles create_draft, save_step, confirm, duplicate, and amend operations.
+
+Requirements: 3.1, 3.4, 3.5, 10.4, 10.5, 10.8
+"""
+
 from datetime import datetime
+from typing import Any
+
 from lagosfile.models import (
+    CapitalAllowance,
     Filing,
     IncomeEntry,
-    CapitalAllowance,
     ReliefEntry,
-    Document,
-    TaxConfigModel,
 )
 from lagosfile.services.config_engine import ConfigEngine
-from lagosfile.services.document_service import DocumentService
-from lagosfile.services.fx_service import FXService
-from lagosfile.services.base_service import BaseAsyncService
-from tortoise import Tortoise
 
 
-class FilingService(BaseAsyncService):
-    """Filing service handling draft lifecycle and filing operations."""
+class FilingService:
+    """Manages the full draft lifecycle for tax filings."""
 
-    async def create_draft(self, taxpayer_id: int, yoa: int) -> Filing:
-        """Create a new filing draft for the given taxpayer and year of assessment."""
-        filing = Filing(taxpayer_id=taxpayer_id, yoa=yoa, status="Draft")
-        await filing.save()
+    # ------------------------------------------------------------------
+    # create_draft
+    # ------------------------------------------------------------------
+
+    async def create_draft(self, taxpayer_id: str, yoa: int) -> Filing:
+        """Create a new Draft filing for the given taxpayer and year of assessment.
+
+        Args:
+            taxpayer_id: UUID string of the Taxpayer record.
+            yoa: Year of Assessment (e.g. 2025).
+
+        Returns:
+            The newly created Filing in Draft status.
+        """
+        filing = await Filing.create(
+            taxpayer_id=taxpayer_id,
+            year_of_assessment=yoa,
+            status="Draft",
+            tax_config_version="",
+        )
         return filing
 
-    async def save_step(self, filing_id: int, step_data: Dict[str, Any]) -> None:
-        """Save data for a specific step in the filing wizard."""
+    # ------------------------------------------------------------------
+    # save_step
+    # ------------------------------------------------------------------
+
+    async def save_step(self, filing_id: str, step_data: dict[str, Any]) -> Filing:
+        """Persist wizard step data to the filing.
+
+        Replaces (delete + recreate) any entry type present in *step_data*.
+
+        Args:
+            filing_id: UUID string of the Filing record.
+            step_data: Dict that may contain any of:
+                - "income_entries": list of dicts
+                - "capital_allowances": list of dicts
+                - "relief_entries": list of dicts
+
+        Returns:
+            The updated Filing record.
+        """
         filing = await Filing.get(id=filing_id)
 
         if "income_entries" in step_data:
-            await self._save_income_entries(filing, step_data["income_entries"])
+            await IncomeEntry.filter(filing_id=filing_id).delete()
+            for entry in step_data["income_entries"]:
+                await IncomeEntry.create(filing=filing, **entry)
 
         if "capital_allowances" in step_data:
-            await self._save_capital_allowances(filing, step_data["capital_allowances"])
+            await CapitalAllowance.filter(filing_id=filing_id).delete()
+            for allowance in step_data["capital_allowances"]:
+                await CapitalAllowance.create(filing=filing, **allowance)
 
         if "relief_entries" in step_data:
-            await self._save_relief_entries(filing, step_data["relief_entries"])
-
-        # Re-serialize and re-encrypt the database after each save
-        await self._re_encrypt_db()
-
-    async def confirm(self, filing_id: int) -> Filing:
-        """Confirm a filing, generating reference and snapshotting tax config."""
-        filing = await Filing.get(id=filing_id)
-
-        if filing.status != "Draft":
-            raise ValueError("Only draft filings can be confirmed")
-
-        # Generate filing reference
-        current_year = datetime.now().year
-        filing_reference = f"LIRS/REF/{current_year}/{filing.id:05d}"
-        filing.filing_reference = filing_reference
-        filing.confirmed_at = datetime.now()
-        filing.status = "Confirmed"
-
-        # Snapshot the active tax config version
-        config_engine = ConfigEngine()
-        active_config = await config_engine.get_active_config()
-        filing.tax_config_version = active_config.version_label
-
-        await filing.save()
-
-        # Re-serialize and re-encrypt the database
-        await self._re_encrypt_db()
+            await ReliefEntry.filter(filing_id=filing_id).delete()
+            for relief in step_data["relief_entries"]:
+                await ReliefEntry.create(filing=filing, **relief)
 
         return filing
 
-    async def duplicate(self, filing_id: int) -> Filing:
-        """Create a duplicate of a filing for the next year of assessment."""
-        original_filing = await Filing.get(id=filing_id)
+    # ------------------------------------------------------------------
+    # confirm
+    # ------------------------------------------------------------------
 
-        if original_filing.status not in ["Draft", "Confirmed"]:
-            raise ValueError("Only draft and confirmed filings can be duplicated")
+    async def confirm(self, filing_id: str) -> Filing:
+        """Confirm a Draft filing, locking it as an immutable record.
 
-        # Create new filing with YOA+1
-        new_filing = Filing(
-            taxpayer_id=original_filing.taxpayer_id,
-            yoa=original_filing.yoa + 1,
-            status="Draft",
-            parent_filing_id=original_filing.id,
+        - Raises ValueError if the filing is not in Draft status.
+        - Generates a filing reference: LIRS/REF/{YOA}/{sequential:05d}
+        - Snapshots the active tax config version.
+
+        Args:
+            filing_id: UUID string of the Filing record.
+
+        Returns:
+            The confirmed Filing record.
+        """
+        filing = await Filing.get(id=filing_id)
+
+        if filing.status != "Draft":
+            raise ValueError(
+                f"Only Draft filings can be confirmed; current status is '{filing.status}'"
+            )
+
+        # Sequential number = count of already-confirmed filings for this YOA + 1
+        confirmed_count = await Filing.filter(
+            year_of_assessment=filing.year_of_assessment,
+            status="Confirmed",
+        ).count()
+        sequential = confirmed_count + 1
+
+        filing.filing_reference = (
+            f"LIRS/REF/{filing.year_of_assessment}/{sequential:05d}"
         )
-        await new_filing.save()
+        filing.status = "Confirmed"
+        filing.confirmed_at = datetime.utcnow()
+
+        # Snapshot the active tax config version
+        config = await ConfigEngine().get_active_config()
+        filing.tax_config_version = config.version_label
+
+        await filing.save()
+        return filing
+
+    # ------------------------------------------------------------------
+    # duplicate
+    # ------------------------------------------------------------------
+
+    async def duplicate(self, filing_id: str) -> Filing:
+        """Duplicate a Confirmed filing into a new Draft for YOA + 1.
+
+        Copies IncomeEntry and CapitalAllowance records.
+        Does NOT copy ReliefEntry records.
+
+        Args:
+            filing_id: UUID string of the original Confirmed Filing.
+
+        Returns:
+            The new Draft Filing.
+        """
+        original = await Filing.get(id=filing_id)
+
+        if original.status != "Confirmed":
+            raise ValueError(
+                f"Only Confirmed filings can be duplicated; current status is '{original.status}'"
+            )
+
+        new_filing = await Filing.create(
+            taxpayer_id=str(original.taxpayer_id),
+            year_of_assessment=original.year_of_assessment + 1,
+            status="Draft",
+            tax_config_version="",
+        )
 
         # Copy income entries
-        for entry in await original_filing.income_entries.all():
-            new_entry = IncomeEntry(
+        async for entry in IncomeEntry.filter(filing_id=filing_id):
+            await IncomeEntry.create(
                 filing=new_filing,
                 income_type=entry.income_type,
                 description=entry.description,
                 gross_amount_ngn=entry.gross_amount_ngn,
+                is_foreign=entry.is_foreign,
                 foreign_currency=entry.foreign_currency,
                 foreign_amount=entry.foreign_amount,
-                date=entry.date,
-                fetched_fx_rate=entry.fetched_fx_rate,
-                cbn_override_rate=entry.cbn_override_rate,
-                rate_source=entry.rate_source,
-                benefits_in_kind=entry.benefits_in_kind,
+                income_date=entry.income_date,
+                fx_rate_fetched=entry.fx_rate_fetched,
+                fx_rate_cbn_override=entry.fx_rate_cbn_override,
+                fx_rate_used=entry.fx_rate_used,
+                fx_rate_source=entry.fx_rate_source,
+                foreign_tax_paid_ngn=entry.foreign_tax_paid_ngn,
+                is_cgt_exempt=entry.is_cgt_exempt,
+                cgt_proceeds=entry.cgt_proceeds,
+                cgt_gain=entry.cgt_gain,
             )
-            await new_entry.save()
 
-        # Copy capital allowances
-        for allowance in await original_filing.capital_allowances.all():
-            new_allowance = CapitalAllowance(
+        # Copy capital allowances (written-down values carry forward)
+        async for allowance in CapitalAllowance.filter(filing_id=filing_id):
+            await CapitalAllowance.create(
                 filing=new_filing,
+                asset_description=allowance.asset_description,
                 asset_type=allowance.asset_type,
                 asset_cost=allowance.asset_cost,
-                date_acquired=allowance.date_acquired,
+                acquisition_date=allowance.acquisition_date,
+                tax_written_down_value=allowance.tax_written_down_value,
                 annual_allowance_rate=allowance.annual_allowance_rate,
                 annual_allowance_amount=allowance.annual_allowance_amount,
             )
-            await new_allowance.save()
-
-        # Copy relief entries
-        for relief in await original_filing.relief_entries.all():
-            new_relief = ReliefEntry(
-                filing=new_filing, relief_type=relief.relief_type, amount=relief.amount
-            )
-            await new_relief.save()
-
-        # Copy documents
-        for document in await original_filing.documents.all():
-            new_document = Document(
-                filing=new_filing,
-                file_path=document.file_path,
-                document_type=document.document_type,
-                uploaded_at=document.uploaded_at,
-            )
-            await new_document.save()
-
-        # Re-serialize and re-encrypt the database
-        await self._re_encrypt_db()
 
         return new_filing
 
-    async def amend(self, filing_id: int) -> Filing:
-        """Create an amendment filing linked to the original filing."""
-        original_filing = await Filing.get(id=filing_id)
+    # ------------------------------------------------------------------
+    # amend
+    # ------------------------------------------------------------------
 
-        if original_filing.status != "Confirmed":
-            raise ValueError("Only confirmed filings can be amended")
+    async def amend(self, filing_id: str) -> Filing:
+        """Create an amendment Draft linked to a Confirmed filing.
 
-        # Create new filing as amendment
-        new_filing = Filing(
-            taxpayer_id=original_filing.taxpayer_id,
-            yoa=original_filing.yoa,
+        The original filing is never modified.
+
+        Args:
+            filing_id: UUID string of the original Confirmed Filing.
+
+        Returns:
+            The new amendment Draft Filing.
+        """
+        original = await Filing.get(id=filing_id)
+
+        if original.status != "Confirmed":
+            raise ValueError(
+                f"Only Confirmed filings can be amended; current status is '{original.status}'"
+            )
+
+        new_filing = await Filing.create(
+            taxpayer_id=str(original.taxpayer_id),
+            year_of_assessment=original.year_of_assessment,
             status="Draft",
-            parent_filing_id=original_filing.id,
+            parent_filing_id=str(original.id),
+            tax_config_version="",
         )
-        await new_filing.save()
-
-        # Re-serialize and re-encrypt the database
-        await self._re_encrypt_db()
-
         return new_filing
-
-    async def _save_income_entries(
-        self, filing: Filing, entries: List[Dict[str, Any]]
-    ) -> None:
-        """Save income entries with FX rate selection logic."""
-        fx_service = FXService()
-
-        for entry_data in entries:
-            # Determine FX rate to use
-            if entry_data.get("cbn_override_rate") is not None:
-                # Use CBN override rate
-                fx_rate_used = entry_data["cbn_override_rate"]
-                rate_source = "CBN Override"
-            else:
-                # Use fetched FX rate
-                fx_rate_used = entry_data["fetched_fx_rate"]
-                rate_source = entry_data["rate_source"]
-
-            # Calculate gross amount in NGN
-            foreign_amount = entry_data.get("foreign_amount")
-            if foreign_amount is not None and fx_rate_used is not None:
-                gross_amount_ngn = foreign_amount * fx_rate_used
-            else:
-                gross_amount_ngn = entry_data.get("gross_amount_ngn", 0)
-
-            entry = IncomeEntry(
-                filing=filing,
-                income_type=entry_data["income_type"],
-                description=entry_data["description"],
-                gross_amount_ngn=gross_amount_ngn,
-                foreign_currency=entry_data.get("foreign_currency"),
-                foreign_amount=foreign_amount,
-                date=entry_data["date"],
-                fetched_fx_rate=entry_data.get("fetched_fx_rate"),
-                cbn_override_rate=entry_data.get("cbn_override_rate"),
-                rate_source=rate_source,
-                benefits_in_kind=entry_data.get("benefits_in_kind", 0),
-            )
-            await entry.save()
-
-    async def _save_capital_allowances(
-        self, filing: Filing, allowances: List[Dict[str, Any]]
-    ) -> None:
-        """Save capital allowances."""
-        for allowance_data in allowances:
-            allowance = CapitalAllowance(
-                filing=filing,
-                asset_type=allowance_data["asset_type"],
-                asset_cost=allowance_data["asset_cost"],
-                date_acquired=allowance_data["date_acquired"],
-                annual_allowance_rate=allowance_data["annual_allowance_rate"],
-                annual_allowance_amount=allowance_data["annual_allowance_amount"],
-            )
-            await allowance.save()
-
-    async def _save_relief_entries(
-        self, filing: Filing, reliefs: List[Dict[str, Any]]
-    ) -> None:
-        """Save relief entries."""
-        for relief_data in reliefs:
-            relief = ReliefEntry(
-                filing=filing,
-                relief_type=relief_data["relief_type"],
-                amount=relief_data["amount"],
-            )
-            await relief.save()
-
-    async def _re_encrypt_db(self) -> None:
-        """Re-serialize and re-encrypt the database after changes."""
-        # This would trigger the database encryption logic
-        pass
