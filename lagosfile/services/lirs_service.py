@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import webbrowser
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -110,7 +110,7 @@ class LIRSService:
         """Append an error entry to ~/LagosFile/errors.log."""
         try:
             Constants.ensure_dirs()
-            timestamp = datetime.utcnow().isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
             entry = f"[{timestamp}] {context}: {message}\n"
             Constants.ERROR_LOG.open("a", encoding="utf-8").write(entry)
         except Exception:

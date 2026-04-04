@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
-from lagosfile.models import Taxpayer, TaxpayerPydantic  # noqa: F401 – TaxpayerPydantic re-exported
-from lagosfile.security import security_service
+from lagosfile.models import Taxpayer, TaxpayerPydantic, serialize_db  # noqa: F401
+from lagosfile.security import security_service, atomic_write
 from lagosfile.constants import Constants
 import datetime
 import asyncio
@@ -27,14 +27,20 @@ class ProfileService:
 
         # Create taxpayer record
         taxpayer = await Taxpayer.create(
-            tin=tin, full_name=data.get("name", ""), created_at=datetime.datetime.now()
+            tin=tin,
+            full_name=data.get("name", ""),
+            address=data.get("address"),
+            phone=data.get("phone"),
+            email=data.get("email"),
+            filing_agent=data.get("filing_agent"),
         )
 
-        # Derive encryption key from PIN
-        key = security_service.derive_key(pin)
+        # Derive encryption key from PIN using the persisted salt
+        from lagosfile.security import load_or_create_salt, derive_key as _derive_key
+        salt = load_or_create_salt()
+        key = _derive_key(pin, salt)
 
-        # Encrypt and save database (placeholder - in-memory DB doesn't support direct encryption)
-        # In a real implementation, this would serialize the DB and encrypt it
+        # Serialize in-memory DB and encrypt to disk
         await self._encrypt_and_save_db(key)
 
         self._current_taxpayer = taxpayer
@@ -65,13 +71,11 @@ class ProfileService:
         return self._current_taxpayer
 
     async def _encrypt_and_save_db(self, key: bytes):
-        """Encrypt and save the database (placeholder implementation)"""
-        # In a real implementation, this would:
-        # 1. Serialize the in-memory SQLite database
-        # 2. Encrypt it with the provided key
-        # 3. Save to the encrypted DB file
-        # For this implementation, we'll just ensure the base directory exists
+        """Serialize the in-memory SQLite, encrypt it, and write to disk atomically."""
         Constants.ensure_dirs()
+        plaintext = await serialize_db()
+        ciphertext = security_service.encrypt_db(plaintext, key)
+        atomic_write(ciphertext, Constants.ENCRYPTED_DB)
 
     def create_sync(self, data: Dict[str, Any], pin: str) -> Taxpayer:
         """Sync wrapper for create"""

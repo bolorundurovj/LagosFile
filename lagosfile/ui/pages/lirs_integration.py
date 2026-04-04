@@ -26,7 +26,7 @@ _LIRS_PORTAL_URL = "https://etax.lirs.gov.ng"
 _LIRS_ACCOUNT_URL = "https://etax.lirs.gov.ng/register"
 
 
-class LIRSIntegrationPage(ft.BaseControl):
+class LIRSIntegrationPage(ft.Container):
     """LIRS portal integration page for confirmed filings.
 
     Requirements: 12.1, 12.2, 12.4, 12.5, 12.7, 12.8
@@ -34,17 +34,19 @@ class LIRSIntegrationPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._lirs_service = LIRSService()
         self._filing_service = FilingService()
         self._automation_result: AutomationResult | None = None
         self._loading = ft.ProgressRing(visible=False, width=24, height=24)
         self._status_text = ft.Text("", size=13)
         self._reference_panel_visible = False
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        sidebar = Sidebar(self.page, active_route="/history")
-        topbar = TopBar(self.page, title="File with LIRS")
+        sidebar = Sidebar(self._page, active_route="/history")
+        topbar = TopBar(self._page, title="File with LIRS")
 
         content = ft.Column(
             controls=[
@@ -55,7 +57,7 @@ class LIRSIntegrationPage(ft.BaseControl):
                         spacing=16,
                         scroll=ft.ScrollMode.AUTO,
                     ),
-                    padding=ft.padding.all(24),
+                    padding=ft.Padding.all(24),
                     expand=True,
                 ),
             ],
@@ -97,7 +99,11 @@ class LIRSIntegrationPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=20),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        color=ft.Colors.ORANGE_800,
+                        size=20,
+                    ),
                     ft.Text(
                         _FALLBACK_BANNER,
                         size=13,
@@ -107,14 +113,14 @@ class LIRSIntegrationPage(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.symmetric(horizontal=16, vertical=12),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             border_radius=8,
             bgcolor=ft.Colors.ORANGE_50,
-            border=ft.border.all(1, ft.Colors.ORANGE_200),
+            border=ft.Border.all(1, ft.Colors.ORANGE_200),
         )
 
     def _filing_info_card(self) -> ft.Control:
-        app_state = self.page.data
+        app_state = self._page.data
         filing = app_state.active_filing if app_state else None
 
         yoa = getattr(filing, "year_of_assessment", "—") if filing else "—"
@@ -127,19 +133,38 @@ class LIRSIntegrationPage(ft.BaseControl):
                     ft.Text("Filing Details", size=14, weight=ft.FontWeight.W_600),
                     ft.Row(
                         controls=[
-                            ft.Text("Year of Assessment:", size=12, color=ft.Colors.GREY_600, expand=1),
-                            ft.Text(str(yoa), size=12, weight=ft.FontWeight.W_500, expand=2),
+                            ft.Text(
+                                "Year of Assessment:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
+                            ft.Text(
+                                str(yoa), size=12, weight=ft.FontWeight.W_500, expand=2
+                            ),
                         ]
                     ),
                     ft.Row(
                         controls=[
-                            ft.Text("Filing Reference:", size=12, color=ft.Colors.GREY_600, expand=1),
-                            ft.Text(str(ref), size=12, weight=ft.FontWeight.W_500, expand=2),
+                            ft.Text(
+                                "Filing Reference:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
+                            ft.Text(
+                                str(ref), size=12, weight=ft.FontWeight.W_500, expand=2
+                            ),
                         ]
                     ),
                     ft.Row(
                         controls=[
-                            ft.Text("Final Tax Payable:", size=12, color=ft.Colors.GREY_600, expand=1),
+                            ft.Text(
+                                "Final Tax Payable:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
                             ft.Text(
                                 f"₦{tax:,.2f}" if tax is not None else "—",
                                 size=12,
@@ -151,17 +176,21 @@ class LIRSIntegrationPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _file_with_lirs_section(self) -> ft.Control:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Submit to LIRS e-Tax Portal", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Submit to LIRS e-Tax Portal",
+                        size=14,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     ft.Text(
                         "This will attempt to pre-fill Form A on the LIRS portal using Playwright automation. "
                         "If automation fails, a Reference Panel will appear alongside the portal.",
@@ -171,7 +200,11 @@ class LIRSIntegrationPage(ft.BaseControl):
                     # Link to create portal account (Req 12.2)
                     ft.Row(
                         controls=[
-                            ft.Text("Don't have a portal account?", size=12, color=ft.Colors.GREY_600),
+                            ft.Text(
+                                "Don't have a portal account?",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                            ),
                             ft.TextButton(
                                 "Create one at etax.lirs.gov.ng",
                                 url=_LIRS_ACCOUNT_URL,
@@ -181,10 +214,12 @@ class LIRSIntegrationPage(ft.BaseControl):
                     ),
                     ft.Row(
                         controls=[
-                            ft.ElevatedButton(
+                            ft.Button(
                                 "File with LIRS",
                                 icon=ft.Icons.SEND_OUTLINED,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE),
+                                style=ft.ButtonStyle(
+                                    bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE
+                                ),
                                 on_click=self._on_file_with_lirs,
                             ),
                             self._loading,
@@ -194,15 +229,15 @@ class LIRSIntegrationPage(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _reference_panel(self) -> ft.Control:
         """Docked Reference Panel showing all computed values labelled to Form A sections."""
-        app_state = self.page.data
+        app_state = self._page.data
         filing = app_state.active_filing if app_state else None
 
         filing_data = {}
@@ -226,7 +261,9 @@ class LIRSIntegrationPage(ft.BaseControl):
                 controls=[
                     ft.Text(label, size=12, color=ft.Colors.GREY_600, expand=2),
                     ft.Text(
-                        f"₦{value:,.2f}" if isinstance(value, (int, float)) and value is not None else str(value or "—"),
+                        f"₦{value:,.2f}"
+                        if isinstance(value, (int, float)) and value is not None
+                        else str(value or "—"),
                         size=12,
                         weight=ft.FontWeight.W_500,
                         expand=1,
@@ -242,8 +279,17 @@ class LIRSIntegrationPage(ft.BaseControl):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.TABLE_VIEW_OUTLINED, color=ft.Colors.BLUE_700, size=18),
-                            ft.Text("Reference Panel — Form A Values", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE_900),
+                            ft.Icon(
+                                ft.Icons.TABLE_VIEW_OUTLINED,
+                                color=ft.Colors.BLUE_700,
+                                size=18,
+                            ),
+                            ft.Text(
+                                "Reference Panel — Form A Values",
+                                size=14,
+                                weight=ft.FontWeight.W_600,
+                                color=ft.Colors.BLUE_900,
+                            ),
                             ft.Container(expand=True),
                             ft.TextButton(
                                 "Open LIRS Portal",
@@ -264,10 +310,10 @@ class LIRSIntegrationPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.BLUE_50,
-            border=ft.border.all(1, ft.Colors.BLUE_200),
+            border=ft.Border.all(1, ft.Colors.BLUE_200),
         )
 
     def _mark_submitted_section(self) -> ft.Control:
@@ -280,28 +326,30 @@ class LIRSIntegrationPage(ft.BaseControl):
                         size=12,
                         color=ft.Colors.GREY_600,
                     ),
-                    ft.ElevatedButton(
+                    ft.Button(
                         "Mark as Submitted",
                         icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE),
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE
+                        ),
                         on_click=self._on_mark_submitted,
                     ),
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _on_file_with_lirs(self, e) -> None:
         """Attempt Playwright automation; fall back to Reference Panel on failure."""
-        app_state = self.page.data
+        app_state = self._page.data
         filing = app_state.active_filing if app_state else None
 
         self._loading.visible = True
-        self.update()
+        self._page.update()
 
         filing_data = {}
         if filing:
@@ -326,11 +374,11 @@ class LIRSIntegrationPage(ft.BaseControl):
             self._status_text.color = ft.Colors.GREEN_700
 
         self._loading.visible = False
-        self.update()
+        self._page.update()
 
     async def _on_mark_submitted(self, e) -> None:
         """Mark the active filing as Submitted."""
-        app_state = self.page.data
+        app_state = self._page.data
         if not app_state or not app_state.active_filing:
             return
         try:
@@ -341,4 +389,10 @@ class LIRSIntegrationPage(ft.BaseControl):
         except Exception as exc:
             self._status_text.value = f"Error: {exc}"
             self._status_text.color = ft.Colors.RED_400
-        self.update()
+        self._page.update()
+
+
+
+
+
+

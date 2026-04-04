@@ -188,3 +188,7 @@ async def test_waterfall_manual_fallback(tortoise_db, base, quote, target_date):
     mock_f.assert_awaited_once()
     mock_e.assert_awaited_once()
     mock_c.assert_awaited_once()
+
+
+
+

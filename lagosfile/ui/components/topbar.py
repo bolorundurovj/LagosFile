@@ -14,7 +14,7 @@ import datetime
 import flet as ft
 
 
-class TopBar(ft.BaseControl):
+class TopBar(ft.Container):
     """Top app bar showing YOA, user name, TIN, and avatar.
 
     Requirements: 2.2
@@ -22,11 +22,13 @@ class TopBar(ft.BaseControl):
 
     def __init__(self, page: ft.Page, title: str = "") -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self.title = title
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        app_state = self.page.data
+        app_state = self._page.data
         current_yoa = datetime.date.today().year
 
         taxpayer_name = "—"
@@ -37,7 +39,9 @@ class TopBar(ft.BaseControl):
             # Mask TIN: show last 4 digits
             tin_display = f"TIN: ***{tin[-4:]}" if len(tin) >= 4 else f"TIN: {tin}"
 
-        avatar_initials = (taxpayer_name[0].upper() if taxpayer_name and taxpayer_name != "—" else "?")
+        avatar_initials = (
+            taxpayer_name[0].upper() if taxpayer_name and taxpayer_name != "—" else "?"
+        )
 
         return ft.Container(
             content=ft.Row(
@@ -92,13 +96,13 @@ class TopBar(ft.BaseControl):
                         height=36,
                         border_radius=18,
                         bgcolor=ft.Colors.BLUE_800,
-                        alignment=ft.alignment.center,
+                        alignment=ft.Alignment.CENTER,
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.symmetric(horizontal=24, vertical=14),
+            padding=ft.Padding.symmetric(horizontal=24, vertical=14),
             bgcolor=ft.Colors.WHITE,
             shadow=ft.BoxShadow(
                 blur_radius=4,
@@ -106,3 +110,9 @@ class TopBar(ft.BaseControl):
                 color=ft.Colors.with_opacity(0.08, ft.Colors.BLACK),
             ),
         )
+
+
+
+
+
+

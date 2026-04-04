@@ -23,7 +23,7 @@ _STATUS_COLORS = {
 }
 
 
-class FilingHistoryPage(ft.BaseControl):
+class FilingHistoryPage(ft.Container):
     """Filing History page with metric cards and paginated table.
 
     Requirements: 10.1–10.7
@@ -31,7 +31,8 @@ class FilingHistoryPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._filing_service = FilingService()
         self._filings: list = []
         self._metrics = {"total": 0, "submitted": 0, "confirmed": 0, "drafts": 0}
@@ -39,10 +40,11 @@ class FilingHistoryPage(ft.BaseControl):
         self._page_size = 20
         self._filter_yoa: str = ""
         self._filter_status: str = ""
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        sidebar = Sidebar(self.page, active_route="/history")
-        topbar = TopBar(self.page, title="Filing History")
+        sidebar = Sidebar(self._page, active_route="/history")
+        topbar = TopBar(self._page, title="Filing History")
 
         content = ft.Column(
             controls=[
@@ -53,7 +55,7 @@ class FilingHistoryPage(ft.BaseControl):
                         spacing=16,
                         scroll=ft.ScrollMode.AUTO,
                     ),
-                    padding=ft.padding.all(24),
+                    padding=ft.Padding.all(24),
                     expand=True,
                 ),
             ],
@@ -83,10 +85,34 @@ class FilingHistoryPage(ft.BaseControl):
 
     def _metric_cards(self) -> ft.Control:
         cards_data = [
-            ("Total Filings", str(self._metrics["total"]), ft.Icons.FOLDER_OUTLINED, ft.Colors.BLUE_100, ft.Colors.BLUE_800),
-            ("Submitted", str(self._metrics["submitted"]), ft.Icons.SEND_OUTLINED, ft.Colors.GREEN_100, ft.Colors.GREEN_800),
-            ("Confirmed", str(self._metrics["confirmed"]), ft.Icons.VERIFIED_OUTLINED, ft.Colors.PURPLE_100, ft.Colors.PURPLE_800),
-            ("Drafts", str(self._metrics["drafts"]), ft.Icons.EDIT_OUTLINED, ft.Colors.ORANGE_100, ft.Colors.ORANGE_800),
+            (
+                "Total Filings",
+                str(self._metrics["total"]),
+                ft.Icons.FOLDER_OUTLINED,
+                ft.Colors.BLUE_100,
+                ft.Colors.BLUE_800,
+            ),
+            (
+                "Submitted",
+                str(self._metrics["submitted"]),
+                ft.Icons.SEND_OUTLINED,
+                ft.Colors.GREEN_100,
+                ft.Colors.GREEN_800,
+            ),
+            (
+                "Confirmed",
+                str(self._metrics["confirmed"]),
+                ft.Icons.VERIFIED_OUTLINED,
+                ft.Colors.PURPLE_100,
+                ft.Colors.PURPLE_800,
+            ),
+            (
+                "Drafts",
+                str(self._metrics["drafts"]),
+                ft.Icons.EDIT_OUTLINED,
+                ft.Colors.ORANGE_100,
+                ft.Colors.ORANGE_800,
+            ),
         ]
 
         cards = [
@@ -99,18 +125,25 @@ class FilingHistoryPage(ft.BaseControl):
                             height=44,
                             border_radius=22,
                             bgcolor=bg_color,
-                            alignment=ft.alignment.center,
+                            alignment=ft.Alignment.CENTER,
                         ),
-                        ft.Text(count, size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_800),
+                        ft.Text(
+                            count,
+                            size=28,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.GREY_800,
+                        ),
                         ft.Text(label, size=12, color=ft.Colors.GREY_600),
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=6,
                 ),
-                padding=ft.padding.all(20),
+                padding=ft.Padding.all(20),
                 border_radius=10,
                 bgcolor=ft.Colors.WHITE,
-                shadow=ft.BoxShadow(blur_radius=6, color=ft.Colors.with_opacity(0.06, ft.Colors.BLACK)),
+                shadow=ft.BoxShadow(
+                    blur_radius=6, color=ft.Colors.with_opacity(0.06, ft.Colors.BLACK)
+                ),
                 expand=1,
             )
             for label, count, icon, bg_color, icon_color in cards_data
@@ -133,9 +166,9 @@ class FilingHistoryPage(ft.BaseControl):
                 ft.dropdown.Option("Confirmed"),
                 ft.dropdown.Option("Submitted"),
             ],
-            on_change=lambda e: setattr(self, "_filter_status", e.control.value or ""),
+            on_select=lambda e: setattr(self, "_filter_status", e.control.value or ""),
         )
-        apply_btn = ft.ElevatedButton(
+        apply_btn = ft.Button(
             "Apply Filters",
             icon=ft.Icons.FILTER_LIST,
             on_click=self._apply_filters,
@@ -152,7 +185,9 @@ class FilingHistoryPage(ft.BaseControl):
             ft.DataColumn(ft.Text("YOA", size=12, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Reference", size=12, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Status", size=12, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Tax Payable", size=12, weight=ft.FontWeight.BOLD), numeric=True),
+            ft.DataColumn(
+                ft.Text("Tax Payable", size=12, weight=ft.FontWeight.BOLD), numeric=True
+            ),
             ft.DataColumn(ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD)),
         ]
 
@@ -168,16 +203,16 @@ class FilingHistoryPage(ft.BaseControl):
                                 color=ft.Colors.GREY_500,
                                 italic=True,
                             ),
-                            padding=ft.padding.symmetric(vertical=24),
-                            alignment=ft.alignment.center,
+                            padding=ft.Padding.symmetric(vertical=24),
+                            alignment=ft.Alignment.CENTER,
                         ),
                     ],
                     spacing=0,
                 ),
                 border_radius=10,
                 bgcolor=ft.Colors.WHITE,
-                border=ft.border.all(1, ft.Colors.GREY_200),
-                padding=ft.padding.all(16),
+                border=ft.Border.all(1, ft.Colors.GREY_200),
+                padding=ft.Padding.all(16),
             )
 
         rows = [self._filing_row(f) for f in self._filings]
@@ -188,7 +223,7 @@ class FilingHistoryPage(ft.BaseControl):
                     ft.DataTable(
                         columns=columns,
                         rows=rows,
-                        border=ft.border.all(1, ft.Colors.GREY_200),
+                        border=ft.Border.all(1, ft.Colors.GREY_200),
                         border_radius=8,
                         heading_row_color=ft.Colors.GREY_50,
                     ),
@@ -196,10 +231,10 @@ class FilingHistoryPage(ft.BaseControl):
                 ],
                 spacing=12,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _filing_row(self, filing) -> ft.DataRow:
@@ -213,23 +248,54 @@ class FilingHistoryPage(ft.BaseControl):
         actions = []
         if status in ("Confirmed", "Submitted"):
             actions.append(
-                ft.IconButton(ft.Icons.VISIBILITY_OUTLINED, tooltip="View", icon_size=18, on_click=lambda e, f=filing: self._view_filing(f))
+                ft.IconButton(
+                    ft.Icons.VISIBILITY_OUTLINED,
+                    tooltip="View",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._view_filing(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.COPY_OUTLINED, tooltip="Duplicate", icon_size=18, on_click=lambda e, f=filing: self._duplicate_filing(f))
+                ft.IconButton(
+                    ft.Icons.COPY_OUTLINED,
+                    tooltip="Duplicate",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._duplicate_filing(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.PICTURE_AS_PDF_OUTLINED, tooltip="Export PDF", icon_size=18, on_click=lambda e, f=filing: self._export_pdf(f))
+                ft.IconButton(
+                    ft.Icons.PICTURE_AS_PDF_OUTLINED,
+                    tooltip="Export PDF",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._export_pdf(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.TABLE_CHART_OUTLINED, tooltip="Export CSV", icon_size=18, on_click=lambda e, f=filing: self._export_csv(f))
+                ft.IconButton(
+                    ft.Icons.TABLE_CHART_OUTLINED,
+                    tooltip="Export CSV",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._export_csv(f),
+                )
             )
         else:
             actions.append(
-                ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Edit Draft", icon_size=18, on_click=lambda e, f=filing: self._edit_draft(f))
+                ft.IconButton(
+                    ft.Icons.EDIT_OUTLINED,
+                    tooltip="Edit Draft",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._edit_draft(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="Delete Draft", icon_size=18, icon_color=ft.Colors.RED_400, on_click=lambda e, f=filing: self._delete_draft(f))
+                ft.IconButton(
+                    ft.Icons.DELETE_OUTLINE,
+                    tooltip="Delete Draft",
+                    icon_size=18,
+                    icon_color=ft.Colors.RED_400,
+                    on_click=lambda e, f=filing: self._delete_draft(f),
+                )
             )
 
         return ft.DataRow(
@@ -241,10 +307,15 @@ class FilingHistoryPage(ft.BaseControl):
                         content=ft.Text(status, size=11, color=ft.Colors.WHITE),
                         bgcolor=status_color,
                         border_radius=4,
-                        padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                        padding=ft.Padding.symmetric(horizontal=8, vertical=3),
                     )
                 ),
-                ft.DataCell(ft.Text(f"₦{tax_payable:,.2f}" if tax_payable is not None else "—", size=12)),
+                ft.DataCell(
+                    ft.Text(
+                        f"₦{tax_payable:,.2f}" if tax_payable is not None else "—",
+                        size=12,
+                    )
+                ),
                 ft.DataCell(ft.Row(controls=actions, spacing=0)),
             ]
         )
@@ -279,17 +350,19 @@ class FilingHistoryPage(ft.BaseControl):
                 ],
                 spacing=6,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _compliance_note(self) -> ft.Control:
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.SHIELD_OUTLINED, color=ft.Colors.BLUE_700, size=16),
+                    ft.Icon(
+                        ft.Icons.SHIELD_OUTLINED, color=ft.Colors.BLUE_700, size=16
+                    ),
                     ft.Text(
                         "All confirmed filings are immutable records. Amendments create new linked filings.",
                         size=12,
@@ -298,10 +371,10 @@ class FilingHistoryPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.symmetric(horizontal=14, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             border_radius=6,
             bgcolor=ft.Colors.BLUE_50,
-            border=ft.border.all(1, ft.Colors.BLUE_100),
+            border=ft.Border.all(1, ft.Colors.BLUE_100),
         )
 
     # ------------------------------------------------------------------
@@ -309,7 +382,7 @@ class FilingHistoryPage(ft.BaseControl):
     # ------------------------------------------------------------------
 
     async def _apply_filters(self, e) -> None:
-        app_state = self.page.data
+        app_state = self._page.data
         if not app_state or not app_state.taxpayer:
             return
         filters = {}
@@ -331,24 +404,25 @@ class FilingHistoryPage(ft.BaseControl):
             self._metrics = result["metrics"]
         except Exception:
             pass
-        self.update()
+        self._page.update()
 
     def _change_page(self, delta: int) -> None:
         self._current_page = max(1, self._current_page + delta)
-        self.update()
+        self._page.update()
 
     def _view_filing(self, filing) -> None:
-        self.page.go(f"/history/{filing.id}")
+        self._page.push_route(f"/history/{filing.id}")
 
     async def _duplicate_filing(self, filing) -> None:
         try:
             await self._filing_service.duplicate(str(filing.id))
-            self.update()
+            self._page.update()
         except Exception:
             pass
 
     def _export_pdf(self, filing) -> None:
         from lagosfile.ui.components.export_modal import ExportModal
+
         # Open export modal — in a full implementation, show as overlay
         pass
 
@@ -356,10 +430,16 @@ class FilingHistoryPage(ft.BaseControl):
         pass
 
     def _edit_draft(self, filing) -> None:
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state:
             app_state.active_filing = filing
-        self.page.go(f"/wizard/{filing.id}")
+        self._page.push_route(f"/wizard/{filing.id}")
 
     def _delete_draft(self, filing) -> None:
         pass
+
+
+
+
+
+

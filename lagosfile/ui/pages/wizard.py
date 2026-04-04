@@ -25,7 +25,7 @@ _STEPS = [
 ]
 
 
-class WizardPage(ft.BaseControl):
+class WizardPage(ft.Container):
     """Four-step filing wizard container.
 
     Requirements: 3.2, 3.3, 3.4, 3.6, 3.7
@@ -33,14 +33,16 @@ class WizardPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._filing_service = FilingService()
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        sidebar = Sidebar(self.page, active_route="/wizard")
-        topbar = TopBar(self.page, title="New Filing Wizard")
+        sidebar = Sidebar(self._page, active_route="/wizard")
+        topbar = TopBar(self._page, title="New Filing Wizard")
 
-        app_state = self.page.data
+        app_state = self._page.data
         current_step = app_state.current_step if app_state else 1
 
         stepper = self._build_stepper(current_step)
@@ -57,9 +59,11 @@ class WizardPage(ft.BaseControl):
                             ft.Container(
                                 content=stepper,
                                 width=220,
-                                padding=ft.padding.all(20),
+                                padding=ft.Padding.all(20),
                                 bgcolor=ft.Colors.WHITE,
-                                border=ft.border.only(right=ft.BorderSide(1, ft.Colors.GREY_200)),
+                                border=ft.Border.only(
+                                    right=ft.BorderSide(1, ft.Colors.GREY_200)
+                                ),
                             ),
                             # Right: step content + nav
                             ft.Container(
@@ -68,12 +72,14 @@ class WizardPage(ft.BaseControl):
                                         ft.Container(
                                             content=step_content,
                                             expand=True,
-                                            padding=ft.padding.all(24),
+                                            padding=ft.Padding.all(24),
                                         ),
                                         ft.Divider(height=1, color=ft.Colors.GREY_200),
                                         ft.Container(
                                             content=nav_buttons,
-                                            padding=ft.padding.symmetric(horizontal=24, vertical=16),
+                                            padding=ft.Padding.symmetric(
+                                                horizontal=24, vertical=16
+                                            ),
                                         ),
                                     ],
                                     expand=True,
@@ -133,7 +139,9 @@ class WizardPage(ft.BaseControl):
                                     step_label,
                                     size=13,
                                     color=label_color,
-                                    weight=ft.FontWeight.W_500 if state == "active" else ft.FontWeight.NORMAL,
+                                    weight=ft.FontWeight.W_500
+                                    if state == "active"
+                                    else ft.FontWeight.NORMAL,
                                 ),
                             ],
                             spacing=1,
@@ -149,14 +157,21 @@ class WizardPage(ft.BaseControl):
                     ft.Container(
                         width=2,
                         height=24,
-                        bgcolor=ft.Colors.GREEN_400 if step_num < current_step else ft.Colors.GREY_300,
-                        margin=ft.margin.only(left=9),
+                        bgcolor=ft.Colors.GREEN_400
+                        if step_num < current_step
+                        else ft.Colors.GREY_300,
+                        margin=ft.Margin.only(left=9),
                     )
                 )
 
         return ft.Column(
             controls=[
-                ft.Text("Filing Progress", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_700),
+                ft.Text(
+                    "Filing Progress",
+                    size=13,
+                    weight=ft.FontWeight.W_600,
+                    color=ft.Colors.GREY_700,
+                ),
                 ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
                 *items,
             ],
@@ -168,18 +183,24 @@ class WizardPage(ft.BaseControl):
         try:
             if current_step == 1:
                 from lagosfile.ui.pages.wizard_income import IncomeSourcesStep
-                return IncomeSourcesStep(self.page)
+
+                return IncomeSourcesStep(self._page)
             elif current_step == 2:
                 from lagosfile.ui.pages.wizard_allowances import CapitalAllowancesStep
-                return CapitalAllowancesStep(self.page)
+
+                return CapitalAllowancesStep(self._page)
             elif current_step == 3:
                 from lagosfile.ui.pages.wizard_deductions import DeductionsReliefsStep
-                return DeductionsReliefsStep(self.page)
+
+                return DeductionsReliefsStep(self._page)
             elif current_step == 4:
                 from lagosfile.ui.pages.wizard_review import ReviewConfirmStep
-                return ReviewConfirmStep(self.page)
+
+                return ReviewConfirmStep(self._page)
         except Exception as exc:
-            return ft.Text(f"Error loading step {current_step}: {exc}", color=ft.Colors.RED_400)
+            return ft.Text(
+                f"Error loading step {current_step}: {exc}", color=ft.Colors.RED_400
+            )
 
         return ft.Text("Unknown step", color=ft.Colors.RED_400)
 
@@ -192,7 +213,7 @@ class WizardPage(ft.BaseControl):
         )
 
         continue_label = "Continue" if current_step < 4 else "Review & Confirm"
-        continue_btn = ft.ElevatedButton(
+        continue_btn = ft.Button(
             continue_label,
             icon=ft.Icons.ARROW_FORWARD,
             style=ft.ButtonStyle(
@@ -215,7 +236,7 @@ class WizardPage(ft.BaseControl):
 
     async def _on_continue(self, e) -> None:
         """Flush current step data and advance to the next step."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None:
             return
         try:
@@ -223,28 +244,38 @@ class WizardPage(ft.BaseControl):
         except Exception:
             pass
         # Rebuild the wizard with the new step
-        self.page.go(self.page.route)
+        self._page.push_route(self._page.route)
 
     def _on_back(self, e) -> None:
         """Navigate back to the previous step without data loss."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None:
             return
         go_back(app_state)
-        self.page.go(self.page.route)
+        self._page.push_route(self._page.route)
 
     async def _on_save_later(self, e) -> None:
         """Save current step data as a Draft without advancing."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None or app_state.active_filing is None:
             return
         try:
             from lagosfile.state import _STEP_DATA_KEYS
+
             step = app_state.current_step
             key = _STEP_DATA_KEYS.get(step)
             if key:
                 step_data = {key: getattr(app_state.wizard_data, key)}
-                await self._filing_service.save_step(str(app_state.active_filing.id), step_data)
+                await self._filing_service.save_step(
+                    str(app_state.active_filing.id), step_data
+                )
         except Exception:
             pass
-        self.page.go("/dashboard")
+        self._page.push_route("/dashboard")
+
+
+
+
+
+
+

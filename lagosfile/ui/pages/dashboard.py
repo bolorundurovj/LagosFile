@@ -26,7 +26,7 @@ _STATUS_COLORS = {
 }
 
 
-class DashboardPage(ft.BaseControl):
+class DashboardPage(ft.Container):
     """Main dashboard page.
 
     Requirements: 2.3–2.8, 15.1–15.3
@@ -34,13 +34,15 @@ class DashboardPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
         self._filings: list = []
         self._lifetime_total: float = 0.0
+        self.expand = True
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        sidebar = Sidebar(self.page, active_route="/dashboard")
-        topbar = TopBar(self.page, title="Dashboard")
+        sidebar = Sidebar(self._page, active_route="/dashboard")
+        topbar = TopBar(self._page, title="Dashboard")
 
         content = ft.Column(
             controls=[
@@ -51,7 +53,7 @@ class DashboardPage(ft.BaseControl):
                         spacing=16,
                         scroll=ft.ScrollMode.AUTO,
                     ),
-                    padding=ft.padding.all(24),
+                    padding=ft.Padding.all(24),
                     expand=True,
                 ),
             ],
@@ -95,7 +97,11 @@ class DashboardPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=20),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        color=ft.Colors.ORANGE_800,
+                        size=20,
+                    ),
                     ft.Text(
                         f"Filing deadline in {days_left} day{'s' if days_left != 1 else ''} — March 31",
                         size=14,
@@ -105,10 +111,10 @@ class DashboardPage(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.symmetric(horizontal=16, vertical=12),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             border_radius=8,
             bgcolor=ft.Colors.ORANGE_50,
-            border=ft.border.all(1, ft.Colors.ORANGE_200),
+            border=ft.Border.all(1, ft.Colors.ORANGE_200),
         )
 
     def _missing_filing_warnings(self) -> list[ft.Control]:
@@ -124,7 +130,9 @@ class DashboardPage(ft.BaseControl):
                 ft.Container(
                     content=ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_700, size=18),
+                            ft.Icon(
+                                ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_700, size=18
+                            ),
                             ft.Text(
                                 f"No confirmed filing found for YOA {yoa}.",
                                 size=13,
@@ -132,45 +140,80 @@ class DashboardPage(ft.BaseControl):
                             ),
                             ft.TextButton(
                                 "Start Filing",
-                                on_click=lambda e: self.page.go("/wizard"),
+                                on_click=lambda e: self._page.push_route("/wizard"),
                             ),
                         ],
                         spacing=8,
                     ),
-                    padding=ft.padding.symmetric(horizontal=14, vertical=10),
+                    padding=ft.Padding.symmetric(horizontal=14, vertical=10),
                     border_radius=8,
                     bgcolor=ft.Colors.BLUE_50,
-                    border=ft.border.all(1, ft.Colors.BLUE_100),
+                    border=ft.Border.all(1, ft.Colors.BLUE_100),
                 )
             )
         return warnings
 
     def _start_filing_cta(self) -> ft.Control:
-        return ft.ElevatedButton(
+        return ft.Button(
             content=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, color=ft.Colors.WHITE),
-                    ft.Text("Start New Filing", color=ft.Colors.WHITE, size=14, weight=ft.FontWeight.W_500),
+                    ft.Text(
+                        "Start New Filing",
+                        color=ft.Colors.WHITE,
+                        size=14,
+                        weight=ft.FontWeight.W_500,
+                    ),
                 ],
                 spacing=8,
             ),
             style=ft.ButtonStyle(
                 bgcolor=ft.Colors.BLUE_800,
-                padding=ft.padding.symmetric(horizontal=20, vertical=14),
+                padding=ft.Padding.symmetric(horizontal=20, vertical=14),
                 shape=ft.RoundedRectangleBorder(radius=8),
             ),
-            on_click=lambda e: self.page.go("/wizard"),
+            on_click=lambda e: self._page.push_route("/wizard"),
         )
 
     def _filing_history_section(self) -> ft.Control:
         # Header row
         header = ft.Row(
             controls=[
-                ft.Text("YOA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=1),
-                ft.Text("Reference", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
-                ft.Text("Status", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=1),
-                ft.Text("Tax Payable", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
-                ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
+                ft.Text(
+                    "YOA",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=1,
+                ),
+                ft.Text(
+                    "Reference",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
+                ft.Text(
+                    "Status",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=1,
+                ),
+                ft.Text(
+                    "Tax Payable",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
+                ft.Text(
+                    "Actions",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
             ],
         )
 
@@ -181,8 +224,8 @@ class DashboardPage(ft.BaseControl):
                 color=ft.Colors.GREY_500,
                 italic=True,
             ),
-            padding=ft.padding.symmetric(vertical=20),
-            alignment=ft.alignment.center,
+            padding=ft.Padding.symmetric(vertical=20),
+            alignment=ft.Alignment.CENTER,
         )
 
         return ft.Container(
@@ -196,7 +239,7 @@ class DashboardPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(20),
+            padding=ft.Padding.all(20),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
             shadow=ft.BoxShadow(
@@ -207,10 +250,30 @@ class DashboardPage(ft.BaseControl):
 
     def _quick_access_cards(self) -> ft.Control:
         cards_data = [
-            ("Tax Receipts", ft.Icons.RECEIPT_OUTLINED, ft.Colors.PURPLE_100, ft.Colors.PURPLE_800),
-            ("Tax Calculator", ft.Icons.CALCULATE_OUTLINED, ft.Colors.GREEN_100, ft.Colors.GREEN_800),
-            ("Compliance Status", ft.Icons.VERIFIED_OUTLINED, ft.Colors.BLUE_100, ft.Colors.BLUE_800),
-            ("Help & Guides", ft.Icons.MENU_BOOK_OUTLINED, ft.Colors.ORANGE_100, ft.Colors.ORANGE_800),
+            (
+                "Tax Receipts",
+                ft.Icons.RECEIPT_OUTLINED,
+                ft.Colors.PURPLE_100,
+                ft.Colors.PURPLE_800,
+            ),
+            (
+                "Tax Calculator",
+                ft.Icons.CALCULATE_OUTLINED,
+                ft.Colors.GREEN_100,
+                ft.Colors.GREEN_800,
+            ),
+            (
+                "Compliance Status",
+                ft.Icons.VERIFIED_OUTLINED,
+                ft.Colors.BLUE_100,
+                ft.Colors.BLUE_800,
+            ),
+            (
+                "Help & Guides",
+                ft.Icons.MENU_BOOK_OUTLINED,
+                ft.Colors.ORANGE_100,
+                ft.Colors.ORANGE_800,
+            ),
         ]
 
         cards = [
@@ -223,14 +286,19 @@ class DashboardPage(ft.BaseControl):
                             height=52,
                             border_radius=26,
                             bgcolor=bg_color,
-                            alignment=ft.alignment.center,
+                            alignment=ft.Alignment.CENTER,
                         ),
-                        ft.Text(label, size=13, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_800),
+                        ft.Text(
+                            label,
+                            size=13,
+                            weight=ft.FontWeight.W_500,
+                            color=ft.Colors.GREY_800,
+                        ),
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=10,
                 ),
-                padding=ft.padding.all(20),
+                padding=ft.Padding.all(20),
                 border_radius=10,
                 bgcolor=ft.Colors.WHITE,
                 shadow=ft.BoxShadow(
@@ -256,7 +324,11 @@ class DashboardPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.ACCOUNT_BALANCE_OUTLINED, color=ft.Colors.GREY_500, size=18),
+                    ft.Icon(
+                        ft.Icons.ACCOUNT_BALANCE_OUTLINED,
+                        color=ft.Colors.GREY_500,
+                        size=18,
+                    ),
                     ft.Text(
                         f"Lifetime total tax filed: ₦{self._lifetime_total:,.2f}",
                         size=13,
@@ -265,8 +337,14 @@ class DashboardPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.symmetric(horizontal=16, vertical=12),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
             border_radius=8,
             bgcolor=ft.Colors.GREY_50,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
+
+
+
+
+
+

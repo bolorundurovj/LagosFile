@@ -25,7 +25,7 @@ _ALLOWANCE_SECTION = "NTA 2025 Third Schedule"
 _MIN_TAX_SECTION = "NTA 2025 Section 37"
 
 
-class ConfigurationPage(ft.BaseControl):
+class ConfigurationPage(ft.Container):
     """Configuration Page — edit Tax_Config values in-app.
 
     Requirements: 13.1–13.8
@@ -33,7 +33,8 @@ class ConfigurationPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._config_engine = ConfigEngine()
         self._config: TaxConfig | None = None
         self._status_text = ft.Text("", size=12)
@@ -60,10 +61,11 @@ class ConfigurationPage(ft.BaseControl):
             width=220,
             keyboard_type=ft.KeyboardType.NUMBER,
         )
+        self.content = self.build()
 
     def build(self) -> ft.Control:
-        sidebar = Sidebar(self.page, active_route="/config")
-        topbar = TopBar(self.page, title="Configuration")
+        sidebar = Sidebar(self._page, active_route="/config")
+        topbar = TopBar(self._page, title="Configuration")
 
         content = ft.Column(
             controls=[
@@ -74,7 +76,7 @@ class ConfigurationPage(ft.BaseControl):
                         spacing=20,
                         scroll=ft.ScrollMode.AUTO,
                     ),
-                    padding=ft.padding.all(24),
+                    padding=ft.Padding.all(24),
                     expand=True,
                 ),
             ],
@@ -94,15 +96,17 @@ class ConfigurationPage(ft.BaseControl):
             ft.Container(
                 content=ft.Row(
                     controls=[
-                        ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_700, size=16),
+                        ft.Icon(
+                            ft.Icons.INFO_OUTLINE, color=ft.Colors.BLUE_700, size=16
+                        ),
                         self._version_label,
                     ],
                     spacing=8,
                 ),
-                padding=ft.padding.symmetric(horizontal=14, vertical=10),
+                padding=ft.Padding.symmetric(horizontal=14, vertical=10),
                 border_radius=6,
                 bgcolor=ft.Colors.BLUE_50,
-                border=ft.border.all(1, ft.Colors.BLUE_100),
+                border=ft.Border.all(1, ft.Colors.BLUE_100),
             ),
             # Tax bands section
             self._bands_section(),
@@ -134,7 +138,12 @@ class ConfigurationPage(ft.BaseControl):
                     ft.Column(
                         controls=[
                             ft.Text(label, size=13, weight=ft.FontWeight.W_500),
-                            ft.Text(nta_section, size=10, color=ft.Colors.GREY_500, italic=True),
+                            ft.Text(
+                                nta_section,
+                                size=10,
+                                color=ft.Colors.GREY_500,
+                                italic=True,
+                            ),
                         ],
                         spacing=2,
                         expand=2,
@@ -145,10 +154,10 @@ class ConfigurationPage(ft.BaseControl):
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=16,
             ),
-            padding=ft.padding.symmetric(horizontal=16, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
             border_radius=6,
             bgcolor=ft.Colors.GREY_50,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _bands_section(self) -> ft.Control:
@@ -157,7 +166,7 @@ class ConfigurationPage(ft.BaseControl):
             for i, band in enumerate(self._config.bands):
                 upper = band.get("upper")
                 upper_str = f"₦{upper:,.0f}" if upper is not None else "∞"
-                label = f"Band {i+1}: ₦{band['lower']:,.0f} – {upper_str}"
+                label = f"Band {i + 1}: ₦{band['lower']:,.0f} – {upper_str}"
                 rate_field = ft.TextField(
                     value=str(band["rate"]),
                     width=120,
@@ -165,23 +174,36 @@ class ConfigurationPage(ft.BaseControl):
                     label="Rate",
                 )
                 band_rows.append(
-                    self._config_field_row(label, f"{band['rate']*100:.0f}%", _BAND_SECTION, rate_field)
+                    self._config_field_row(
+                        label, f"{band['rate'] * 100:.0f}%", _BAND_SECTION, rate_field
+                    )
                 )
         else:
-            band_rows.append(ft.Text("Loading tax bands...", size=12, color=ft.Colors.GREY_500, italic=True))
+            band_rows.append(
+                ft.Text(
+                    "Loading tax bands...",
+                    size=12,
+                    color=ft.Colors.GREY_500,
+                    italic=True,
+                )
+            )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Tax Bands (NTA 2025 Fourth Schedule)", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Tax Bands (NTA 2025 Fourth Schedule)",
+                        size=15,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     *band_rows,
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _relief_section(self) -> ft.Control:
@@ -202,10 +224,10 @@ class ConfigurationPage(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _cgt_section(self) -> ft.Control:
@@ -216,26 +238,32 @@ class ConfigurationPage(ft.BaseControl):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("CGT Exemption Thresholds", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "CGT Exemption Thresholds", size=15, weight=ft.FontWeight.W_600
+                    ),
                     self._config_field_row(
                         "CGT Proceeds Threshold",
-                        f"₦{self._config.cgt_proceeds_threshold:,.0f}" if self._config else "—",
+                        f"₦{self._config.cgt_proceeds_threshold:,.0f}"
+                        if self._config
+                        else "—",
                         _CGT_SECTION,
                         self._cgt_proceeds_field,
                     ),
                     self._config_field_row(
                         "CGT Gain Threshold",
-                        f"₦{self._config.cgt_gain_threshold:,.0f}" if self._config else "—",
+                        f"₦{self._config.cgt_gain_threshold:,.0f}"
+                        if self._config
+                        else "—",
                         _CGT_SECTION,
                         self._cgt_gain_field,
                     ),
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _allowance_rates_section(self) -> ft.Control:
@@ -249,23 +277,36 @@ class ConfigurationPage(ft.BaseControl):
                     label="Rate",
                 )
                 rate_rows.append(
-                    self._config_field_row(asset_type, f"{rate*100:.0f}%", _ALLOWANCE_SECTION, rate_field)
+                    self._config_field_row(
+                        asset_type, f"{rate * 100:.0f}%", _ALLOWANCE_SECTION, rate_field
+                    )
                 )
         else:
-            rate_rows.append(ft.Text("Loading allowance rates...", size=12, color=ft.Colors.GREY_500, italic=True))
+            rate_rows.append(
+                ft.Text(
+                    "Loading allowance rates...",
+                    size=12,
+                    color=ft.Colors.GREY_500,
+                    italic=True,
+                )
+            )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Capital Allowance Rates by Asset Type", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Capital Allowance Rates by Asset Type",
+                        size=15,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     *rate_rows,
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _min_tax_section(self) -> ft.Control:
@@ -278,26 +319,30 @@ class ConfigurationPage(ft.BaseControl):
                     ft.Text("Minimum Tax", size=15, weight=ft.FontWeight.W_600),
                     self._config_field_row(
                         "Minimum Tax Rate",
-                        f"{self._config.minimum_tax_rate*100:.0f}%" if self._config else "—",
+                        f"{self._config.minimum_tax_rate * 100:.0f}%"
+                        if self._config
+                        else "—",
                         _MIN_TAX_SECTION,
                         self._min_tax_rate_field,
                     ),
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _action_buttons(self) -> ft.Control:
         return ft.Row(
             controls=[
-                ft.ElevatedButton(
+                ft.Button(
                     "Save Configuration",
                     icon=ft.Icons.SAVE_OUTLINED,
-                    style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE),
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE
+                    ),
                     on_click=self._on_save,
                 ),
                 ft.OutlinedButton(
@@ -323,16 +368,25 @@ class ConfigurationPage(ft.BaseControl):
             updated = TaxConfig(
                 version_label=self._config.version_label,
                 bands=self._config.bands,
-                rent_relief_cap=float(self._rent_relief_cap_field.value or self._config.rent_relief_cap),
-                cgt_proceeds_threshold=float(self._cgt_proceeds_field.value or self._config.cgt_proceeds_threshold),
-                cgt_gain_threshold=float(self._cgt_gain_field.value or self._config.cgt_gain_threshold),
+                rent_relief_cap=float(
+                    self._rent_relief_cap_field.value or self._config.rent_relief_cap
+                ),
+                cgt_proceeds_threshold=float(
+                    self._cgt_proceeds_field.value
+                    or self._config.cgt_proceeds_threshold
+                ),
+                cgt_gain_threshold=float(
+                    self._cgt_gain_field.value or self._config.cgt_gain_threshold
+                ),
                 allowance_rates=self._config.allowance_rates,
-                minimum_tax_rate=float(self._min_tax_rate_field.value or self._config.minimum_tax_rate),
+                minimum_tax_rate=float(
+                    self._min_tax_rate_field.value or self._config.minimum_tax_rate
+                ),
             )
             saved = await self._config_engine.save_config(updated)
             self._config = saved
             # Update AppState
-            app_state = self.page.data
+            app_state = self._page.data
             if app_state:
                 app_state.active_config = saved
             self._show_status("Configuration saved successfully.", ft.Colors.GREEN_700)
@@ -346,6 +400,7 @@ class ConfigurationPage(ft.BaseControl):
         try:
             json_str = await self._config_engine.export_json(self._config)
             from lagosfile.constants import Constants
+
             Constants.ensure_dirs()
             out_path = Constants.BASE_DIR / "tax_config_export.json"
             out_path.write_text(json_str, encoding="utf-8")
@@ -357,9 +412,18 @@ class ConfigurationPage(ft.BaseControl):
         """Import config from a JSON file."""
         # In a full implementation, open a file picker
         # For the skeleton, show a placeholder message
-        self._show_status("File picker not yet implemented. Place JSON at ~/LagosFile/tax_config_import.json", ft.Colors.BLUE_700)
+        self._show_status(
+            "File picker not yet implemented. Place JSON at ~/LagosFile/tax_config_import.json",
+            ft.Colors.BLUE_700,
+        )
 
     def _show_status(self, msg: str, color: str) -> None:
         self._status_text.value = msg
         self._status_text.color = color
-        self.update()
+        self._page.update()
+
+
+
+
+
+

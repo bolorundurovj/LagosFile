@@ -322,3 +322,7 @@ async def test_get_filing_detail_empty_relations(taxpayer):
     assert list(detail.income_entries) == []
     assert list(detail.capital_allowances) == []
     assert list(detail.relief_entries) == []
+
+
+
+

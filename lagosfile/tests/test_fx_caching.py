@@ -144,3 +144,7 @@ async def test_caching_after_exchangerate_api_success(tortoise_db, base, quote, 
         f"FXCache must contain a record for {base}/{quote} from exchangerate-api "
         f"after a successful fetch"
     )
+
+
+
+

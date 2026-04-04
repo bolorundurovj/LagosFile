@@ -24,7 +24,7 @@ _ASSET_TYPES = [
 ]
 
 
-class CapitalAllowancesStep(ft.BaseControl):
+class CapitalAllowancesStep(ft.Container):
     """Step 2 of the filing wizard — Capital Allowances.
 
     Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8
@@ -32,9 +32,13 @@ class CapitalAllowancesStep(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._entries: list[dict] = []
-        self._total_allowance = ft.Text("₦0.00", size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_800)
+        self._total_allowance = ft.Text(
+            "₦0.00", size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_800
+        )
+        self.content = self.build()
 
     def build(self) -> ft.Control:
         return ft.Column(
@@ -74,7 +78,11 @@ class CapitalAllowancesStep(ft.BaseControl):
                 controls=[
                     ft.Column(
                         controls=[
-                            ft.Text("Total Capital Allowance Claimable", size=13, color=ft.Colors.GREY_600),
+                            ft.Text(
+                                "Total Capital Allowance Claimable",
+                                size=13,
+                                color=ft.Colors.GREY_600,
+                            ),
                             self._total_allowance,
                             ft.Text(
                                 "Updates in real time as entries are added.",
@@ -86,15 +94,17 @@ class CapitalAllowancesStep(ft.BaseControl):
                         spacing=4,
                         expand=True,
                     ),
-                    ft.Icon(ft.Icons.CALCULATE_OUTLINED, color=ft.Colors.BLUE_300, size=40),
+                    ft.Icon(
+                        ft.Icons.CALCULATE_OUTLINED, color=ft.Colors.BLUE_300, size=40
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.all(20),
+            padding=ft.Padding.all(20),
             border_radius=10,
             bgcolor=ft.Colors.BLUE_50,
-            border=ft.border.all(1, ft.Colors.BLUE_100),
+            border=ft.Border.all(1, ft.Colors.BLUE_100),
         )
 
     def _asset_entry_form(self) -> ft.Control:
@@ -109,7 +119,9 @@ class CapitalAllowancesStep(ft.BaseControl):
             width=180,
             keyboard_type=ft.KeyboardType.NUMBER,
         )
-        date_field = ft.TextField(label="Date of Acquisition *", width=180, hint_text="YYYY-MM-DD")
+        date_field = ft.TextField(
+            label="Date of Acquisition *", width=180, hint_text="YYYY-MM-DD"
+        )
         wdv_field = ft.TextField(
             label="Tax Written-Down Value (₦)",
             width=200,
@@ -138,28 +150,37 @@ class CapitalAllowancesStep(ft.BaseControl):
                         spacing=12,
                         wrap=True,
                     ),
-                    ft.ElevatedButton(
+                    ft.Button(
                         "Add Asset to Schedule",
                         icon=ft.Icons.ADD,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE),
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.BLUE_800, color=ft.Colors.WHITE
+                        ),
                         on_click=self._on_add_asset,
                     ),
                 ],
                 spacing=12,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _asset_table(self) -> ft.Control:
         columns = [
             ft.DataColumn(ft.Text("Asset Type", size=12, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Description", size=12, weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Cost (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
-            ft.DataColumn(ft.Text("Annual Allowance (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
-            ft.DataColumn(ft.Text("WDV (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
+            ft.DataColumn(
+                ft.Text("Cost (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True
+            ),
+            ft.DataColumn(
+                ft.Text("Annual Allowance (₦)", size=12, weight=ft.FontWeight.BOLD),
+                numeric=True,
+            ),
+            ft.DataColumn(
+                ft.Text("WDV (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True
+            ),
             ft.DataColumn(ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD)),
         ]
 
@@ -169,8 +190,12 @@ class CapitalAllowancesStep(ft.BaseControl):
                     ft.DataCell(ft.Text(e.get("asset_type", ""), size=12)),
                     ft.DataCell(ft.Text(e.get("asset_description", ""), size=12)),
                     ft.DataCell(ft.Text(f"₦{e.get('asset_cost', 0):,.2f}", size=12)),
-                    ft.DataCell(ft.Text(f"₦{e.get('annual_allowance_amount', 0):,.2f}", size=12)),
-                    ft.DataCell(ft.Text(f"₦{e.get('tax_written_down_value', 0):,.2f}", size=12)),
+                    ft.DataCell(
+                        ft.Text(f"₦{e.get('annual_allowance_amount', 0):,.2f}", size=12)
+                    ),
+                    ft.DataCell(
+                        ft.Text(f"₦{e.get('tax_written_down_value', 0):,.2f}", size=12)
+                    ),
                     ft.DataCell(
                         ft.IconButton(
                             ft.Icons.DELETE_OUTLINE,
@@ -192,14 +217,14 @@ class CapitalAllowancesStep(ft.BaseControl):
                     color=ft.Colors.GREY_500,
                     italic=True,
                 ),
-                padding=ft.padding.symmetric(vertical=16),
-                alignment=ft.alignment.center,
+                padding=ft.Padding.symmetric(vertical=16),
+                alignment=ft.Alignment.CENTER,
             )
 
         return ft.DataTable(
             columns=columns,
             rows=rows,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
             border_radius=8,
             heading_row_color=ft.Colors.GREY_50,
         )
@@ -208,10 +233,16 @@ class CapitalAllowancesStep(ft.BaseControl):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Supporting Documents", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Supporting Documents", size=14, weight=ft.FontWeight.W_600
+                    ),
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.UPLOAD_FILE_OUTLINED, color=ft.Colors.GREY_500, size=24),
+                            ft.Icon(
+                                ft.Icons.UPLOAD_FILE_OUTLINED,
+                                color=ft.Colors.GREY_500,
+                                size=24,
+                            ),
                             ft.Text(
                                 "Attach purchase receipts or invoices (PDF, JPG, PNG — max 100MB per file)",
                                 size=12,
@@ -228,9 +259,9 @@ class CapitalAllowancesStep(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
-            border=ft.border.all(1, ft.Colors.GREY_300, style=ft.BorderStyle.DASHED),
+            border=ft.Border.all(1, ft.Colors.GREY_300),
             bgcolor=ft.Colors.GREY_50,
         )
 
@@ -246,21 +277,27 @@ class CapitalAllowancesStep(ft.BaseControl):
             "tax_written_down_value": 0.0,
         }
         self._entries.append(entry)
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state:
             app_state.wizard_data.capital_allowances = self._entries
         self._recalculate_total()
-        self.update()
+        self._page.update()
 
     def _remove_entry(self, idx: int) -> None:
         if 0 <= idx < len(self._entries):
             self._entries.pop(idx)
-            app_state = self.page.data
+            app_state = self._page.data
             if app_state:
                 app_state.wizard_data.capital_allowances = self._entries
             self._recalculate_total()
-            self.update()
+            self._page.update()
 
     def _recalculate_total(self) -> None:
         total = sum(e.get("annual_allowance_amount", 0.0) for e in self._entries)
         self._total_allowance.value = f"₦{total:,.2f}"
+
+
+
+
+
+

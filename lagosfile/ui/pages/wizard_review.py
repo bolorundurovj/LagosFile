@@ -50,7 +50,7 @@ def _fmt(val: float | None) -> str:
     return f"₦{val:,.2f}"
 
 
-class ReviewConfirmStep(ft.BaseControl):
+class ReviewConfirmStep(ft.Container):
     """Step 4 of the filing wizard — Review & Confirm.
 
     Requirements: 9.1–9.9
@@ -58,9 +58,11 @@ class ReviewConfirmStep(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._result = None
         self._warnings: list[str] = []
+        self.content = self.build()
 
     def build(self) -> ft.Control:
         self._compute()
@@ -106,7 +108,7 @@ class ReviewConfirmStep(ft.BaseControl):
                         color=ft.Colors.GREY_500,
                         italic=True,
                     ),
-                    padding=ft.padding.all(20),
+                    padding=ft.Padding.all(20),
                 )
             )
 
@@ -124,7 +126,7 @@ class ReviewConfirmStep(ft.BaseControl):
 
     def _compute(self) -> None:
         """Run ComputationEngine with current wizard data."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None:
             return
 
@@ -194,8 +196,25 @@ class ReviewConfirmStep(ft.BaseControl):
         data_rows = [
             ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(label, size=12, weight=ft.FontWeight.BOLD if "Final" in label or "Chargeable" in label else ft.FontWeight.NORMAL)),
-                    ft.DataCell(ft.Text(value, size=12, text_align=ft.TextAlign.RIGHT, weight=ft.FontWeight.BOLD if "Final" in label else ft.FontWeight.NORMAL)),
+                    ft.DataCell(
+                        ft.Text(
+                            label,
+                            size=12,
+                            weight=ft.FontWeight.BOLD
+                            if "Final" in label or "Chargeable" in label
+                            else ft.FontWeight.NORMAL,
+                        )
+                    ),
+                    ft.DataCell(
+                        ft.Text(
+                            value,
+                            size=12,
+                            text_align=ft.TextAlign.RIGHT,
+                            weight=ft.FontWeight.BOLD
+                            if "Final" in label
+                            else ft.FontWeight.NORMAL,
+                        )
+                    ),
                 ],
                 color=ft.Colors.BLUE_50 if "Final" in label else None,
             )
@@ -207,38 +226,54 @@ class ReviewConfirmStep(ft.BaseControl):
             band = band_result.band
             # band is a TaxBand dataclass with .lower, .upper, .rate
             upper_str = f"₦{band.upper:,.0f}" if band.upper is not None else "∞"
-            label = f"  Band ₦{band.lower:,.0f}–{upper_str} @ {band.rate*100:.0f}%"
+            label = f"  Band ₦{band.lower:,.0f}–{upper_str} @ {band.rate * 100:.0f}%"
             data_rows.insert(
                 4 + i,
                 ft.DataRow(
                     cells=[
                         ft.DataCell(ft.Text(label, size=11, color=ft.Colors.GREY_600)),
-                        ft.DataCell(ft.Text(_fmt(band_result.tax_amount), size=11, color=ft.Colors.GREY_600, text_align=ft.TextAlign.RIGHT)),
+                        ft.DataCell(
+                            ft.Text(
+                                _fmt(band_result.tax_amount),
+                                size=11,
+                                color=ft.Colors.GREY_600,
+                                text_align=ft.TextAlign.RIGHT,
+                            )
+                        ),
                     ]
-                )
+                ),
             )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Tax Computation Breakdown", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Tax Computation Breakdown", size=15, weight=ft.FontWeight.W_600
+                    ),
                     ft.DataTable(
                         columns=[
-                            ft.DataColumn(ft.Text("Description", size=12, weight=ft.FontWeight.BOLD)),
-                            ft.DataColumn(ft.Text("Amount", size=12, weight=ft.FontWeight.BOLD), numeric=True),
+                            ft.DataColumn(
+                                ft.Text(
+                                    "Description", size=12, weight=ft.FontWeight.BOLD
+                                )
+                            ),
+                            ft.DataColumn(
+                                ft.Text("Amount", size=12, weight=ft.FontWeight.BOLD),
+                                numeric=True,
+                            ),
                         ],
                         rows=data_rows,
-                        border=ft.border.all(1, ft.Colors.GREY_200),
+                        border=ft.Border.all(1, ft.Colors.GREY_200),
                         border_radius=8,
                         heading_row_color=ft.Colors.GREY_50,
                     ),
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(20),
+            padding=ft.Padding.all(20),
             border_radius=10,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _band_utilization_bar(self) -> ft.Control:
@@ -264,14 +299,16 @@ class ReviewConfirmStep(ft.BaseControl):
                         width=proportion * 400,
                         height=20,
                         bgcolor=band_colors[i % len(band_colors)],
-                        tooltip=f"Band {i+1}: {_fmt(br.taxable_amount)} @ {br.band['rate']*100:.0f}%",
+                        tooltip=f"Band {i + 1}: {_fmt(br.taxable_amount)} @ {br.band['rate'] * 100:.0f}%",
                     )
                 )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Tax Band Utilization", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Tax Band Utilization", size=14, weight=ft.FontWeight.W_600
+                    ),
                     ft.Row(controls=bar_segments, spacing=2),
                     ft.Text(
                         f"Chargeable Income: {_fmt(r.chargeable_income)}",
@@ -281,60 +318,71 @@ class ReviewConfirmStep(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _foreign_income_summary(self) -> ft.Control:
-        app_state = self.page.data
+        app_state = self._page.data
         if not app_state:
             return ft.Container()
 
         foreign_entries = [
-            e for e in app_state.wizard_data.income_entries
+            e
+            for e in app_state.wizard_data.income_entries
             if e.get("is_foreign") or e.get("foreign_currency")
         ]
         if not foreign_entries:
             return ft.Container()
 
         rows = [
-            ft.DataRow(cells=[
-                ft.DataCell(ft.Text(e.get("income_type", ""), size=12)),
-                ft.DataCell(ft.Text(e.get("foreign_currency", ""), size=12)),
-                ft.DataCell(ft.Text(f"{e.get('foreign_amount', 0):,.2f}", size=12)),
-                ft.DataCell(ft.Text(str(e.get("fx_rate_used", "—")), size=12)),
-                ft.DataCell(ft.Text(e.get("fx_rate_source", "—"), size=12)),
-                ft.DataCell(ft.Text(_fmt(e.get("gross_amount_ngn")), size=12)),
-            ])
+            ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(e.get("income_type", ""), size=12)),
+                    ft.DataCell(ft.Text(e.get("foreign_currency", ""), size=12)),
+                    ft.DataCell(ft.Text(f"{e.get('foreign_amount', 0):,.2f}", size=12)),
+                    ft.DataCell(ft.Text(str(e.get("fx_rate_used", "—")), size=12)),
+                    ft.DataCell(ft.Text(e.get("fx_rate_source", "—"), size=12)),
+                    ft.DataCell(ft.Text(_fmt(e.get("gross_amount_ngn")), size=12)),
+                ]
+            )
             for e in foreign_entries
         ]
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Foreign Income Summary", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Foreign Income Summary", size=14, weight=ft.FontWeight.W_600
+                    ),
                     ft.DataTable(
                         columns=[
                             ft.DataColumn(ft.Text("Type", size=11)),
                             ft.DataColumn(ft.Text("Currency", size=11)),
-                            ft.DataColumn(ft.Text("Foreign Amount", size=11), numeric=True),
-                            ft.DataColumn(ft.Text("FX Rate Used", size=11), numeric=True),
+                            ft.DataColumn(
+                                ft.Text("Foreign Amount", size=11), numeric=True
+                            ),
+                            ft.DataColumn(
+                                ft.Text("FX Rate Used", size=11), numeric=True
+                            ),
                             ft.DataColumn(ft.Text("Rate Source", size=11)),
-                            ft.DataColumn(ft.Text("NGN Equivalent", size=11), numeric=True),
+                            ft.DataColumn(
+                                ft.Text("NGN Equivalent", size=11), numeric=True
+                            ),
                         ],
                         rows=rows,
-                        border=ft.border.all(1, ft.Colors.GREY_200),
+                        border=ft.Border.all(1, ft.Colors.GREY_200),
                         border_radius=8,
                     ),
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _minimum_tax_comparison(self) -> ft.Control:
@@ -344,41 +392,83 @@ class ReviewConfirmStep(ft.BaseControl):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Minimum Tax Comparison", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Minimum Tax Comparison", size=14, weight=ft.FontWeight.W_600
+                    ),
                     ft.Row(
                         controls=[
                             ft.Container(
                                 content=ft.Column(
                                     controls=[
-                                        ft.Text("Graduated Tax", size=12, color=ft.Colors.GREY_600),
-                                        ft.Text(_fmt(r.net_tax_payable), size=16, weight=ft.FontWeight.BOLD,
-                                                color=ft.Colors.BLUE_800 if graduated_higher else ft.Colors.GREY_600),
-                                        ft.Text("← Higher" if graduated_higher else "", size=11, color=ft.Colors.GREEN_700),
+                                        ft.Text(
+                                            "Graduated Tax",
+                                            size=12,
+                                            color=ft.Colors.GREY_600,
+                                        ),
+                                        ft.Text(
+                                            _fmt(r.net_tax_payable),
+                                            size=16,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.BLUE_800
+                                            if graduated_higher
+                                            else ft.Colors.GREY_600,
+                                        ),
+                                        ft.Text(
+                                            "← Higher" if graduated_higher else "",
+                                            size=11,
+                                            color=ft.Colors.GREEN_700,
+                                        ),
                                     ],
                                     spacing=4,
                                 ),
-                                padding=ft.padding.all(14),
+                                padding=ft.Padding.all(14),
                                 border_radius=8,
-                                bgcolor=ft.Colors.BLUE_50 if graduated_higher else ft.Colors.GREY_50,
-                                border=ft.border.all(2 if graduated_higher else 1,
-                                                     ft.Colors.BLUE_400 if graduated_higher else ft.Colors.GREY_200),
+                                bgcolor=ft.Colors.BLUE_50
+                                if graduated_higher
+                                else ft.Colors.GREY_50,
+                                border=ft.Border.all(
+                                    2 if graduated_higher else 1,
+                                    ft.Colors.BLUE_400
+                                    if graduated_higher
+                                    else ft.Colors.GREY_200,
+                                ),
                                 expand=1,
                             ),
                             ft.Container(
                                 content=ft.Column(
                                     controls=[
-                                        ft.Text("1% Minimum Tax", size=12, color=ft.Colors.GREY_600),
-                                        ft.Text(_fmt(r.minimum_tax), size=16, weight=ft.FontWeight.BOLD,
-                                                color=ft.Colors.ORANGE_800 if not graduated_higher else ft.Colors.GREY_600),
-                                        ft.Text("← Higher" if not graduated_higher else "", size=11, color=ft.Colors.GREEN_700),
+                                        ft.Text(
+                                            "1% Minimum Tax",
+                                            size=12,
+                                            color=ft.Colors.GREY_600,
+                                        ),
+                                        ft.Text(
+                                            _fmt(r.minimum_tax),
+                                            size=16,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.ORANGE_800
+                                            if not graduated_higher
+                                            else ft.Colors.GREY_600,
+                                        ),
+                                        ft.Text(
+                                            "← Higher" if not graduated_higher else "",
+                                            size=11,
+                                            color=ft.Colors.GREEN_700,
+                                        ),
                                     ],
                                     spacing=4,
                                 ),
-                                padding=ft.padding.all(14),
+                                padding=ft.Padding.all(14),
                                 border_radius=8,
-                                bgcolor=ft.Colors.ORANGE_50 if not graduated_higher else ft.Colors.GREY_50,
-                                border=ft.border.all(2 if not graduated_higher else 1,
-                                                     ft.Colors.ORANGE_400 if not graduated_higher else ft.Colors.GREY_200),
+                                bgcolor=ft.Colors.ORANGE_50
+                                if not graduated_higher
+                                else ft.Colors.GREY_50,
+                                border=ft.Border.all(
+                                    2 if not graduated_higher else 1,
+                                    ft.Colors.ORANGE_400
+                                    if not graduated_higher
+                                    else ft.Colors.GREY_200,
+                                ),
                                 expand=1,
                             ),
                         ],
@@ -393,10 +483,10 @@ class ReviewConfirmStep(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _cgt_exemption_card(self) -> ft.Control:
@@ -404,10 +494,19 @@ class ReviewConfirmStep(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, color=ft.Colors.GREEN_700, size=20),
+                    ft.Icon(
+                        ft.Icons.CHECK_CIRCLE_OUTLINE,
+                        color=ft.Colors.GREEN_700,
+                        size=20,
+                    ),
                     ft.Column(
                         controls=[
-                            ft.Text("CGT Exemption Applied", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.GREEN_800),
+                            ft.Text(
+                                "CGT Exemption Applied",
+                                size=13,
+                                weight=ft.FontWeight.W_600,
+                                color=ft.Colors.GREEN_800,
+                            ),
                             ft.Text(
                                 f"Exempt amount: {_fmt(r.cgt_exempt_amount)} — "
                                 "Proceeds < ₦150M AND gain ≤ ₦10M within 12 months.",
@@ -420,17 +519,21 @@ class ReviewConfirmStep(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(14),
+            padding=ft.Padding.all(14),
             border_radius=8,
             bgcolor=ft.Colors.GREEN_50,
-            border=ft.border.all(1, ft.Colors.GREEN_200),
+            border=ft.Border.all(1, ft.Colors.GREEN_200),
         )
 
     def _minimum_tax_notice(self) -> ft.Control:
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER_OUTLINED, color=ft.Colors.ORANGE_700, size=16),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_OUTLINED,
+                        color=ft.Colors.ORANGE_700,
+                        size=16,
+                    ),
                     ft.Text(
                         "Note: The applicability of the 1% minimum tax rule to individuals under NTA 2025 "
                         "is unconfirmed. This computation applies the rule as configured. Verify with LIRS or a tax advisor.",
@@ -441,10 +544,10 @@ class ReviewConfirmStep(ft.BaseControl):
                 ],
                 spacing=8,
             ),
-            padding=ft.padding.all(12),
+            padding=ft.Padding.all(12),
             border_radius=6,
             bgcolor=ft.Colors.ORANGE_50,
-            border=ft.border.all(1, ft.Colors.ORANGE_200),
+            border=ft.Border.all(1, ft.Colors.ORANGE_200),
         )
 
     def _warnings_card(self) -> ft.Control:
@@ -453,19 +556,29 @@ class ReviewConfirmStep(ft.BaseControl):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_700, size=18),
-                            ft.Text("Incomplete Filing", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.RED_800),
+                            ft.Icon(
+                                ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED_700, size=18
+                            ),
+                            ft.Text(
+                                "Incomplete Filing",
+                                size=14,
+                                weight=ft.FontWeight.W_600,
+                                color=ft.Colors.RED_800,
+                            ),
                         ],
                         spacing=8,
                     ),
-                    *[ft.Text(f"• {w}", size=12, color=ft.Colors.RED_700) for w in self._warnings],
+                    *[
+                        ft.Text(f"• {w}", size=12, color=ft.Colors.RED_700)
+                        for w in self._warnings
+                    ],
                 ],
                 spacing=6,
             ),
-            padding=ft.padding.all(14),
+            padding=ft.Padding.all(14),
             border_radius=8,
             bgcolor=ft.Colors.RED_50,
-            border=ft.border.all(1, ft.Colors.RED_200),
+            border=ft.Border.all(1, ft.Colors.RED_200),
         )
 
     def _action_buttons(self) -> ft.Control:
@@ -477,7 +590,7 @@ class ReviewConfirmStep(ft.BaseControl):
                     on_click=self._on_save_later,
                 ),
                 ft.Container(expand=True),
-                ft.ElevatedButton(
+                ft.Button(
                     "Confirm Filing",
                     icon=ft.Icons.LOCK_OUTLINED,
                     style=ft.ButtonStyle(
@@ -491,21 +604,28 @@ class ReviewConfirmStep(ft.BaseControl):
 
     async def _on_confirm(self, e) -> None:
         """Lock the filing as an immutable Confirmed record."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None or app_state.active_filing is None:
             return
         try:
             from lagosfile.services.filing_service import FilingService
+
             svc = FilingService()
             await svc.confirm(str(app_state.active_filing.id))
-            self.page.go("/history")
+            self._page.push_route("/history")
         except Exception as exc:
             self._warnings.append(f"Confirm failed: {exc}")
-            self.update()
+            self._page.update()
 
     async def _on_save_later(self, e) -> None:
         """Save current state as a Draft without confirming."""
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state is None or app_state.active_filing is None:
             return
-        self.page.go("/dashboard")
+        self._page.push_route("/dashboard")
+
+
+
+
+
+

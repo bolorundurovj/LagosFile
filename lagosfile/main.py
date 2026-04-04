@@ -18,7 +18,8 @@ import asyncio
 import flet as ft
 
 from lagosfile.constants import Constants
-from lagosfile.security import load_or_create_salt, derive_key, decrypt_db
+from lagosfile.security import load_or_create_salt, derive_key, decrypt_db, encrypt_db, atomic_write
+from lagosfile.models import init_db, serialize_db
 from lagosfile.services.config_engine import ConfigEngine
 from lagosfile.services.profile_service import ProfileService
 from lagosfile.state import AppState, WizardDraft
@@ -29,7 +30,7 @@ from lagosfile.state import AppState, WizardDraft
 # ---------------------------------------------------------------------------
 
 
-class PinEntryPage(ft.BaseControl):
+class PinEntryPage(ft.Container):
     """PIN prompt shown on every app launch.
 
     Derives the Fernet key from the entered PIN, decrypts the DB,
@@ -40,7 +41,8 @@ class PinEntryPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._pin_field = ft.TextField(
             label="Enter PIN",
             password=True,
@@ -50,6 +52,7 @@ class PinEntryPage(ft.BaseControl):
         )
         self._error_text = ft.Text("", color=ft.Colors.RED_400, size=13)
         self._loading = ft.ProgressRing(visible=False, width=24, height=24)
+        self.content = self.build()
 
     def build(self) -> ft.Control:
         return ft.Column(
@@ -73,7 +76,7 @@ class PinEntryPage(ft.BaseControl):
                             self._error_text,
                             ft.Row(
                                 controls=[
-                                    ft.ElevatedButton(
+                                    ft.Button(
                                         "Unlock",
                                         on_click=self._on_submit,
                                         style=ft.ButtonStyle(
@@ -109,29 +112,35 @@ class PinEntryPage(ft.BaseControl):
         pin = self._pin_field.value or ""
         if not pin:
             self._error_text.value = "PIN is required."
-            self.update()
+            self._page.update()
             return
 
         self._loading.visible = True
         self._error_text.value = ""
-        self.update()
+        self._page.update()
 
         try:
             salt = load_or_create_salt()
             fernet_key = derive_key(pin, salt)
 
             enc_path = Constants.ENCRYPTED_DB
+            plaintext_bytes = b""
             if enc_path.exists():
                 ciphertext = enc_path.read_bytes()
-                decrypt_db(ciphertext, fernet_key)  # raises InvalidToken on wrong PIN
+                plaintext_bytes = decrypt_db(ciphertext, fernet_key)  # raises InvalidToken on wrong PIN
 
-            # Initialise TortoiseORM (in-memory SQLite for the session)
-            from tortoise import Tortoise
-            await Tortoise.init(
-                db_url="sqlite://:memory:",
-                modules={"models": ["lagosfile.models"]},
-            )
-            await Tortoise.generate_schemas()
+            # Load decrypted bytes into in-memory SQLite and initialise ORM
+            await init_db(plaintext_bytes)
+
+            # Seed NTA 2025 config if this is a fresh DB
+            from lagosfile.services.config_engine import ConfigEngine as _CE
+            from lagosfile.models import TaxConfigModel
+            if await TaxConfigModel.all().count() == 0:
+                from lagosfile.services.config_engine import NTA_2025_CONFIG, _config_to_model_fields
+                import uuid
+                fields = _config_to_model_fields(NTA_2025_CONFIG)
+                fields["id"] = uuid.uuid4()
+                await TaxConfigModel.create(**fields)
 
             # Load AppState
             config_engine = ConfigEngine()
@@ -147,22 +156,26 @@ class PinEntryPage(ft.BaseControl):
                 current_step=1,
                 wizard_data=WizardDraft(),
             )
-            self.page.data = app_state
+            self._page.data = app_state
+
+            # Store fernet_key on page for subsequent DB saves
+            self._page.session.set("fernet_key", fernet_key)
 
             if taxpayer is None:
-                self.page.go("/setup")
+                await self._page.push_route("/setup")
             else:
-                self.page.go("/")
+                await self._page.push_route("/dashboard")
 
         except Exception as exc:
             from cryptography.fernet import InvalidToken
+
             if isinstance(exc, InvalidToken):
                 self._error_text.value = "Incorrect PIN. Please try again."
             else:
                 self._error_text.value = f"Error: {exc}"
         finally:
             self._loading.visible = False
-            self.update()
+            self._page.update()
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +183,7 @@ class PinEntryPage(ft.BaseControl):
 # ---------------------------------------------------------------------------
 
 
-class ProfileSetupPage(ft.BaseControl):
+class ProfileSetupPage(ft.Container):
     """First-run profile creation and PIN setup.
 
     Shown when no taxpayer profile exists. Collects name, TIN, optional
@@ -181,7 +194,8 @@ class ProfileSetupPage(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
 
         self._name_field = ft.TextField(label="Full Name *", width=340)
         self._tin_field = ft.TextField(
@@ -193,7 +207,9 @@ class ProfileSetupPage(ft.BaseControl):
         self._address_field = ft.TextField(label="Lagos Address (optional)", width=340)
         self._phone_field = ft.TextField(label="Phone Number (optional)", width=340)
         self._email_field = ft.TextField(label="Email Address (optional)", width=340)
-        self._agent_field = ft.TextField(label="Filing Agent Name/Company (optional)", width=340)
+        self._agent_field = ft.TextField(
+            label="Filing Agent Name/Company (optional)", width=340
+        )
         self._pin_field = ft.TextField(
             label="Set PIN *",
             password=True,
@@ -208,6 +224,7 @@ class ProfileSetupPage(ft.BaseControl):
         )
         self._error_text = ft.Text("", color=ft.Colors.RED_400, size=13)
         self._loading = ft.ProgressRing(visible=False, width=24, height=24)
+        self.content = self.build()
 
     def build(self) -> ft.Control:
         return ft.Column(
@@ -250,7 +267,7 @@ class ProfileSetupPage(ft.BaseControl):
                             self._error_text,
                             ft.Row(
                                 controls=[
-                                    ft.ElevatedButton(
+                                    ft.Button(
                                         "Create Profile",
                                         on_click=self._on_submit,
                                         style=ft.ButtonStyle(
@@ -307,7 +324,7 @@ class ProfileSetupPage(ft.BaseControl):
 
         self._loading.visible = True
         self._error_text.value = ""
-        self.update()
+        self._page.update()
 
         try:
             profile_service = ProfileService()
@@ -321,11 +338,29 @@ class ProfileSetupPage(ft.BaseControl):
             }
             taxpayer = await profile_service.create(profile_data, pin)
 
-            # Update AppState
-            if self.page.data:
-                self.page.data.taxpayer = taxpayer
+            # Store fernet_key on session for subsequent DB saves
+            from lagosfile.security import load_or_create_salt, derive_key
+            salt = load_or_create_salt()
+            fernet_key = derive_key(pin, salt)
+            self._page.session.set("fernet_key", fernet_key)
 
-            self.page.go("/")
+            # Initialise AppState if not already set (first run via setup page)
+            if not self._page.data:
+                from lagosfile.services.config_engine import ConfigEngine
+                from lagosfile.state import AppState, WizardDraft
+                config_engine = ConfigEngine()
+                active_config = await config_engine.get_active_config()
+                self._page.data = AppState(
+                    taxpayer=taxpayer,
+                    active_filing=None,
+                    active_config=active_config,
+                    current_step=1,
+                    wizard_data=WizardDraft(),
+                )
+            else:
+                self._page.data.taxpayer = taxpayer
+
+            await self._page.push_route("/dashboard")
 
         except ValueError as exc:
             self._show_error(str(exc))
@@ -333,11 +368,11 @@ class ProfileSetupPage(ft.BaseControl):
             self._show_error(f"Unexpected error: {exc}")
         finally:
             self._loading.visible = False
-            self.update()
+            self._page.update()
 
     def _show_error(self, msg: str) -> None:
         self._error_text.value = msg
-        self.update()
+        self._page.update()
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +380,15 @@ class ProfileSetupPage(ft.BaseControl):
 # ---------------------------------------------------------------------------
 
 
-def main(page: ft.Page) -> None:
+async def main(page: ft.Page) -> None:
     """Flet app entry point — sets up routing and initial navigation."""
     page.title = "LagosFile"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = ft.Colors.GREY_100
     page.padding = 0
+    page.window.width = 1280
+    page.window.height = 800
+    page.window.center()
 
     # Lazy imports to avoid circular deps at module level
     from lagosfile.ui.pages.dashboard import DashboardPage
@@ -359,17 +397,26 @@ def main(page: ft.Page) -> None:
     from lagosfile.ui.pages.config import ConfigurationPage
     from lagosfile.ui.pages.lirs_integration import LIRSIntegrationPage
 
-    def route_change(e: ft.RouteChangeEvent) -> None:
+    async def route_change(e: ft.RouteChangeEvent) -> None:
         page.views.clear()
 
         route = page.route
 
         if route == "/pin" or route == "/":
-            # Check if DB exists; if not, go to setup
+            # Check if DB exists; if not, initialise ORM fresh and go to setup
             if not Constants.ENCRYPTED_DB.exists():
+                from tortoise import Tortoise
+                try:
+                    await Tortoise.init(
+                        db_url="sqlite://:memory:",
+                        modules={"models": ["lagosfile.models"]},
+                    )
+                    await Tortoise.generate_schemas()
+                except Exception:
+                    pass  # already initialised
                 page.views.append(
                     ft.View(
-                        "/setup",
+                        route="/setup",
                         controls=[ProfileSetupPage(page)],
                         bgcolor=ft.Colors.GREY_100,
                     )
@@ -377,7 +424,7 @@ def main(page: ft.Page) -> None:
             else:
                 page.views.append(
                     ft.View(
-                        "/pin",
+                        route="/pin",
                         controls=[PinEntryPage(page)],
                         bgcolor=ft.Colors.GREY_100,
                     )
@@ -386,7 +433,7 @@ def main(page: ft.Page) -> None:
         elif route == "/setup":
             page.views.append(
                 ft.View(
-                    "/setup",
+                    route="/setup",
                     controls=[ProfileSetupPage(page)],
                     bgcolor=ft.Colors.GREY_100,
                 )
@@ -395,7 +442,7 @@ def main(page: ft.Page) -> None:
         elif route == "/dashboard" or (route == "/" and page.data is not None):
             page.views.append(
                 ft.View(
-                    "/dashboard",
+                    route="/dashboard",
                     controls=[DashboardPage(page)],
                     padding=0,
                     bgcolor=ft.Colors.GREY_100,
@@ -405,7 +452,7 @@ def main(page: ft.Page) -> None:
         elif route.startswith("/wizard"):
             page.views.append(
                 ft.View(
-                    route,
+                    route=route,
                     controls=[WizardPage(page)],
                     padding=0,
                     bgcolor=ft.Colors.GREY_100,
@@ -415,7 +462,7 @@ def main(page: ft.Page) -> None:
         elif route == "/history":
             page.views.append(
                 ft.View(
-                    "/history",
+                    route="/history",
                     controls=[FilingHistoryPage(page)],
                     padding=0,
                     bgcolor=ft.Colors.GREY_100,
@@ -425,7 +472,7 @@ def main(page: ft.Page) -> None:
         elif route == "/config":
             page.views.append(
                 ft.View(
-                    "/config",
+                    route="/config",
                     controls=[ConfigurationPage(page)],
                     padding=0,
                     bgcolor=ft.Colors.GREY_100,
@@ -435,7 +482,7 @@ def main(page: ft.Page) -> None:
         elif route.startswith("/lirs"):
             page.views.append(
                 ft.View(
-                    route,
+                    route=route,
                     controls=[LIRSIntegrationPage(page)],
                     padding=0,
                     bgcolor=ft.Colors.GREY_100,
@@ -444,17 +491,21 @@ def main(page: ft.Page) -> None:
 
         page.update()
 
-    def view_pop(e: ft.ViewPopEvent) -> None:
+    async def view_pop(e: ft.ViewPopEvent) -> None:
         page.views.pop()
         top_view = page.views[-1]
-        page.go(top_view.route)
+        await page.push_route(top_view.route)
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
 
     # Start at PIN entry (or setup if first run)
-    page.push_route("/")
+    await page.push_route("/pin")
 
 
 if __name__ == "__main__":
     ft.run(main=main)
+
+
+
+

@@ -18,7 +18,11 @@ _INCOME_TYPES = [
     ("Business/Trade", ft.Icons.STORE_OUTLINED, "Self-employment, sole trader income"),
     ("Rental", ft.Icons.HOME_OUTLINED, "Rental income from property"),
     ("Dividend", ft.Icons.TRENDING_UP, "Dividend income from investments"),
-    ("Interest", ft.Icons.SAVINGS_OUTLINED, "Interest income, FX differences on securities"),
+    (
+        "Interest",
+        ft.Icons.SAVINGS_OUTLINED,
+        "Interest income, FX differences on securities",
+    ),
     ("Capital Gains", ft.Icons.SHOW_CHART, "Gains from disposal of assets"),
     ("Digital Assets", ft.Icons.CURRENCY_BITCOIN, "Digital/virtual asset gains"),
     ("Royalties", ft.Icons.MUSIC_NOTE_OUTLINED, "Royalty income"),
@@ -35,7 +39,7 @@ _FX_COMPLIANCE_NOTICE = (
 )
 
 
-class IncomeSourcesStep(ft.BaseControl):
+class IncomeSourcesStep(ft.Container):
     """Step 1 of the filing wizard — Income Sources.
 
     Requirements: 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 5.4, 5.8
@@ -43,8 +47,10 @@ class IncomeSourcesStep(ft.BaseControl):
 
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
-        self.page = page
+        self._page = page
+        self.expand = True
         self._entries: list[dict] = []
+        self.content = self.build()
 
     def build(self) -> ft.Control:
         return ft.Column(
@@ -116,10 +122,10 @@ class IncomeSourcesStep(ft.BaseControl):
                 spacing=10,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            padding=ft.padding.symmetric(horizontal=14, vertical=10),
+            padding=ft.Padding.symmetric(horizontal=14, vertical=10),
             border_radius=8,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
             ink=True,
         )
 
@@ -129,7 +135,11 @@ class IncomeSourcesStep(ft.BaseControl):
             options=[ft.dropdown.Option(c) for c in _CURRENCIES],
             width=160,
         )
-        amount_field = ft.TextField(label="Amount in Foreign Currency", width=200, keyboard_type=ft.KeyboardType.NUMBER)
+        amount_field = ft.TextField(
+            label="Amount in Foreign Currency",
+            width=200,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
         date_field = ft.TextField(label="Date of Receipt (YYYY-MM-DD)", width=200)
         fetched_rate_field = ft.TextField(
             label="Fetched Rate (auto)",
@@ -159,10 +169,10 @@ class IncomeSourcesStep(ft.BaseControl):
                 spacing=8,
                 vertical_alignment=ft.CrossAxisAlignment.START,
             ),
-            padding=ft.padding.all(12),
+            padding=ft.Padding.all(12),
             border_radius=6,
             bgcolor=ft.Colors.BLUE_50,
-            border=ft.border.all(1, ft.Colors.BLUE_100),
+            border=ft.Border.all(1, ft.Colors.BLUE_100),
         )
 
         foreign_tax_field = ft.TextField(
@@ -193,19 +203,21 @@ class IncomeSourcesStep(ft.BaseControl):
                     compliance_notice,
                     foreign_tax_field,
                     foreign_tax_note,
-                    ft.ElevatedButton(
+                    ft.Button(
                         "Add Foreign Income Entry",
                         icon=ft.Icons.ADD,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_50, color=ft.Colors.BLUE_800),
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.BLUE_50, color=ft.Colors.BLUE_800
+                        ),
                         on_click=lambda e: None,
                     ),
                 ],
                 spacing=12,
             ),
-            padding=ft.padding.all(16),
+            padding=ft.Padding.all(16),
             border_radius=8,
             bgcolor=ft.Colors.GREY_50,
-            border=ft.border.all(1, ft.Colors.GREY_200),
+            border=ft.Border.all(1, ft.Colors.GREY_200),
         )
 
     def _document_attachment_zone(self) -> ft.Control:
@@ -214,10 +226,18 @@ class IncomeSourcesStep(ft.BaseControl):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.UPLOAD_FILE_OUTLINED, color=ft.Colors.GREY_500, size=28),
+                            ft.Icon(
+                                ft.Icons.UPLOAD_FILE_OUTLINED,
+                                color=ft.Colors.GREY_500,
+                                size=28,
+                            ),
                             ft.Column(
                                 controls=[
-                                    ft.Text("Attach supporting documents", size=13, color=ft.Colors.GREY_700),
+                                    ft.Text(
+                                        "Attach supporting documents",
+                                        size=13,
+                                        color=ft.Colors.GREY_700,
+                                    ),
                                     ft.Text(
                                         "PDF, JPG, PNG — max 100MB per file",
                                         size=11,
@@ -237,9 +257,9 @@ class IncomeSourcesStep(ft.BaseControl):
                 ],
                 spacing=10,
             ),
-            padding=ft.padding.all(20),
+            padding=ft.Padding.all(20),
             border_radius=8,
-            border=ft.border.all(1, ft.Colors.GREY_300, style=ft.BorderStyle.DASHED),
+            border=ft.Border.all(1, ft.Colors.GREY_300),
             bgcolor=ft.Colors.GREY_50,
         )
 
@@ -247,10 +267,18 @@ class IncomeSourcesStep(ft.BaseControl):
         """Open a dialog or expand a form to add an income entry."""
         # In a full implementation, this would open an entry form dialog
         # For the skeleton, we just track the intent
-        app_state = self.page.data
+        app_state = self._page.data
         if app_state:
-            app_state.wizard_data.income_entries.append({
-                "income_type": income_type,
-                "gross_amount_ngn": 0.0,
-                "description": "",
-            })
+            app_state.wizard_data.income_entries.append(
+                {
+                    "income_type": income_type,
+                    "gross_amount_ngn": 0.0,
+                    "description": "",
+                }
+            )
+
+
+
+
+
+

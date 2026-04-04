@@ -7,7 +7,7 @@ list_filings, and get_filing_detail operations.
 Requirements: 3.1, 3.4, 3.5, 4.2, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.8
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from lagosfile.models import (
@@ -153,7 +153,7 @@ class FilingService:
             f"LIRS/REF/{filing.year_of_assessment}/{sequential:05d}"
         )
         filing.status = "Confirmed"
-        filing.confirmed_at = datetime.utcnow()
+        filing.confirmed_at = datetime.now(timezone.utc)
 
         # Snapshot the active tax config version
         config = await ConfigEngine().get_active_config()
