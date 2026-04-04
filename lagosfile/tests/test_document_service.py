@@ -5,18 +5,22 @@ Tests validate_size() and attach() against Requirements 4.6, 4.7, 4.8, 14.5, 14.
 """
 
 import uuid
-import pytest
-import pytest_asyncio
 from pathlib import Path
+
+import pytest
 from tortoise import Tortoise
 
-from lagosfile.services.document_service import DocumentService, FileTooLargeError, MAX_FILE_SIZE_BYTES
 from lagosfile.models import Document
-
+from lagosfile.services.document_service import (
+    MAX_FILE_SIZE_BYTES,
+    DocumentService,
+    FileTooLargeError,
+)
 
 # ---------------------------------------------------------------------------
 # DB fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db(tmp_path):
@@ -33,6 +37,7 @@ async def tortoise_db(tmp_path):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def make_file(tmp_path: Path, name: str = "receipt.pdf", size_bytes: int = 1024) -> Path:
     """Create a temporary file of the given size."""
     p = tmp_path / name
@@ -43,6 +48,7 @@ def make_file(tmp_path: Path, name: str = "receipt.pdf", size_bytes: int = 1024)
 # ---------------------------------------------------------------------------
 # validate_size tests
 # ---------------------------------------------------------------------------
+
 
 def test_validate_size_accepts_file_at_limit(tmp_path):
     svc = DocumentService()
@@ -75,9 +81,11 @@ def test_validate_size_error_message(tmp_path):
 # attach tests
 # ---------------------------------------------------------------------------
 
+
 async def test_attach_copies_file_to_correct_path(tmp_path, monkeypatch):
     """File is copied to ~/LagosFile/documents/<TIN>/<YOA>/<entry_id>/."""
     import lagosfile.constants as const_mod
+
     monkeypatch.setattr(const_mod.Constants, "DOCUMENT_ROOT", tmp_path / "documents")
 
     svc = DocumentService()
@@ -98,6 +106,7 @@ async def test_attach_copies_file_to_correct_path(tmp_path, monkeypatch):
 async def test_attach_saves_document_record(tmp_path, monkeypatch):
     """A Document ORM record is created with correct metadata."""
     import lagosfile.constants as const_mod
+
     monkeypatch.setattr(const_mod.Constants, "DOCUMENT_ROOT", tmp_path / "documents")
 
     svc = DocumentService()
@@ -120,6 +129,7 @@ async def test_attach_saves_document_record(tmp_path, monkeypatch):
 async def test_attach_raises_before_copying_if_too_large(tmp_path, monkeypatch):
     """FileTooLargeError is raised before any file is written to disk."""
     import lagosfile.constants as const_mod
+
     dest_root = tmp_path / "documents"
     monkeypatch.setattr(const_mod.Constants, "DOCUMENT_ROOT", dest_root)
 

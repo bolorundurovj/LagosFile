@@ -13,16 +13,13 @@ Requirements: 1.1, 1.2, 14.2, 14.3, 14.4
 
 from __future__ import annotations
 
-import asyncio
-
 import flet as ft
 
 from lagosfile.constants import Constants
-from lagosfile.security import load_or_create_salt, derive_key, decrypt_db
+from lagosfile.security import decrypt_db, derive_key, load_or_create_salt
 from lagosfile.services.config_engine import ConfigEngine
 from lagosfile.services.profile_service import ProfileService
 from lagosfile.state import AppState, WizardDraft
-
 
 # ---------------------------------------------------------------------------
 # PinEntryPage
@@ -127,6 +124,7 @@ class PinEntryPage(ft.BaseControl):
 
             # Initialise TortoiseORM (in-memory SQLite for the session)
             from tortoise import Tortoise
+
             await Tortoise.init(
                 db_url="sqlite://:memory:",
                 modules={"models": ["lagosfile.models"]},
@@ -156,6 +154,7 @@ class PinEntryPage(ft.BaseControl):
 
         except Exception as exc:
             from cryptography.fernet import InvalidToken
+
             if isinstance(exc, InvalidToken):
                 self._error_text.value = "Incorrect PIN. Please try again."
             else:
@@ -353,11 +352,11 @@ def main(page: ft.Page) -> None:
     page.padding = 0
 
     # Lazy imports to avoid circular deps at module level
-    from lagosfile.ui.pages.dashboard import DashboardPage
-    from lagosfile.ui.pages.wizard import WizardPage
-    from lagosfile.ui.pages.history import FilingHistoryPage
     from lagosfile.ui.pages.config import ConfigurationPage
+    from lagosfile.ui.pages.dashboard import DashboardPage
+    from lagosfile.ui.pages.history import FilingHistoryPage
     from lagosfile.ui.pages.lirs_integration import LIRSIntegrationPage
+    from lagosfile.ui.pages.wizard import WizardPage
 
     def route_change(e: ft.RouteChangeEvent) -> None:
         page.views.clear()

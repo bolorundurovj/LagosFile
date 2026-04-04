@@ -10,22 +10,24 @@ Implements the waterfall resolution strategy:
 Requirements: 5.2, 5.5, 5.6, 5.7, 5.9, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6
 """
 
+import logging
 from dataclasses import dataclass
-from datetime import date, datetime
-from typing import Optional
+from datetime import date
 
 import httpx
 
 from lagosfile.models import FXCache
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class FXResult:
-    rate: Optional[float]
+    rate: float | None
     source: str  # "fawazahmed0" | "exchangerate-api" | "cache" | "manual"
     rate_date: date
     is_cached: bool
-    cache_date: Optional[date]
+    cache_date: date | None
 
 
 class FXService:
@@ -74,9 +76,7 @@ class FXService:
             cache_date=None,
         )
 
-    async def _try_fawazahmed0(
-        self, base: str, quote: str, target_date: date
-    ) -> Optional[FXResult]:
+    async def _try_fawazahmed0(self, base: str, quote: str, target_date: date) -> FXResult | None:
         """Try fawazahmed0 historical endpoint."""
         try:
             url = (
@@ -95,12 +95,16 @@ class FXService:
                     is_cached=False,
                     cache_date=None,
                 )
-        except (httpx.RequestError, httpx.HTTPStatusError, KeyError, ValueError, TypeError):
+        except (
+            httpx.RequestError,
+            httpx.HTTPStatusError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ):
             return None
 
-    async def _try_exchangerate_api(
-        self, base: str, quote: str, target_date: date
-    ) -> Optional[FXResult]:
+    async def _try_exchangerate_api(self, base: str, quote: str, target_date: date) -> FXResult | None:
         """Fallback to ExchangeRate-API Open Access."""
         try:
             url = f"https://open.er-api.com/v6/latest/{base}"
@@ -117,19 +121,19 @@ class FXService:
                     is_cached=False,
                     cache_date=None,
                 )
-        except (httpx.RequestError, httpx.HTTPStatusError, KeyError, ValueError, TypeError):
+        except (
+            httpx.RequestError,
+            httpx.HTTPStatusError,
+            KeyError,
+            ValueError,
+            TypeError,
+        ):
             return None
 
-    async def _try_cached_rate(
-        self, base: str, quote: str, target_date: date
-    ) -> Optional[FXResult]:
+    async def _try_cached_rate(self, base: str, quote: str, target_date: date) -> FXResult | None:
         """Query FXCache for the most recent cached rate for this pair."""
         try:
-            cached = (
-                await FXCache.filter(base_currency=base, quote_currency=quote)
-                .order_by("-rate_date")
-                .first()
-            )
+            cached = await FXCache.filter(base_currency=base, quote_currency=quote).order_by("-rate_date").first()
             if cached:
                 return FXResult(
                     rate=float(cached.rate),
@@ -139,8 +143,8 @@ class FXService:
                     cache_date=cached.rate_date,
                 )
         except Exception:
-            pass
-        return None
+            logger.exception("Error querying FXCache")
+            return None
 
     async def _cache_rate(
         self,
@@ -165,12 +169,13 @@ class FXService:
             )
         except Exception:
             # Never fail the caller if caching fails
-            pass
+            logger.exception("Error caching FX rate")
 
 
 # ---------------------------------------------------------------------------
 # CBN Override — pure function, no DB needed
 # ---------------------------------------------------------------------------
+
 
 def apply_cbn_override(entry_data: dict) -> dict:
     """Apply CBN override rate logic to a foreign income entry dict.

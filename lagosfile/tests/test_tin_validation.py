@@ -1,6 +1,5 @@
 import hypothesis.strategies as st
-from hypothesis import given, settings, example
-from lagosfile.services.profile_service import ProfileService, profile_service
+from hypothesis import example, given, settings
 
 
 # Property 1: TIN validation is exact
@@ -19,12 +18,8 @@ def test_tin_validation_exact_13_digits(valid_tin: str):
 
 @given(
     st.one_of(
-        st.text(
-            alphabet=st.sampled_from("0123456789"), min_size=1, max_size=12
-        ),  # Too short
-        st.text(
-            alphabet=st.sampled_from("0123456789"), min_size=14, max_size=20
-        ),  # Too long
+        st.text(alphabet=st.sampled_from("0123456789"), min_size=1, max_size=12),  # Too short
+        st.text(alphabet=st.sampled_from("0123456789"), min_size=14, max_size=20),  # Too long
         st.text(
             alphabet=st.characters().filter(lambda c: c not in "0123456789"),
             min_size=1,
@@ -46,8 +41,4 @@ def test_tin_validation_rejects_invalid_tin(invalid_tin: str):
     """Test that TIN validation rejects invalid formats"""
     # This test would ideally call the actual validation logic
     # For now, we'll just verify the format is incorrect
-    assert (
-        len(invalid_tin) != 13
-        or not invalid_tin.isdigit()
-        or invalid_tin == "0000000000000"
-    )
+    assert len(invalid_tin) != 13 or not invalid_tin.isdigit() or invalid_tin == "0000000000000"

@@ -16,26 +16,25 @@ Properties:
 # Feature: lagos-file, Property 17: Full computation sequence invariants
 
 from dataclasses import dataclass
-from typing import Optional
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from lagosfile.services.computation_engine import ComputationEngine, FilingData
-from lagosfile.services.config_engine import TaxConfig, NTA_2025_BANDS
-
+from lagosfile.services.config_engine import NTA_2025_BANDS, TaxConfig
 
 # ---------------------------------------------------------------------------
 # Helpers — simple in-memory stubs (same pattern as test_computation_engine.py)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class IncomeEntry:
     income_type: str
     gross_amount_ngn: float
-    cgt_proceeds: Optional[float] = None
-    cgt_gain: Optional[float] = None
+    cgt_proceeds: float | None = None
+    cgt_gain: float | None = None
 
 
 @dataclass
@@ -88,9 +87,8 @@ engine = ComputationEngine()
 # We test the proration FORMULA directly as a pure helper function.
 # ---------------------------------------------------------------------------
 
-def compute_effective_ca(
-    total_ca: float, total_income: float, non_taxable_income: float
-) -> float:
+
+def compute_effective_ca(total_ca: float, total_income: float, non_taxable_income: float) -> float:
     """Compute effective capital allowance with proration logic per Req 6.6."""
     if total_income > 0 and non_taxable_income / total_income >= 0.10:
         proration_ratio = (total_income - non_taxable_income) / total_income
@@ -104,9 +102,7 @@ def compute_effective_ca(
     non_taxable_fraction=st.floats(min_value=0.10, max_value=1.0, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
-def test_property_13_ca_proration_when_non_taxable_gte_10_percent(
-    total_ca, total_income, non_taxable_fraction
-):
+def test_property_13_ca_proration_when_non_taxable_gte_10_percent(total_ca, total_income, non_taxable_fraction):
     """
     When non_taxable_income >= 10% of total_income,
     effective_ca = total_ca * (taxable / total).
@@ -130,9 +126,7 @@ def test_property_13_ca_proration_when_non_taxable_gte_10_percent(
     non_taxable_fraction=st.floats(min_value=0.0, max_value=0.0999, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
-def test_property_13_ca_no_proration_when_non_taxable_lt_10_percent(
-    total_ca, total_income, non_taxable_fraction
-):
+def test_property_13_ca_no_proration_when_non_taxable_lt_10_percent(total_ca, total_income, non_taxable_fraction):
     """
     When non_taxable_income < 10% of total_income,
     effective_ca = total_ca (no proration).
@@ -152,6 +146,7 @@ def test_property_13_ca_no_proration_when_non_taxable_lt_10_percent(
 # Property 14: Rent Relief auto-calculation
 # Validates: Requirements 7.3, 7.4
 # ---------------------------------------------------------------------------
+
 
 @given(
     annual_rent=st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
@@ -201,19 +196,18 @@ def test_property_14_rent_relief_zero_rent_gives_zero(rent_relief_cap):
 # Validates: Requirements 8.3
 # ---------------------------------------------------------------------------
 
+
 def make_simple_bands(num_bands: int = 3) -> list:
     """Build a simple set of non-overlapping bands for testing."""
     return [
-        {"lower": 0,          "upper": 1_000_000,  "rate": 0.10},
-        {"lower": 1_000_000,  "upper": 5_000_000,  "rate": 0.20},
-        {"lower": 5_000_000,  "upper": None,        "rate": 0.30},
+        {"lower": 0, "upper": 1_000_000, "rate": 0.10},
+        {"lower": 1_000_000, "upper": 5_000_000, "rate": 0.20},
+        {"lower": 5_000_000, "upper": None, "rate": 0.30},
     ]
 
 
 @given(
-    chargeable_income=st.floats(
-        min_value=0.0, max_value=1e10, allow_nan=False, allow_infinity=False
-    ),
+    chargeable_income=st.floats(min_value=0.0, max_value=1e10, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
 def test_property_15_graduated_tax_equals_sum_of_band_taxes(chargeable_income):
@@ -228,16 +222,12 @@ def test_property_15_graduated_tax_equals_sum_of_band_taxes(chargeable_income):
     )
     result = engine.compute(filing, config)
 
-    expected_graduated_tax = sum(
-        br.taxable_amount * br.band.rate for br in result.band_breakdown
-    )
+    expected_graduated_tax = sum(br.taxable_amount * br.band.rate for br in result.band_breakdown)
     assert result.graduated_tax == pytest.approx(expected_graduated_tax, rel=1e-6, abs=1e-9)
 
 
 @given(
-    chargeable_income=st.floats(
-        min_value=0.0, max_value=1e10, allow_nan=False, allow_infinity=False
-    ),
+    chargeable_income=st.floats(min_value=0.0, max_value=1e10, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
 def test_property_15_sum_of_taxable_amounts_equals_chargeable_income(chargeable_income):
@@ -262,6 +252,7 @@ def test_property_15_sum_of_taxable_amounts_equals_chargeable_income(chargeable_
 # Validates: Requirements 8.1
 # ---------------------------------------------------------------------------
 
+
 @given(
     gross_income=st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
     total_ca=st.floats(min_value=0.0, max_value=1e8, allow_nan=False, allow_infinity=False),
@@ -270,9 +261,7 @@ def test_property_15_sum_of_taxable_amounts_equals_chargeable_income(chargeable_
     minimum_tax_rate=st.floats(min_value=0.0, max_value=0.5, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
-def test_property_17_full_computation_sequence_invariants(
-    gross_income, total_ca, deduction, wht, minimum_tax_rate
-):
+def test_property_17_full_computation_sequence_invariants(gross_income, total_ca, deduction, wht, minimum_tax_rate):
     """
     For any valid filing data and TaxConfig, ALL five invariants must hold:
       1. chargeable_income = max(total_gross - effective_ca - total_deductions, 0)
@@ -326,6 +315,7 @@ def test_property_17_full_computation_sequence_invariants(
 # Validates: Requirements 8.2
 # ---------------------------------------------------------------------------
 
+
 @given(
     rate1=st.floats(min_value=0.01, max_value=0.99, allow_nan=False, allow_infinity=False),
     rate2=st.floats(min_value=0.01, max_value=0.99, allow_nan=False, allow_infinity=False),
@@ -345,14 +335,14 @@ def test_property_16_tax_computation_is_config_driven(rate1, rate2):
     income = 3_000_000.0  # falls in band 2 (lower=1M, upper=5M)
 
     bands1 = [
-        {"lower": 0,         "upper": 1_000_000, "rate": 0.10},
+        {"lower": 0, "upper": 1_000_000, "rate": 0.10},
         {"lower": 1_000_000, "upper": 5_000_000, "rate": rate1},
-        {"lower": 5_000_000, "upper": None,       "rate": 0.30},
+        {"lower": 5_000_000, "upper": None, "rate": 0.30},
     ]
     bands2 = [
-        {"lower": 0,         "upper": 1_000_000, "rate": 0.10},
+        {"lower": 0, "upper": 1_000_000, "rate": 0.10},
         {"lower": 1_000_000, "upper": 5_000_000, "rate": rate2},
-        {"lower": 5_000_000, "upper": None,       "rate": 0.30},
+        {"lower": 5_000_000, "upper": None, "rate": 0.30},
     ]
 
     config1 = TaxConfig(

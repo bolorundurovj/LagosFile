@@ -37,7 +37,7 @@ class TopBar(ft.BaseControl):
             # Mask TIN: show last 4 digits
             tin_display = f"TIN: ***{tin[-4:]}" if len(tin) >= 4 else f"TIN: {tin}"
 
-        avatar_initials = (taxpayer_name[0].upper() if taxpayer_name and taxpayer_name != "—" else "?")
+        avatar_initials = taxpayer_name[0].upper() if taxpayer_name and taxpayer_name != "—" else "?"
 
         return ft.Container(
             content=ft.Row(

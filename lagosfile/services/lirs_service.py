@@ -10,10 +10,8 @@ Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8
 from __future__ import annotations
 
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Optional
 
 from lagosfile.constants import Constants
 
@@ -23,9 +21,10 @@ LIRS_PORTAL_URL = "https://etax.lirs.gov.ng"
 @dataclass
 class AutomationResult:
     """Result returned by LIRSService.file_with_lirs()."""
+
     success: bool
     fallback_active: bool = False
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 class LIRSService:

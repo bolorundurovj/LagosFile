@@ -10,18 +10,17 @@ Requirements: 4.2, 4.3
 # Feature: lagos-file, Property 4: Multiple income entries are all persisted
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from tortoise import Tortoise
 
-from hypothesis import given, settings, HealthCheck
-from hypothesis import strategies as st
-
-from lagosfile.models import Filing, IncomeEntry, Taxpayer
+from lagosfile.models import IncomeEntry, Taxpayer
 from lagosfile.services.filing_service import FilingService, calculate_bik_taxable_value
-
 
 # ---------------------------------------------------------------------------
 # DB fixture — one fresh in-memory DB per test function
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -39,6 +38,7 @@ async def tortoise_db():
 # Helper
 # ---------------------------------------------------------------------------
 
+
 async def _get_or_create_taxpayer() -> Taxpayer:
     taxpayer, _ = await Taxpayer.get_or_create(
         tin="1234567890123",
@@ -51,6 +51,7 @@ async def _get_or_create_taxpayer() -> Taxpayer:
 # Property 3: Benefits-in-kind taxable value
 # Validates: Requirements 4.2
 # ---------------------------------------------------------------------------
+
 
 @given(cost=st.floats(min_value=0.01, max_value=1e12, allow_nan=False, allow_infinity=False))
 @settings(max_examples=25)
@@ -69,6 +70,7 @@ def test_property_3_bik_taxable_value(cost):
 # Property 4: Multiple income entries are all persisted
 # Validates: Requirements 4.3
 # ---------------------------------------------------------------------------
+
 
 @given(n=st.integers(min_value=1, max_value=10))
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -98,6 +100,4 @@ async def test_property_4_multiple_income_entries_persisted(tortoise_db, n):
     # Retrieve all entries for this filing
     retrieved = await IncomeEntry.filter(filing_id=filing.id)
 
-    assert len(retrieved) == n, (
-        f"Expected {n} income entries, got {len(retrieved)}"
-    )
+    assert len(retrieved) == n, f"Expected {n} income entries, got {len(retrieved)}"

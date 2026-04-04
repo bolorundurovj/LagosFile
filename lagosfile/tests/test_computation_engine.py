@@ -10,24 +10,24 @@ Tests:
   - CGT exemption NOT applied when either threshold exceeded
 """
 
-import pytest
 from dataclasses import dataclass
-from typing import Optional
+
+import pytest
 
 from lagosfile.services.computation_engine import ComputationEngine, FilingData
-from lagosfile.services.config_engine import TaxConfig, NTA_2025_BANDS
-
+from lagosfile.services.config_engine import NTA_2025_BANDS, TaxConfig
 
 # ---------------------------------------------------------------------------
 # Helpers — simple in-memory stand-ins for ORM objects
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class IncomeEntry:
     income_type: str
     gross_amount_ngn: float
-    cgt_proceeds: Optional[float] = None
-    cgt_gain: Optional[float] = None
+    cgt_proceeds: float | None = None
+    cgt_gain: float | None = None
 
 
 @dataclass
@@ -77,6 +77,7 @@ engine = ComputationEngine()
 # Test 1: Zero income → final_tax_payable = 0
 # ---------------------------------------------------------------------------
 
+
 def test_zero_income_zero_tax():
     """With no income entries, all computed values should be zero."""
     result = engine.compute(make_filing(), make_config())
@@ -92,11 +93,10 @@ def test_zero_income_zero_tax():
 # Test 2: Income in first band only (₦500,000) → 0% tax
 # ---------------------------------------------------------------------------
 
+
 def test_income_in_first_band_zero_tax():
     """₦500,000 falls entirely in the 0% band (₦0–₦800,000)."""
-    filing = make_filing(
-        income_entries=[IncomeEntry(income_type="business", gross_amount_ngn=500_000.0)]
-    )
+    filing = make_filing(income_entries=[IncomeEntry(income_type="business", gross_amount_ngn=500_000.0)])
     result = engine.compute(filing, make_config())
 
     assert result.total_gross_income == 500_000.0
@@ -111,6 +111,7 @@ def test_income_in_first_band_zero_tax():
 # Test 3: Income spanning multiple bands → correct marginal tax
 # ---------------------------------------------------------------------------
 
+
 def test_income_spanning_multiple_bands():
     """₦5,000,000 spans bands 1 (0%), 2 (15%), and 3 (18%).
 
@@ -119,9 +120,7 @@ def test_income_spanning_multiple_bands():
     Band 3: ₦3M–₦12M    → ₦2,000,000 @ 18% = ₦360,000
     Total graduated tax = ₦690,000
     """
-    filing = make_filing(
-        income_entries=[IncomeEntry(income_type="business", gross_amount_ngn=5_000_000.0)]
-    )
+    filing = make_filing(income_entries=[IncomeEntry(income_type="business", gross_amount_ngn=5_000_000.0)])
     result = engine.compute(filing, make_config())
 
     assert result.total_gross_income == 5_000_000.0
@@ -145,6 +144,7 @@ def test_income_spanning_multiple_bands():
 # ---------------------------------------------------------------------------
 # Test 4: Digital asset loss does not reduce other income
 # ---------------------------------------------------------------------------
+
 
 def test_digital_asset_loss_does_not_reduce_other_income():
     """A net digital asset loss of ₦200,000 should not reduce ₦1,000,000 other income."""
@@ -179,6 +179,7 @@ def test_digital_asset_gain_adds_to_total():
 # Test 5: CGT exemption applied when BOTH thresholds met
 # ---------------------------------------------------------------------------
 
+
 def test_cgt_exemption_applied_when_both_thresholds_met():
     """Gain from Nigerian company shares with proceeds < ₦150M AND gain ≤ ₦10M
     should be excluded from chargeable income."""
@@ -188,8 +189,8 @@ def test_cgt_exemption_applied_when_both_thresholds_met():
             IncomeEntry(
                 income_type="capital_gain_shares",
                 gross_amount_ngn=5_000_000.0,
-                cgt_proceeds=100_000_000.0,   # < 150M threshold ✓
-                cgt_gain=8_000_000.0,          # ≤ 10M threshold ✓
+                cgt_proceeds=100_000_000.0,  # < 150M threshold ✓
+                cgt_gain=8_000_000.0,  # ≤ 10M threshold ✓
             ),
         ]
     )
@@ -204,6 +205,7 @@ def test_cgt_exemption_applied_when_both_thresholds_met():
 # Test 6a: CGT exemption NOT applied when proceeds threshold exceeded
 # ---------------------------------------------------------------------------
 
+
 def test_cgt_exemption_not_applied_when_proceeds_exceed_threshold():
     """Proceeds ≥ ₦150M → CGT exemption does NOT apply."""
     filing = make_filing(
@@ -211,7 +213,7 @@ def test_cgt_exemption_not_applied_when_proceeds_exceed_threshold():
             IncomeEntry(
                 income_type="capital_gain_shares",
                 gross_amount_ngn=5_000_000.0,
-                cgt_proceeds=150_000_000.0,   # NOT < 150M (equal, so fails)
+                cgt_proceeds=150_000_000.0,  # NOT < 150M (equal, so fails)
                 cgt_gain=8_000_000.0,
             ),
         ]
@@ -226,6 +228,7 @@ def test_cgt_exemption_not_applied_when_proceeds_exceed_threshold():
 # Test 6b: CGT exemption NOT applied when gain threshold exceeded
 # ---------------------------------------------------------------------------
 
+
 def test_cgt_exemption_not_applied_when_gain_exceeds_threshold():
     """Gain > ₦10M → CGT exemption does NOT apply."""
     filing = make_filing(
@@ -233,8 +236,8 @@ def test_cgt_exemption_not_applied_when_gain_exceeds_threshold():
             IncomeEntry(
                 income_type="capital_gain_shares",
                 gross_amount_ngn=12_000_000.0,
-                cgt_proceeds=100_000_000.0,   # < 150M ✓
-                cgt_gain=10_000_001.0,         # > 10M ✗
+                cgt_proceeds=100_000_000.0,  # < 150M ✓
+                cgt_gain=10_000_001.0,  # > 10M ✗
             ),
         ]
     )
@@ -247,6 +250,7 @@ def test_cgt_exemption_not_applied_when_gain_exceeds_threshold():
 # ---------------------------------------------------------------------------
 # Additional: WHT credits reduce net tax payable
 # ---------------------------------------------------------------------------
+
 
 def test_wht_credits_reduce_net_tax():
     """WHT credits should reduce net_tax_payable (but not below 0)."""
@@ -278,6 +282,7 @@ def test_wht_credits_cannot_make_net_tax_negative():
 # Additional: Rent relief calculation
 # ---------------------------------------------------------------------------
 
+
 def test_rent_relief_capped():
     """Rent relief = min(annual_rent * 0.20, cap). Cap is ₦500,000."""
     # annual_rent = ₦4,000,000 → 20% = ₦800,000 → capped at ₦500,000
@@ -305,6 +310,7 @@ def test_rent_relief_below_cap():
 # ---------------------------------------------------------------------------
 # Additional: config_version is recorded
 # ---------------------------------------------------------------------------
+
 
 def test_config_version_recorded():
     """ComputationResult should record the config version label."""

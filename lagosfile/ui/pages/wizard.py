@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import flet as ft
 
-from lagosfile.ui.components.sidebar import Sidebar
-from lagosfile.ui.components.topbar import TopBar
 from lagosfile.services.filing_service import FilingService
 from lagosfile.state import advance_step, go_back
-
+from lagosfile.ui.components.sidebar import Sidebar
+from lagosfile.ui.components.topbar import TopBar
 
 _STEPS = [
     (1, "Income Sources"),
@@ -133,7 +132,7 @@ class WizardPage(ft.BaseControl):
                                     step_label,
                                     size=13,
                                     color=label_color,
-                                    weight=ft.FontWeight.W_500 if state == "active" else ft.FontWeight.NORMAL,
+                                    weight=(ft.FontWeight.W_500 if state == "active" else ft.FontWeight.NORMAL),
                                 ),
                             ],
                             spacing=1,
@@ -149,14 +148,19 @@ class WizardPage(ft.BaseControl):
                     ft.Container(
                         width=2,
                         height=24,
-                        bgcolor=ft.Colors.GREEN_400 if step_num < current_step else ft.Colors.GREY_300,
+                        bgcolor=(ft.Colors.GREEN_400 if step_num < current_step else ft.Colors.GREY_300),
                         margin=ft.margin.only(left=9),
                     )
                 )
 
         return ft.Column(
             controls=[
-                ft.Text("Filing Progress", size=13, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_700),
+                ft.Text(
+                    "Filing Progress",
+                    size=13,
+                    weight=ft.FontWeight.W_600,
+                    color=ft.Colors.GREY_700,
+                ),
                 ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
                 *items,
             ],
@@ -168,15 +172,19 @@ class WizardPage(ft.BaseControl):
         try:
             if current_step == 1:
                 from lagosfile.ui.pages.wizard_income import IncomeSourcesStep
+
                 return IncomeSourcesStep(self.page)
             elif current_step == 2:
                 from lagosfile.ui.pages.wizard_allowances import CapitalAllowancesStep
+
                 return CapitalAllowancesStep(self.page)
             elif current_step == 3:
                 from lagosfile.ui.pages.wizard_deductions import DeductionsReliefsStep
+
                 return DeductionsReliefsStep(self.page)
             elif current_step == 4:
                 from lagosfile.ui.pages.wizard_review import ReviewConfirmStep
+
                 return ReviewConfirmStep(self.page)
         except Exception as exc:
             return ft.Text(f"Error loading step {current_step}: {exc}", color=ft.Colors.RED_400)
@@ -240,6 +248,7 @@ class WizardPage(ft.BaseControl):
             return
         try:
             from lagosfile.state import _STEP_DATA_KEYS
+
             step = app_state.current_step
             key = _STEP_DATA_KEYS.get(step)
             if key:

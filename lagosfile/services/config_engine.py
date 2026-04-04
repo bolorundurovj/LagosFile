@@ -5,34 +5,34 @@ Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8
 """
 
 import json
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
+from typing import Any
 
 from lagosfile.models import TaxConfigModel
-
 
 # ---------------------------------------------------------------------------
 # Dataclasses (as specified in the design document)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TaxBand:
     lower: float
-    upper: Optional[float]  # None = unbounded top band
+    upper: float | None  # None = unbounded top band
     rate: float
 
 
 @dataclass
 class TaxConfig:
     version_label: str
-    bands: List[Dict[str, Any]]          # list of {"lower", "upper", "rate"}
+    bands: list[dict[str, Any]]  # list of {"lower", "upper", "rate"}
     rent_relief_cap: float
     cgt_proceeds_threshold: float
     cgt_gain_threshold: float
-    allowance_rates: Dict[str, float]    # asset_type -> annual rate
+    allowance_rates: dict[str, float]  # asset_type -> annual rate
     minimum_tax_rate: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "version_label": self.version_label,
             "bands": self.bands,
@@ -44,7 +44,7 @@ class TaxConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TaxConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "TaxConfig":
         return cls(
             version_label=data["version_label"],
             bands=data["bands"],
@@ -61,38 +61,39 @@ class TaxConfig:
 # ---------------------------------------------------------------------------
 
 NTA_2025_BANDS = [
-    {"lower": 0,          "upper": 800_000,    "rate": 0.00},
-    {"lower": 800_000,    "upper": 3_000_000,  "rate": 0.15},
-    {"lower": 3_000_000,  "upper": 12_000_000, "rate": 0.18},
+    {"lower": 0, "upper": 800_000, "rate": 0.00},
+    {"lower": 800_000, "upper": 3_000_000, "rate": 0.15},
+    {"lower": 3_000_000, "upper": 12_000_000, "rate": 0.18},
     {"lower": 12_000_000, "upper": 25_000_000, "rate": 0.21},
     {"lower": 25_000_000, "upper": 50_000_000, "rate": 0.23},
-    {"lower": 50_000_000, "upper": None,        "rate": 0.25},
+    {"lower": 50_000_000, "upper": None, "rate": 0.25},
 ]
 
 NTA_2025_ALLOWANCE_RATES = {
-    "Computer/Laptop":              0.25,
-    "Router/Networking Equipment":  0.25,
-    "Monitor":                      0.25,
-    "Keyboard/Peripherals":         0.25,
-    "Camera/Recording Equipment":   0.20,
-    "Software Licence":             0.33,
-    "Other":                        0.20,
+    "Computer/Laptop": 0.25,
+    "Router/Networking Equipment": 0.25,
+    "Monitor": 0.25,
+    "Keyboard/Peripherals": 0.25,
+    "Camera/Recording Equipment": 0.20,
+    "Software Licence": 0.33,
+    "Other": 0.20,
 }
 
 NTA_2025_CONFIG = TaxConfig(
     version_label="Tax Config v1.0 — NTA 2025, effective 1 Jan 2026",
     bands=NTA_2025_BANDS,
-    rent_relief_cap=500_000.0,          # ₦500,000 cap (Req 7.3)
+    rent_relief_cap=500_000.0,  # ₦500,000 cap (Req 7.3)
     cgt_proceeds_threshold=150_000_000.0,  # ₦150M (Req 4.5)
-    cgt_gain_threshold=10_000_000.0,    # ₦10M (Req 4.5)
+    cgt_gain_threshold=10_000_000.0,  # ₦10M (Req 4.5)
     allowance_rates=NTA_2025_ALLOWANCE_RATES,
-    minimum_tax_rate=0.01,              # 1% (Req 8.1)
+    minimum_tax_rate=0.01,  # 1% (Req 8.1)
 )
 
 
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
+
 
 def _validate_config(config: TaxConfig) -> None:
     """Raise ValueError if the config contains invalid values."""
@@ -112,17 +113,13 @@ def _validate_config(config: TaxConfig) -> None:
         upper = band["upper"]
         rate = band["rate"]
         if upper is not None and lower >= upper:
-            raise ValueError(
-                f"Band lower ({lower}) must be less than upper ({upper})"
-            )
+            raise ValueError(f"Band lower ({lower}) must be less than upper ({upper})")
         if not (0 <= rate <= 1):
             raise ValueError(f"Band rate {rate} must be between 0 and 1")
 
     for asset_type, rate in config.allowance_rates.items():
         if not (0 <= rate <= 1):
-            raise ValueError(
-                f"Allowance rate for '{asset_type}' ({rate}) must be between 0 and 1"
-            )
+            raise ValueError(f"Allowance rate for '{asset_type}' ({rate}) must be between 0 and 1")
 
     if config.rent_relief_cap <= 0:
         raise ValueError("rent_relief_cap must be positive")
@@ -138,6 +135,7 @@ def _validate_config(config: TaxConfig) -> None:
 # ORM ↔ TaxConfig mapping helpers
 # ---------------------------------------------------------------------------
 
+
 def _model_to_config(model: TaxConfigModel) -> TaxConfig:
     """Convert a TaxConfigModel ORM row to a TaxConfig dataclass."""
     cgt = model.cgt_thresholds or {}
@@ -152,7 +150,7 @@ def _model_to_config(model: TaxConfigModel) -> TaxConfig:
     )
 
 
-def _config_to_model_fields(config: TaxConfig) -> Dict[str, Any]:
+def _config_to_model_fields(config: TaxConfig) -> dict[str, Any]:
     """Return the ORM field dict for creating/updating a TaxConfigModel row."""
     return {
         "version_label": config.version_label,
@@ -174,6 +172,7 @@ def _config_to_model_fields(config: TaxConfig) -> Dict[str, Any]:
 # ConfigEngine
 # ---------------------------------------------------------------------------
 
+
 class ConfigEngine:
     """Reads, writes, and versions the Tax_Config.
 
@@ -182,7 +181,7 @@ class ConfigEngine:
     """
 
     def __init__(self) -> None:
-        self._active_config: Optional[TaxConfig] = None
+        self._active_config: TaxConfig | None = None
 
     # ------------------------------------------------------------------
     # get_active_config
@@ -263,9 +262,13 @@ class ConfigEngine:
             raise ValueError(f"Invalid JSON: {exc}") from exc
 
         required_keys = {
-            "version_label", "bands", "rent_relief_cap",
-            "cgt_proceeds_threshold", "cgt_gain_threshold",
-            "allowance_rates", "minimum_tax_rate",
+            "version_label",
+            "bands",
+            "rent_relief_cap",
+            "cgt_proceeds_threshold",
+            "cgt_gain_threshold",
+            "allowance_rates",
+            "minimum_tax_rate",
         }
         missing = required_keys - set(data.keys())
         if missing:

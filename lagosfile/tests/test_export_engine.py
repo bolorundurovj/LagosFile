@@ -12,8 +12,6 @@ import csv
 import io
 import json
 
-import pytest
-
 from lagosfile.services.export_engine import (
     CapitalAllowanceExport,
     ExportEngine,
@@ -22,26 +20,25 @@ from lagosfile.services.export_engine import (
     ReliefEntryExport,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 def make_filing(**overrides) -> FilingExport:
-    defaults = dict(
-        taxpayer_name="Adaeze Okonkwo",
-        tin="1234567890123",
-        yoa=2025,
-        filing_reference="LIRS/REF/2025/00001",
-        status="Confirmed",
-        total_income_ngn=5_000_000.0,
-        chargeable_income=4_200_000.0,
-        tax_payable=450_000.0,
-        net_tax_payable=400_000.0,
-        minimum_tax=50_000.0,
-        final_tax_payable=400_000.0,
-        income_entries=[
+    defaults = {
+        "taxpayer_name": "Adaeze Okonkwo",
+        "tin": "1234567890123",
+        "yoa": 2025,
+        "filing_reference": "LIRS/REF/2025/00001",
+        "status": "Confirmed",
+        "total_income_ngn": 5_000_000.0,
+        "chargeable_income": 4_200_000.0,
+        "tax_payable": 450_000.0,
+        "net_tax_payable": 400_000.0,
+        "minimum_tax": 50_000.0,
+        "final_tax_payable": 400_000.0,
+        "income_entries": [
             IncomeEntryExport(
                 income_type="employment",
                 description="Salary",
@@ -55,7 +52,7 @@ def make_filing(**overrides) -> FilingExport:
                 fx_rate_source=None,
             )
         ],
-        capital_allowances=[
+        "capital_allowances": [
             CapitalAllowanceExport(
                 asset_description="MacBook Pro",
                 asset_type="Computer/Laptop",
@@ -64,15 +61,15 @@ def make_filing(**overrides) -> FilingExport:
                 tax_written_down_value=600_000.0,
             )
         ],
-        relief_entries=[
+        "relief_entries": [
             ReliefEntryExport(
                 relief_type="pension",
                 claimed_amount=300_000.0,
                 approved_amount=300_000.0,
             )
         ],
-        document_paths=["/home/user/LagosFile/documents/1234567890123/2025/entry1/receipt.pdf"],
-    )
+        "document_paths": ["/home/user/LagosFile/documents/1234567890123/2025/entry1/receipt.pdf"],
+    }
     defaults.update(overrides)
     return FilingExport(**defaults)
 
@@ -192,7 +189,7 @@ def test_csv_export_has_data_row_for_each_income_entry():
             break
 
     assert col_row_idx is not None
-    data_rows = [r for r in rows[col_row_idx + 1:] if r]
+    data_rows = [r for r in rows[col_row_idx + 1 :] if r]
     assert len(data_rows) == len(filing.income_entries)
 
 

@@ -12,20 +12,20 @@ For any currency pair and date:
   - Test 4: When all fail → source is "manual", rate is None
 """
 
-import pytest
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-from hypothesis import given, settings, HealthCheck
+import pytest
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from tortoise import Tortoise
 
 from lagosfile.services.fx_service import FXResult, FXService
 
-
 # ---------------------------------------------------------------------------
 # DB fixture — fresh in-memory DB per test
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -52,6 +52,7 @@ rates = st.floats(min_value=1.0, max_value=2000.0, allow_nan=False, allow_infini
 # Test 1: fawazahmed0 succeeds → source is "fawazahmed0", fallbacks not called
 # ---------------------------------------------------------------------------
 
+
 @given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_waterfall_fawazahmed0_success(tortoise_db, base, quote, target_date, rate):
@@ -63,15 +64,19 @@ async def test_waterfall_fawazahmed0_success(tortoise_db, base, quote, target_da
     """
     svc = FXService()
     success_result = FXResult(
-        rate=rate, source="fawazahmed0", rate_date=target_date,
-        is_cached=False, cache_date=None,
+        rate=rate,
+        source="fawazahmed0",
+        rate_date=target_date,
+        is_cached=False,
+        cache_date=None,
     )
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c, \
-         patch.object(svc, "_cache_rate", new_callable=AsyncMock):
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e,
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c,
+        patch.object(svc, "_cache_rate", new_callable=AsyncMock),
+    ):
         mock_f.return_value = success_result
 
         result = await svc.resolve_rate(base, quote, target_date)
@@ -88,6 +93,7 @@ async def test_waterfall_fawazahmed0_success(tortoise_db, base, quote, target_da
 # Test 2: fawazahmed0 fails, exchangerate-api succeeds → source is "exchangerate-api"
 # ---------------------------------------------------------------------------
 
+
 @given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_waterfall_exchangerate_api_fallback(tortoise_db, base, quote, target_date, rate):
@@ -99,15 +105,19 @@ async def test_waterfall_exchangerate_api_fallback(tortoise_db, base, quote, tar
     """
     svc = FXService()
     success_result = FXResult(
-        rate=rate, source="exchangerate-api", rate_date=date.today(),
-        is_cached=False, cache_date=None,
+        rate=rate,
+        source="exchangerate-api",
+        rate_date=date.today(),
+        is_cached=False,
+        cache_date=None,
     )
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c, \
-         patch.object(svc, "_cache_rate", new_callable=AsyncMock):
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e,
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c,
+        patch.object(svc, "_cache_rate", new_callable=AsyncMock),
+    ):
         mock_f.return_value = None
         mock_e.return_value = success_result
 
@@ -125,6 +135,7 @@ async def test_waterfall_exchangerate_api_fallback(tortoise_db, base, quote, tar
 # Test 3: Both APIs fail, cache has entry → source is "cache"
 # ---------------------------------------------------------------------------
 
+
 @given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_waterfall_cache_fallback(tortoise_db, base, quote, target_date, rate):
@@ -136,14 +147,18 @@ async def test_waterfall_cache_fallback(tortoise_db, base, quote, target_date, r
     """
     svc = FXService()
     cached_result = FXResult(
-        rate=rate, source="cache", rate_date=target_date,
-        is_cached=True, cache_date=target_date,
+        rate=rate,
+        source="cache",
+        rate_date=target_date,
+        is_cached=True,
+        cache_date=target_date,
     )
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c:
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e,
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c,
+    ):
         mock_f.return_value = None
         mock_e.return_value = None
         mock_c.return_value = cached_result
@@ -162,6 +177,7 @@ async def test_waterfall_cache_fallback(tortoise_db, base, quote, target_date, r
 # Test 4: All sources fail → source is "manual", rate is None
 # ---------------------------------------------------------------------------
 
+
 @given(base=currencies, quote=currencies, target_date=target_dates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_waterfall_manual_fallback(tortoise_db, base, quote, target_date):
@@ -172,10 +188,11 @@ async def test_waterfall_manual_fallback(tortoise_db, base, quote, target_date):
     """
     svc = FXService()
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c:
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e,
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock) as mock_c,
+    ):
         mock_f.return_value = None
         mock_e.return_value = None
         mock_c.return_value = None

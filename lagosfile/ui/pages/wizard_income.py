@@ -11,14 +11,17 @@ from __future__ import annotations
 
 import flet as ft
 
-
 # All supported Nigerian income types (Req 4.1)
 _INCOME_TYPES = [
     ("Employment", ft.Icons.WORK_OUTLINE, "Salary, bonuses, benefits-in-kind"),
     ("Business/Trade", ft.Icons.STORE_OUTLINED, "Self-employment, sole trader income"),
     ("Rental", ft.Icons.HOME_OUTLINED, "Rental income from property"),
     ("Dividend", ft.Icons.TRENDING_UP, "Dividend income from investments"),
-    ("Interest", ft.Icons.SAVINGS_OUTLINED, "Interest income, FX differences on securities"),
+    (
+        "Interest",
+        ft.Icons.SAVINGS_OUTLINED,
+        "Interest income, FX differences on securities",
+    ),
     ("Capital Gains", ft.Icons.SHOW_CHART, "Gains from disposal of assets"),
     ("Digital Assets", ft.Icons.CURRENCY_BITCOIN, "Digital/virtual asset gains"),
     ("Royalties", ft.Icons.MUSIC_NOTE_OUTLINED, "Royalty income"),
@@ -56,8 +59,7 @@ class IncomeSourcesStep(ft.BaseControl):
                     color=ft.Colors.GREY_800,
                 ),
                 ft.Text(
-                    "Add all income sources for the Year of Assessment. "
-                    "You can add multiple entries per category.",
+                    "Add all income sources for the Year of Assessment. You can add multiple entries per category.",
                     size=13,
                     color=ft.Colors.GREY_600,
                 ),
@@ -65,10 +67,7 @@ class IncomeSourcesStep(ft.BaseControl):
                 # Nigerian income categories
                 ft.Text("Nigerian Income", size=15, weight=ft.FontWeight.W_600),
                 ft.GridView(
-                    controls=[
-                        self._income_category_card(label, icon, hint)
-                        for label, icon, hint in _INCOME_TYPES
-                    ],
+                    controls=[self._income_category_card(label, icon, hint) for label, icon, hint in _INCOME_TYPES],
                     runs_count=2,
                     max_extent=320,
                     child_aspect_ratio=3.5,
@@ -129,7 +128,11 @@ class IncomeSourcesStep(ft.BaseControl):
             options=[ft.dropdown.Option(c) for c in _CURRENCIES],
             width=160,
         )
-        amount_field = ft.TextField(label="Amount in Foreign Currency", width=200, keyboard_type=ft.KeyboardType.NUMBER)
+        amount_field = ft.TextField(
+            label="Amount in Foreign Currency",
+            width=200,
+            keyboard_type=ft.KeyboardType.NUMBER,
+        )
         date_field = ft.TextField(label="Date of Receipt (YYYY-MM-DD)", width=200)
         fetched_rate_field = ft.TextField(
             label="Fetched Rate (auto)",
@@ -171,8 +174,7 @@ class IncomeSourcesStep(ft.BaseControl):
             keyboard_type=ft.KeyboardType.NUMBER,
         )
         foreign_tax_note = ft.Text(
-            "Foreign tax paid is recorded for reference only in v1. "
-            "Formal treaty relief requires a tax advisor.",
+            "Foreign tax paid is recorded for reference only in v1. Formal treaty relief requires a tax advisor.",
             size=11,
             color=ft.Colors.GREY_500,
             italic=True,
@@ -214,10 +216,18 @@ class IncomeSourcesStep(ft.BaseControl):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.UPLOAD_FILE_OUTLINED, color=ft.Colors.GREY_500, size=28),
+                            ft.Icon(
+                                ft.Icons.UPLOAD_FILE_OUTLINED,
+                                color=ft.Colors.GREY_500,
+                                size=28,
+                            ),
                             ft.Column(
                                 controls=[
-                                    ft.Text("Attach supporting documents", size=13, color=ft.Colors.GREY_700),
+                                    ft.Text(
+                                        "Attach supporting documents",
+                                        size=13,
+                                        color=ft.Colors.GREY_700,
+                                    ),
                                     ft.Text(
                                         "PDF, JPG, PNG — max 100MB per file",
                                         size=11,
@@ -249,8 +259,10 @@ class IncomeSourcesStep(ft.BaseControl):
         # For the skeleton, we just track the intent
         app_state = self.page.data
         if app_state:
-            app_state.wizard_data.income_entries.append({
-                "income_type": income_type,
-                "gross_amount_ngn": 0.0,
-                "description": "",
-            })
+            app_state.wizard_data.income_entries.append(
+                {
+                    "income_type": income_type,
+                    "gross_amount_ngn": 0.0,
+                    "description": "",
+                }
+            )

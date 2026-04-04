@@ -14,17 +14,17 @@ Requirements: 6.5, 15.1
 from datetime import date, timedelta
 
 import pytest
-from hypothesis import given, settings, assume
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from lagosfile.services.filing_service import calculate_annual_allowance
 from lagosfile.utils.deadline import days_until_deadline
 
-
 # ---------------------------------------------------------------------------
 # Property 12: Capital allowance annual amount calculation
 # Validates: Requirements 6.5
 # ---------------------------------------------------------------------------
+
 
 @given(
     asset_cost=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
@@ -46,6 +46,7 @@ def test_property_12_capital_allowance_annual_amount(asset_cost, annual_allowanc
 # Property 26: Deadline countdown accuracy
 # Validates: Requirements 15.1
 # ---------------------------------------------------------------------------
+
 
 @given(
     filing_year=st.integers(min_value=2000, max_value=2100),

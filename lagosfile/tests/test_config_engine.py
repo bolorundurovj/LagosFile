@@ -1,7 +1,8 @@
-import hypothesis.strategies as st
 import datetime
-import json
-from hypothesis import given, settings, example
+
+import hypothesis.strategies as st
+from hypothesis import example, given, settings
+
 from lagosfile.services.config_engine import TaxConfig, config_engine
 
 
@@ -125,15 +126,11 @@ def test_tax_config_import_export_round_trip(
     # Create test config
     config = TaxConfig(
         version_label=f"Test Config {datetime.datetime.now().timestamp()}",
-        bands=[
-            {"lower": lower, "upper": upper, "rate": rate}
-            for lower, upper, rate in bands
-        ],
+        bands=[{"lower": lower, "upper": upper, "rate": rate} for lower, upper, rate in bands],
         allowance_rates=allowance_rates,
         rent_relief_cap=rent_relief_cap,
         cgt_proceeds_threshold=cgt_proceeds_threshold,
-        cgt_gain_threshold=cgt_proceeds_threshold
-        * 0.1,  # Related to proceeds threshold
+        cgt_gain_threshold=cgt_proceeds_threshold * 0.1,  # Related to proceeds threshold
         minimum_tax_rate=minimum_tax_rate,
     )
 
@@ -151,9 +148,6 @@ def test_tax_config_import_export_round_trip(
     assert original_dict["bands"] == imported_dict["bands"]
     assert original_dict["allowance_rates"] == imported_dict["allowance_rates"]
     assert original_dict["rent_relief_cap"] == imported_dict["rent_relief_cap"]
-    assert (
-        original_dict["cgt_proceeds_threshold"]
-        == imported_dict["cgt_proceeds_threshold"]
-    )
+    assert original_dict["cgt_proceeds_threshold"] == imported_dict["cgt_proceeds_threshold"]
     assert original_dict["cgt_gain_threshold"] == imported_dict["cgt_gain_threshold"]
     assert original_dict["minimum_tax_rate"] == imported_dict["minimum_tax_rate"]

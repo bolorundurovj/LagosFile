@@ -51,9 +51,7 @@ valid_tin = st.text(alphabet="0123456789", min_size=13, max_size=13)
 @st.composite
 def income_entry_strategy(draw) -> IncomeEntryExport:
     return IncomeEntryExport(
-        income_type=draw(
-            st.sampled_from(["employment", "business", "rental", "dividend", "freelance", "other"])
-        ),
+        income_type=draw(st.sampled_from(["employment", "business", "rental", "dividend", "freelance", "other"])),
         description=draw(nullable_text),
         gross_amount_ngn=draw(amount),
         foreign_currency=draw(nullable_currency),
@@ -71,7 +69,14 @@ def capital_allowance_strategy(draw) -> CapitalAllowanceExport:
     return CapitalAllowanceExport(
         asset_description=draw(short_text),
         asset_type=draw(
-            st.sampled_from(["Computer/Laptop", "Camera/Recording Equipment", "Software Licence", "Other"])
+            st.sampled_from(
+                [
+                    "Computer/Laptop",
+                    "Camera/Recording Equipment",
+                    "Software Licence",
+                    "Other",
+                ]
+            )
         ),
         asset_cost=draw(amount),
         annual_allowance_amount=draw(amount),
@@ -83,7 +88,17 @@ def capital_allowance_strategy(draw) -> CapitalAllowanceExport:
 def relief_entry_strategy(draw) -> ReliefEntryExport:
     return ReliefEntryExport(
         relief_type=draw(
-            st.sampled_from(["pension", "nhis", "nhf", "rent", "wht", "life_assurance", "other_approved"])
+            st.sampled_from(
+                [
+                    "pension",
+                    "nhis",
+                    "nhf",
+                    "rent",
+                    "wht",
+                    "life_assurance",
+                    "other_approved",
+                ]
+            )
         ),
         claimed_amount=draw(amount),
         approved_amount=draw(amount),
@@ -172,17 +187,17 @@ def test_property_21_json_export_round_trip(filing: FilingExport):
 
     # Income entries — all fields identical
     assert len(data["income_entries"]) == len(filing.income_entries)
-    for serialized, original in zip(data["income_entries"], filing.income_entries):
+    for serialized, original in zip(data["income_entries"], filing.income_entries, strict=False):
         assert serialized == asdict(original)
 
     # Capital allowances — all fields identical
     assert len(data["capital_allowances"]) == len(filing.capital_allowances)
-    for serialized, original in zip(data["capital_allowances"], filing.capital_allowances):
+    for serialized, original in zip(data["capital_allowances"], filing.capital_allowances, strict=False):
         assert serialized == asdict(original)
 
     # Relief entries — all fields identical
     assert len(data["relief_entries"]) == len(filing.relief_entries)
-    for serialized, original in zip(data["relief_entries"], filing.relief_entries):
+    for serialized, original in zip(data["relief_entries"], filing.relief_entries, strict=False):
         assert serialized == asdict(original)
 
     # Document paths
@@ -231,7 +246,7 @@ def test_property_22_csv_export_contains_required_columns(filing: FilingExport):
 
     # The number of data rows must equal the number of income entries
     col_row_idx = rows.index(col_row)
-    data_rows = [r for r in rows[col_row_idx + 1:] if r]
+    data_rows = [r for r in rows[col_row_idx + 1 :] if r]
     assert len(data_rows) == len(filing.income_entries), (
         f"Expected {len(filing.income_entries)} data rows, got {len(data_rows)}"
     )

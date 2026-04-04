@@ -11,15 +11,12 @@ from __future__ import annotations
 
 import flet as ft
 
-
 _CRA_NOTICE = (
-    "The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 "
-    "and replaced with Rent Relief."
+    "The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief."
 )
 
 _RENT_RELIEF_NOTE = (
-    "Homeowners cannot claim Rent Relief. LIRS may request a tenancy agreement "
-    "as supporting documentation."
+    "Homeowners cannot claim Rent Relief. LIRS may request a tenancy agreement as supporting documentation."
 )
 
 _RENT_RELIEF_CAP = 500_000.0  # ₦500,000 — sourced from Tax_Config in production
@@ -38,19 +35,27 @@ class DeductionsReliefsStep(ft.BaseControl):
 
         # Relief amount fields
         self._pension_field = ft.TextField(
-            label="Pension Contributions (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="Pension Contributions (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_relief_change,
         )
         self._nhis_field = ft.TextField(
-            label="NHIS Contributions (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="NHIS Contributions (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_relief_change,
         )
         self._nhf_field = ft.TextField(
-            label="NHF Contributions (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="NHF Contributions (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_relief_change,
         )
         self._rent_field = ft.TextField(
-            label="Annual Rent Paid (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="Annual Rent Paid (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_rent_change,
         )
         self._rent_relief_display = ft.TextField(
@@ -61,11 +66,15 @@ class DeductionsReliefsStep(ft.BaseControl):
             value="₦0.00",
         )
         self._life_assurance_field = ft.TextField(
-            label="Life Assurance Premiums (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="Life Assurance Premiums (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_relief_change,
         )
         self._other_field = ft.TextField(
-            label="Other Approved Deductions (₦)", width=240, keyboard_type=ft.KeyboardType.NUMBER,
+            label="Other Approved Deductions (₦)",
+            width=240,
+            keyboard_type=ft.KeyboardType.NUMBER,
             on_change=self._on_relief_change,
         )
         self._other_desc_field = ft.TextField(label="Description of Other Deductions", width=340)
@@ -92,8 +101,17 @@ class DeductionsReliefsStep(ft.BaseControl):
                 ft.Container(
                     content=ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.ORANGE_700, size=16),
-                            ft.Text(_CRA_NOTICE, size=12, color=ft.Colors.ORANGE_900, expand=True),
+                            ft.Icon(
+                                ft.Icons.INFO_OUTLINE,
+                                color=ft.Colors.ORANGE_700,
+                                size=16,
+                            ),
+                            ft.Text(
+                                _CRA_NOTICE,
+                                size=12,
+                                color=ft.Colors.ORANGE_900,
+                                expand=True,
+                            ),
                         ],
                         spacing=8,
                     ),
@@ -132,7 +150,12 @@ class DeductionsReliefsStep(ft.BaseControl):
             content=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.GREY_500, size=14),
-                    ft.Text(_RENT_RELIEF_NOTE, size=11, color=ft.Colors.GREY_600, expand=True),
+                    ft.Text(
+                        _RENT_RELIEF_NOTE,
+                        size=11,
+                        color=ft.Colors.GREY_600,
+                        expand=True,
+                    ),
                 ],
                 spacing=6,
             ),
@@ -144,14 +167,34 @@ class DeductionsReliefsStep(ft.BaseControl):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Row(controls=[self._pension_field, self._nhis_field], spacing=16, wrap=True),
-                    ft.Row(controls=[self._nhf_field, self._life_assurance_field], spacing=16, wrap=True),
+                    ft.Row(
+                        controls=[self._pension_field, self._nhis_field],
+                        spacing=16,
+                        wrap=True,
+                    ),
+                    ft.Row(
+                        controls=[self._nhf_field, self._life_assurance_field],
+                        spacing=16,
+                        wrap=True,
+                    ),
                     ft.Divider(height=8),
-                    ft.Text("Rent Relief (auto-calculated at 20% of annual rent, capped at ₦500,000)", size=13, weight=ft.FontWeight.W_500),
-                    ft.Row(controls=[self._rent_field, self._rent_relief_display], spacing=16, wrap=True),
+                    ft.Text(
+                        "Rent Relief (auto-calculated at 20% of annual rent, capped at ₦500,000)",
+                        size=13,
+                        weight=ft.FontWeight.W_500,
+                    ),
+                    ft.Row(
+                        controls=[self._rent_field, self._rent_relief_display],
+                        spacing=16,
+                        wrap=True,
+                    ),
                     rent_relief_note,
                     ft.Divider(height=8),
-                    ft.Row(controls=[self._other_field, self._other_desc_field], spacing=16, wrap=True),
+                    ft.Row(
+                        controls=[self._other_field, self._other_desc_field],
+                        spacing=16,
+                        wrap=True,
+                    ),
                 ],
                 spacing=12,
             ),
@@ -169,15 +212,19 @@ class DeductionsReliefsStep(ft.BaseControl):
 
         wht_list = ft.Column(
             controls=[
-                ft.Text(
-                    "No WHT credits added yet.",
-                    size=12,
-                    color=ft.Colors.GREY_500,
-                    italic=True,
-                ) if not self._wht_entries else ft.Text(
-                    f"{len(self._wht_entries)} WHT credit(s) added.",
-                    size=12,
-                    color=ft.Colors.GREY_700,
+                (
+                    ft.Text(
+                        "No WHT credits added yet.",
+                        size=12,
+                        color=ft.Colors.GREY_500,
+                        italic=True,
+                    )
+                    if not self._wht_entries
+                    else ft.Text(
+                        f"{len(self._wht_entries)} WHT credit(s) added.",
+                        size=12,
+                        color=ft.Colors.GREY_700,
+                    )
                 )
             ],
             spacing=4,
@@ -249,7 +296,12 @@ class DeductionsReliefsStep(ft.BaseControl):
                 controls=[
                     ft.Text("Estimated Tax Payable", size=12, color=ft.Colors.GREY_600),
                     self._estimated_tax_text,
-                    ft.Text("(Updates in real time)", size=10, color=ft.Colors.GREY_400, italic=True),
+                    ft.Text(
+                        "(Updates in real time)",
+                        size=10,
+                        color=ft.Colors.GREY_400,
+                        italic=True,
+                    ),
                 ],
                 spacing=4,
             ),
@@ -278,6 +330,7 @@ class DeductionsReliefsStep(ft.BaseControl):
 
     def _on_relief_change(self, e) -> None:
         """Recalculate total deductions and update summary cards."""
+
         def _val(field: ft.TextField) -> float:
             try:
                 return float(field.value or 0)
@@ -301,12 +354,36 @@ class DeductionsReliefsStep(ft.BaseControl):
         app_state = self.page.data
         if app_state:
             app_state.wizard_data.relief_entries = [
-                {"relief_type": "pension", "claimed_amount": _val(self._pension_field), "approved_amount": _val(self._pension_field)},
-                {"relief_type": "nhis", "claimed_amount": _val(self._nhis_field), "approved_amount": _val(self._nhis_field)},
-                {"relief_type": "nhf", "claimed_amount": _val(self._nhf_field), "approved_amount": _val(self._nhf_field)},
-                {"relief_type": "rent_relief", "claimed_amount": rent_relief, "approved_amount": rent_relief},
-                {"relief_type": "life_assurance", "claimed_amount": _val(self._life_assurance_field), "approved_amount": _val(self._life_assurance_field)},
-                {"relief_type": "other", "claimed_amount": _val(self._other_field), "approved_amount": _val(self._other_field)},
+                {
+                    "relief_type": "pension",
+                    "claimed_amount": _val(self._pension_field),
+                    "approved_amount": _val(self._pension_field),
+                },
+                {
+                    "relief_type": "nhis",
+                    "claimed_amount": _val(self._nhis_field),
+                    "approved_amount": _val(self._nhis_field),
+                },
+                {
+                    "relief_type": "nhf",
+                    "claimed_amount": _val(self._nhf_field),
+                    "approved_amount": _val(self._nhf_field),
+                },
+                {
+                    "relief_type": "rent_relief",
+                    "claimed_amount": rent_relief,
+                    "approved_amount": rent_relief,
+                },
+                {
+                    "relief_type": "life_assurance",
+                    "claimed_amount": _val(self._life_assurance_field),
+                    "approved_amount": _val(self._life_assurance_field),
+                },
+                {
+                    "relief_type": "other",
+                    "claimed_amount": _val(self._other_field),
+                    "approved_amount": _val(self._other_field),
+                },
             ]
 
         self.update()

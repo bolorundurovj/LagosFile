@@ -10,6 +10,7 @@ Usage:
 
 import asyncio
 import uuid
+
 from tortoise import Tortoise
 
 from lagosfile.db_config import TORTOISE_ORM_SEED

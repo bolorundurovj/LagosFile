@@ -11,18 +11,26 @@ Covers:
 Requirements: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from tortoise import Tortoise
 
 from lagosfile.models import Filing, Taxpayer
 from lagosfile.services.config_engine import NTA_2025_CONFIG
-from lagosfile.state import AppState, WizardDraft, advance_step, go_back, MAX_STEP, MIN_STEP
-
+from lagosfile.state import (
+    MAX_STEP,
+    MIN_STEP,
+    AppState,
+    WizardDraft,
+    advance_step,
+    go_back,
+)
 
 # ---------------------------------------------------------------------------
 # DB fixture (needed for Filing ORM objects)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -73,6 +81,7 @@ def _stub_filing_service() -> MagicMock:
 # WizardDraft defaults
 # ---------------------------------------------------------------------------
 
+
 def test_wizard_draft_default_step():
     draft = WizardDraft()
     assert draft.current_step == 1
@@ -88,6 +97,7 @@ def test_wizard_draft_default_lists_are_empty():
 # ---------------------------------------------------------------------------
 # advance_step — increments current_step
 # ---------------------------------------------------------------------------
+
 
 async def test_advance_step_increments_from_1_to_2(filing):
     app_state = _make_app_state(filing, step=1)
@@ -120,6 +130,7 @@ async def test_advance_step_increments_from_3_to_4(filing):
 # advance_step — does not exceed MAX_STEP (4)
 # ---------------------------------------------------------------------------
 
+
 async def test_advance_step_does_not_exceed_max(filing):
     app_state = _make_app_state(filing, step=MAX_STEP)
     svc = _stub_filing_service()
@@ -143,6 +154,7 @@ async def test_advance_step_at_max_stays_at_max(filing):
 # ---------------------------------------------------------------------------
 # advance_step — calls save_step with correct step data
 # ---------------------------------------------------------------------------
+
 
 async def test_advance_step_1_calls_save_step_with_income_entries(filing):
     app_state = _make_app_state(filing, step=1)
@@ -172,7 +184,13 @@ async def test_advance_step_2_calls_save_step_with_capital_allowances(filing):
 
 async def test_advance_step_3_calls_save_step_with_relief_entries(filing):
     app_state = _make_app_state(filing, step=3)
-    app_state.wizard_data.relief_entries = [{"relief_type": "pension", "claimed_amount": 200_000.0, "approved_amount": 200_000.0}]
+    app_state.wizard_data.relief_entries = [
+        {
+            "relief_type": "pension",
+            "claimed_amount": 200_000.0,
+            "approved_amount": 200_000.0,
+        }
+    ]
     svc = _stub_filing_service()
 
     await advance_step(app_state, svc)
@@ -197,6 +215,7 @@ async def test_advance_step_4_does_not_call_save_step(filing):
 # advance_step — raises if no active filing
 # ---------------------------------------------------------------------------
 
+
 async def test_advance_step_raises_without_active_filing():
     app_state = AppState(
         taxpayer=None,
@@ -214,6 +233,7 @@ async def test_advance_step_raises_without_active_filing():
 # ---------------------------------------------------------------------------
 # go_back — decrements current_step
 # ---------------------------------------------------------------------------
+
 
 def test_go_back_decrements_from_4_to_3(filing):
     app_state = _make_app_state(filing, step=4)
@@ -237,6 +257,7 @@ def test_go_back_decrements_from_2_to_1(filing):
 # go_back — does not go below MIN_STEP (1)
 # ---------------------------------------------------------------------------
 
+
 def test_go_back_does_not_go_below_min(filing):
     app_state = _make_app_state(filing, step=MIN_STEP)
     go_back(app_state)
@@ -254,6 +275,7 @@ def test_go_back_at_min_stays_at_min(filing):
 # ---------------------------------------------------------------------------
 # WizardDraft data is preserved on back navigation
 # ---------------------------------------------------------------------------
+
 
 def test_go_back_preserves_income_entries(filing):
     app_state = _make_app_state(filing, step=2)
@@ -275,11 +297,15 @@ def test_go_back_preserves_capital_allowances(filing):
 
 def test_go_back_preserves_relief_entries(filing):
     app_state = _make_app_state(filing, step=4)
-    app_state.wizard_data.relief_entries = [{"relief_type": "nhis", "claimed_amount": 50_000.0, "approved_amount": 50_000.0}]
+    app_state.wizard_data.relief_entries = [
+        {"relief_type": "nhis", "claimed_amount": 50_000.0, "approved_amount": 50_000.0}
+    ]
 
     go_back(app_state)
 
-    assert app_state.wizard_data.relief_entries == [{"relief_type": "nhis", "claimed_amount": 50_000.0, "approved_amount": 50_000.0}]
+    assert app_state.wizard_data.relief_entries == [
+        {"relief_type": "nhis", "claimed_amount": 50_000.0, "approved_amount": 50_000.0}
+    ]
 
 
 def test_go_back_preserves_all_wizard_data(filing):
@@ -287,7 +313,13 @@ def test_go_back_preserves_all_wizard_data(filing):
     app_state = _make_app_state(filing, step=4)
     app_state.wizard_data.income_entries = [{"income_type": "rental", "gross_amount_ngn": 1_200_000.0}]
     app_state.wizard_data.capital_allowances = [{"asset_type": "Monitor", "asset_cost": 200_000.0}]
-    app_state.wizard_data.relief_entries = [{"relief_type": "pension", "claimed_amount": 300_000.0, "approved_amount": 300_000.0}]
+    app_state.wizard_data.relief_entries = [
+        {
+            "relief_type": "pension",
+            "claimed_amount": 300_000.0,
+            "approved_amount": 300_000.0,
+        }
+    ]
 
     go_back(app_state)
     go_back(app_state)

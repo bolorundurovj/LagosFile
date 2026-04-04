@@ -1,0 +1,18 @@
+[flake8]
+max-line-length = 120
+extend-ignore = E203, W503, E501, S110, S603, S606, S607
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    .tox,
+    *.egg-info,
+    lagosfile_migrations.db,
+    lagosfile_migrations.db-shm,
+    lagosfile_migrations.db-wal
+max-complexity = 15
+per-file-ignores =
+    lagosfile/tests/*: S101
+    test_simple.py: S101

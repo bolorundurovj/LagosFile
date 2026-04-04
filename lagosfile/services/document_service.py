@@ -12,7 +12,6 @@ from pathlib import Path
 from lagosfile.constants import Constants
 from lagosfile.models import Document
 
-
 # 100MB in bytes — enforced before any disk write (Requirement 14.6)
 MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
 
@@ -38,9 +37,7 @@ class DocumentService:
         """
         size = Path(file_path).stat().st_size
         if size > MAX_FILE_SIZE_BYTES:
-            raise FileTooLargeError(
-                "File exceeds the 100MB limit. Please attach a smaller file."
-            )
+            raise FileTooLargeError("File exceeds the 100MB limit. Please attach a smaller file.")
 
     async def attach(
         self,

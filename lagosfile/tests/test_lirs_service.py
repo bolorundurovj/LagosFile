@@ -4,18 +4,19 @@ Unit tests for LIRSService and mark_submitted.
 Requirements: 12.1, 12.4, 12.5, 12.7, 12.8
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from tortoise import Tortoise
 
 from lagosfile.models import Filing, Taxpayer
 from lagosfile.services.filing_service import FilingService
-from lagosfile.services.lirs_service import AutomationResult, LIRSService
-
+from lagosfile.services.lirs_service import LIRSService
 
 # ---------------------------------------------------------------------------
 # DB fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -37,14 +38,20 @@ async def taxpayer():
 # LIRSService.file_with_lirs — fallback on exception
 # ---------------------------------------------------------------------------
 
+
 def test_file_with_lirs_returns_fallback_on_playwright_exception():
     """When Playwright raises, fallback_active must be True."""
     svc = LIRSService()
 
-    with patch("lagosfile.services.lirs_service.webbrowser.open") as mock_open:
-        with patch.dict("sys.modules", {"playwright.sync_api": MagicMock(
-            sync_playwright=MagicMock(side_effect=Exception("Playwright not installed"))
-        )}):
+    with patch("lagosfile.services.lirs_service.webbrowser.open"):
+        with patch.dict(
+            "sys.modules",
+            {
+                "playwright.sync_api": MagicMock(
+                    sync_playwright=MagicMock(side_effect=Exception("Playwright not installed"))
+                )
+            },
+        ):
             result = svc.file_with_lirs({"total_income_ngn": 5_000_000.0})
 
     assert result.success is False
@@ -57,9 +64,10 @@ def test_file_with_lirs_opens_browser_on_failure():
     svc = LIRSService()
 
     with patch("lagosfile.services.lirs_service.webbrowser.open") as mock_open:
-        with patch.dict("sys.modules", {"playwright.sync_api": MagicMock(
-            sync_playwright=MagicMock(side_effect=RuntimeError("no browser"))
-        )}):
+        with patch.dict(
+            "sys.modules",
+            {"playwright.sync_api": MagicMock(sync_playwright=MagicMock(side_effect=RuntimeError("no browser")))},
+        ):
             svc.file_with_lirs({})
 
     mock_open.assert_called_once_with("https://etax.lirs.gov.ng")
@@ -80,6 +88,7 @@ def test_file_with_lirs_fallback_when_import_fails():
 # ---------------------------------------------------------------------------
 # LIRSService.get_reference_panel_data
 # ---------------------------------------------------------------------------
+
 
 def test_get_reference_panel_data_contains_required_fields():
     """Reference panel must include all Form A section names."""
@@ -118,6 +127,7 @@ def test_get_reference_panel_data_handles_missing_fields():
 # ---------------------------------------------------------------------------
 # FilingService.mark_submitted
 # ---------------------------------------------------------------------------
+
 
 async def test_mark_submitted_sets_status(taxpayer):
     svc = FilingService()

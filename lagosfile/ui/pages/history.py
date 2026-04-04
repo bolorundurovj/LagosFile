@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import flet as ft
 
+from lagosfile.services.filing_service import FilingService
 from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
-from lagosfile.services.filing_service import FilingService
-
 
 _STATUS_COLORS = {
     "Draft": ft.Colors.GREY_500,
@@ -83,10 +82,34 @@ class FilingHistoryPage(ft.BaseControl):
 
     def _metric_cards(self) -> ft.Control:
         cards_data = [
-            ("Total Filings", str(self._metrics["total"]), ft.Icons.FOLDER_OUTLINED, ft.Colors.BLUE_100, ft.Colors.BLUE_800),
-            ("Submitted", str(self._metrics["submitted"]), ft.Icons.SEND_OUTLINED, ft.Colors.GREEN_100, ft.Colors.GREEN_800),
-            ("Confirmed", str(self._metrics["confirmed"]), ft.Icons.VERIFIED_OUTLINED, ft.Colors.PURPLE_100, ft.Colors.PURPLE_800),
-            ("Drafts", str(self._metrics["drafts"]), ft.Icons.EDIT_OUTLINED, ft.Colors.ORANGE_100, ft.Colors.ORANGE_800),
+            (
+                "Total Filings",
+                str(self._metrics["total"]),
+                ft.Icons.FOLDER_OUTLINED,
+                ft.Colors.BLUE_100,
+                ft.Colors.BLUE_800,
+            ),
+            (
+                "Submitted",
+                str(self._metrics["submitted"]),
+                ft.Icons.SEND_OUTLINED,
+                ft.Colors.GREEN_100,
+                ft.Colors.GREEN_800,
+            ),
+            (
+                "Confirmed",
+                str(self._metrics["confirmed"]),
+                ft.Icons.VERIFIED_OUTLINED,
+                ft.Colors.PURPLE_100,
+                ft.Colors.PURPLE_800,
+            ),
+            (
+                "Drafts",
+                str(self._metrics["drafts"]),
+                ft.Icons.EDIT_OUTLINED,
+                ft.Colors.ORANGE_100,
+                ft.Colors.ORANGE_800,
+            ),
         ]
 
         cards = [
@@ -101,7 +124,12 @@ class FilingHistoryPage(ft.BaseControl):
                             bgcolor=bg_color,
                             alignment=ft.alignment.center,
                         ),
-                        ft.Text(count, size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_800),
+                        ft.Text(
+                            count,
+                            size=28,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.GREY_800,
+                        ),
                         ft.Text(label, size=12, color=ft.Colors.GREY_600),
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -213,23 +241,54 @@ class FilingHistoryPage(ft.BaseControl):
         actions = []
         if status in ("Confirmed", "Submitted"):
             actions.append(
-                ft.IconButton(ft.Icons.VISIBILITY_OUTLINED, tooltip="View", icon_size=18, on_click=lambda e, f=filing: self._view_filing(f))
+                ft.IconButton(
+                    ft.Icons.VISIBILITY_OUTLINED,
+                    tooltip="View",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._view_filing(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.COPY_OUTLINED, tooltip="Duplicate", icon_size=18, on_click=lambda e, f=filing: self._duplicate_filing(f))
+                ft.IconButton(
+                    ft.Icons.COPY_OUTLINED,
+                    tooltip="Duplicate",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._duplicate_filing(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.PICTURE_AS_PDF_OUTLINED, tooltip="Export PDF", icon_size=18, on_click=lambda e, f=filing: self._export_pdf(f))
+                ft.IconButton(
+                    ft.Icons.PICTURE_AS_PDF_OUTLINED,
+                    tooltip="Export PDF",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._export_pdf(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.TABLE_CHART_OUTLINED, tooltip="Export CSV", icon_size=18, on_click=lambda e, f=filing: self._export_csv(f))
+                ft.IconButton(
+                    ft.Icons.TABLE_CHART_OUTLINED,
+                    tooltip="Export CSV",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._export_csv(f),
+                )
             )
         else:
             actions.append(
-                ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Edit Draft", icon_size=18, on_click=lambda e, f=filing: self._edit_draft(f))
+                ft.IconButton(
+                    ft.Icons.EDIT_OUTLINED,
+                    tooltip="Edit Draft",
+                    icon_size=18,
+                    on_click=lambda e, f=filing: self._edit_draft(f),
+                )
             )
             actions.append(
-                ft.IconButton(ft.Icons.DELETE_OUTLINE, tooltip="Delete Draft", icon_size=18, icon_color=ft.Colors.RED_400, on_click=lambda e, f=filing: self._delete_draft(f))
+                ft.IconButton(
+                    ft.Icons.DELETE_OUTLINE,
+                    tooltip="Delete Draft",
+                    icon_size=18,
+                    icon_color=ft.Colors.RED_400,
+                    on_click=lambda e, f=filing: self._delete_draft(f),
+                )
             )
 
         return ft.DataRow(
@@ -244,7 +303,12 @@ class FilingHistoryPage(ft.BaseControl):
                         padding=ft.padding.symmetric(horizontal=8, vertical=3),
                     )
                 ),
-                ft.DataCell(ft.Text(f"₦{tax_payable:,.2f}" if tax_payable is not None else "—", size=12)),
+                ft.DataCell(
+                    ft.Text(
+                        f"₦{tax_payable:,.2f}" if tax_payable is not None else "—",
+                        size=12,
+                    )
+                ),
                 ft.DataCell(ft.Row(controls=actions, spacing=0)),
             ]
         )
@@ -348,7 +412,6 @@ class FilingHistoryPage(ft.BaseControl):
             pass
 
     def _export_pdf(self, filing) -> None:
-        from lagosfile.ui.components.export_modal import ExportModal
         # Open export modal — in a full implementation, show as overlay
         pass
 

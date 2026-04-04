@@ -9,21 +9,21 @@ After a successful API fetch, FXCache must contain a record for that
 currency pair, date, and source immediately after the fetch.
 """
 
-import pytest
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-from hypothesis import given, settings, HealthCheck
+import pytest
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from tortoise import Tortoise
 
 from lagosfile.models import FXCache
 from lagosfile.services.fx_service import FXResult, FXService
 
-
 # ---------------------------------------------------------------------------
 # DB fixture — fresh in-memory DB per test
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -50,6 +50,7 @@ rates = st.floats(min_value=1.0, max_value=2000.0, allow_nan=False, allow_infini
 # Property 11: After a successful fawazahmed0 fetch, FXCache has a record
 # ---------------------------------------------------------------------------
 
+
 @given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
 async def test_caching_after_fawazahmed0_success(tortoise_db, base, quote, target_date, rate):
@@ -70,10 +71,11 @@ async def test_caching_after_fawazahmed0_success(tortoise_db, base, quote, targe
         cache_date=None,
     )
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock), \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock):
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock),
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock),
+    ):
         mock_f.return_value = success_result
 
         result = await svc.resolve_rate(base, quote, target_date)
@@ -91,8 +93,7 @@ async def test_caching_after_fawazahmed0_success(tortoise_db, base, quote, targe
     ).first()
 
     assert cached is not None, (
-        f"FXCache must contain a record for {base}/{quote} on {target_date} "
-        f"from fawazahmed0 after a successful fetch"
+        f"FXCache must contain a record for {base}/{quote} on {target_date} from fawazahmed0 after a successful fetch"
     )
     assert cached.rate == rate
 
@@ -100,6 +101,7 @@ async def test_caching_after_fawazahmed0_success(tortoise_db, base, quote, targe
 # ---------------------------------------------------------------------------
 # Property 11 (variant): After a successful exchangerate-api fetch, FXCache has a record
 # ---------------------------------------------------------------------------
+
 
 @given(base=currencies, quote=currencies, target_date=target_dates, rate=rates)
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -121,10 +123,11 @@ async def test_caching_after_exchangerate_api_success(tortoise_db, base, quote, 
         cache_date=None,
     )
 
-    with patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f, \
-         patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e, \
-         patch.object(svc, "_try_cached_rate", new_callable=AsyncMock):
-
+    with (
+        patch.object(svc, "_try_fawazahmed0", new_callable=AsyncMock) as mock_f,
+        patch.object(svc, "_try_exchangerate_api", new_callable=AsyncMock) as mock_e,
+        patch.object(svc, "_try_cached_rate", new_callable=AsyncMock),
+    ):
         mock_f.return_value = None
         mock_e.return_value = success_result
 
@@ -141,6 +144,5 @@ async def test_caching_after_exchangerate_api_success(tortoise_db, base, quote, 
     ).first()
 
     assert cached is not None, (
-        f"FXCache must contain a record for {base}/{quote} from exchangerate-api "
-        f"after a successful fetch"
+        f"FXCache must contain a record for {base}/{quote} from exchangerate-api after a successful fetch"
     )

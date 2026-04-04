@@ -11,8 +11,9 @@ Covers:
 Requirements: 10.1, 10.2, 10.3, 10.6
 """
 
-import pytest
 from datetime import date
+
+import pytest
 from tortoise import Tortoise
 
 from lagosfile.models import (
@@ -23,7 +24,6 @@ from lagosfile.models import (
     Taxpayer,
 )
 from lagosfile.services.filing_service import FilingService
-
 
 # ---------------------------------------------------------------------------
 # DB + Taxpayer fixtures
@@ -93,6 +93,7 @@ async def test_list_filings_paginates_correctly(taxpayer):
 async def test_list_filings_empty_for_unknown_taxpayer():
     svc = FilingService()
     import uuid
+
     result = await svc.list_filings(str(uuid.uuid4()), page=1, page_size=10)
 
     assert result["total"] == 0
@@ -120,9 +121,7 @@ async def test_list_filings_filter_by_yoa(taxpayer):
     await svc.create_draft(str(taxpayer.id), 2025)
     await svc.create_draft(str(taxpayer.id), 2025)
 
-    result = await svc.list_filings(
-        str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2025}
-    )
+    result = await svc.list_filings(str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2025})
 
     assert result["total"] == 2
     assert all(f.year_of_assessment == 2025 for f in result["filings"])
@@ -132,9 +131,7 @@ async def test_list_filings_filter_by_yoa_no_match(taxpayer):
     svc = FilingService()
     await svc.create_draft(str(taxpayer.id), 2024)
 
-    result = await svc.list_filings(
-        str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2099}
-    )
+    result = await svc.list_filings(str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2099})
 
     assert result["total"] == 0
     assert result["filings"] == []
@@ -152,9 +149,7 @@ async def test_list_filings_filter_by_status_draft(taxpayer):
     confirmed_filing = await svc.create_draft(str(taxpayer.id), 2023)
     await svc.confirm(str(confirmed_filing.id))
 
-    result = await svc.list_filings(
-        str(taxpayer.id), page=1, page_size=10, filters={"status": "Draft"}
-    )
+    result = await svc.list_filings(str(taxpayer.id), page=1, page_size=10, filters={"status": "Draft"})
 
     assert result["total"] == 2
     assert all(f.status == "Draft" for f in result["filings"])
@@ -168,9 +163,7 @@ async def test_list_filings_filter_by_status_confirmed(taxpayer):
     f2 = await svc.create_draft(str(taxpayer.id), 2023)
     await svc.confirm(str(f2.id))
 
-    result = await svc.list_filings(
-        str(taxpayer.id), page=1, page_size=10, filters={"status": "Confirmed"}
-    )
+    result = await svc.list_filings(str(taxpayer.id), page=1, page_size=10, filters={"status": "Confirmed"})
 
     assert result["total"] == 2
     assert all(f.status == "Confirmed" for f in result["filings"])
@@ -233,11 +226,9 @@ async def test_list_filings_metrics_unaffected_by_filters(taxpayer):
     await svc.create_draft(str(taxpayer.id), 2025)
 
     # Filter to only 2025, but metrics should still show total=2
-    result = await svc.list_filings(
-        str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2025}
-    )
+    result = await svc.list_filings(str(taxpayer.id), page=1, page_size=10, filters={"yoa": 2025})
 
-    assert result["total"] == 1          # filtered count
+    assert result["total"] == 1  # filtered count
     assert result["metrics"]["total"] == 2  # unfiltered total
 
 
@@ -259,12 +250,8 @@ async def test_get_filing_detail_returns_filing(taxpayer):
 async def test_get_filing_detail_prefetches_income_entries(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
-    await IncomeEntry.create(
-        filing=filing, income_type="employment", gross_amount_ngn=5_000_000.0
-    )
-    await IncomeEntry.create(
-        filing=filing, income_type="rental", gross_amount_ngn=1_200_000.0
-    )
+    await IncomeEntry.create(filing=filing, income_type="employment", gross_amount_ngn=5_000_000.0)
+    await IncomeEntry.create(filing=filing, income_type="rental", gross_amount_ngn=1_200_000.0)
 
     detail = await svc.get_filing_detail(str(filing.id))
 

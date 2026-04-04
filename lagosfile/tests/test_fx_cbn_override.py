@@ -17,30 +17,25 @@ For any entry with only fetched_rate (no override):
 """
 
 import math
-import pytest
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from lagosfile.services.fx_service import apply_cbn_override
 
-
 # ---------------------------------------------------------------------------
 # Strategies
 # ---------------------------------------------------------------------------
 
-rate_strategy = st.floats(
-    min_value=1.0, max_value=2000.0, allow_nan=False, allow_infinity=False
-)
-amount_strategy = st.floats(
-    min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False
-)
+rate_strategy = st.floats(min_value=1.0, max_value=2000.0, allow_nan=False, allow_infinity=False)
+amount_strategy = st.floats(min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False)
 source_strategy = st.sampled_from(["fawazahmed0", "exchangerate-api", "cache", "manual"])
 
 
 # ---------------------------------------------------------------------------
 # Property 10a: CBN override takes precedence when set
 # ---------------------------------------------------------------------------
+
 
 @given(
     fetched_rate=rate_strategy,
@@ -77,6 +72,7 @@ def test_cbn_override_takes_precedence(fetched_rate, cbn_override_rate, foreign_
 # Property 10b: Fetched rate is used when no CBN override is set
 # ---------------------------------------------------------------------------
 
+
 @given(
     fetched_rate=rate_strategy,
     foreign_amount=amount_strategy,
@@ -110,6 +106,7 @@ def test_fetched_rate_used_when_no_override(fetched_rate, foreign_amount, source
 # ---------------------------------------------------------------------------
 # Property 10c: Original dict is not mutated
 # ---------------------------------------------------------------------------
+
 
 @given(
     fetched_rate=rate_strategy,

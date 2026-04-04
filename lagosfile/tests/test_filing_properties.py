@@ -11,11 +11,11 @@ Requirements: 10.4, 10.5, 10.8
 # Feature: lagos-file, Property 20: Filing reference format
 
 import re
-import pytest
-from tortoise import Tortoise
 
-from hypothesis import given, settings, HealthCheck
+import pytest
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from tortoise import Tortoise
 
 from lagosfile.models import (
     Filing,
@@ -24,10 +24,10 @@ from lagosfile.models import (
 )
 from lagosfile.services.filing_service import FilingService
 
-
 # ---------------------------------------------------------------------------
 # DB fixture — one fresh in-memory DB per test function
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -47,6 +47,7 @@ async def tortoise_db():
 # on the second example if we always INSERT).
 # ---------------------------------------------------------------------------
 
+
 async def _get_or_create_taxpayer() -> Taxpayer:
     taxpayer, _ = await Taxpayer.get_or_create(
         tin="1234567890123",
@@ -59,6 +60,7 @@ async def _get_or_create_taxpayer() -> Taxpayer:
 # Property 18: Filing duplicate increments YOA
 # Validates: Requirements 10.4
 # ---------------------------------------------------------------------------
+
 
 @given(yoa=st.integers(min_value=2000, max_value=2050))
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -104,6 +106,7 @@ async def test_property_18_duplicate_increments_yoa(tortoise_db, yoa):
 # Property 19: Amendment immutability
 # Validates: Requirements 10.5
 # ---------------------------------------------------------------------------
+
 
 @given(yoa=st.integers(min_value=2000, max_value=2050))
 @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -172,22 +175,14 @@ async def test_property_20_filing_reference_format(tortoise_db, yoa):
     assert ref is not None, "filing_reference must not be None after confirm"
 
     match = REFERENCE_PATTERN.match(ref)
-    assert match is not None, (
-        f"filing_reference '{ref}' does not match LIRS/REF/YYYY/NNNNN"
-    )
+    assert match is not None, f"filing_reference '{ref}' does not match LIRS/REF/YYYY/NNNNN"
 
     ref_yoa = int(match.group(1))
     ref_seq = match.group(2)
 
     # YYYY must equal the YOA
-    assert ref_yoa == yoa, (
-        f"Reference YOA {ref_yoa} does not match filing YOA {yoa}"
-    )
+    assert ref_yoa == yoa, f"Reference YOA {ref_yoa} does not match filing YOA {yoa}"
 
     # NNNNN must be exactly 5 digits (zero-padded)
-    assert len(ref_seq) == 5, (
-        f"Sequential part '{ref_seq}' is not 5 digits"
-    )
-    assert ref_seq.isdigit(), (
-        f"Sequential part '{ref_seq}' contains non-digit characters"
-    )
+    assert len(ref_seq) == 5, f"Sequential part '{ref_seq}' is not 5 digits"
+    assert ref_seq.isdigit(), f"Sequential part '{ref_seq}' contains non-digit characters"

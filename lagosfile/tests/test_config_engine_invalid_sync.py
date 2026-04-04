@@ -1,7 +1,9 @@
-import hypothesis.strategies as st
 import json
-from hypothesis import given, settings, example, assume
-from lagosfile.services.config_engine import TaxConfig, config_engine
+
+import hypothesis.strategies as st
+from hypothesis import assume, example, given, settings
+
+from lagosfile.services.config_engine import config_engine
 
 
 # Property 24: Invalid Tax_Config import is rejected
@@ -89,10 +91,7 @@ def test_invalid_tax_config_import_rejection(
     # Create invalid config data
     config_data = {
         "version_label": "Invalid Test Config",
-        "bands": [
-            {"lower": lower, "upper": upper, "rate": rate}
-            for lower, upper, rate in bands
-        ],
+        "bands": [{"lower": lower, "upper": upper, "rate": rate} for lower, upper, rate in bands],
         "allowance_rates": allowance_rates,
         "rent_relief_cap": rent_relief_cap,
         "cgt_proceeds_threshold": cgt_proceeds_threshold,
@@ -111,6 +110,6 @@ def test_invalid_tax_config_import_rejection(
     except ValueError:
         # Expected behavior - invalid config should be rejected
         pass
-    except Exception as e:
+    except Exception:
         # Any other exception means the test failed
         assume(False)

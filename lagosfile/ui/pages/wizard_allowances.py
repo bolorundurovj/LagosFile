@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import flet as ft
 
-
 # Asset types supported (Req 6.2) — no initial allowance (Req 6.1)
 _ASSET_TYPES = [
     "Computer/Laptop",
@@ -74,7 +73,11 @@ class CapitalAllowancesStep(ft.BaseControl):
                 controls=[
                     ft.Column(
                         controls=[
-                            ft.Text("Total Capital Allowance Claimable", size=13, color=ft.Colors.GREY_600),
+                            ft.Text(
+                                "Total Capital Allowance Claimable",
+                                size=13,
+                                color=ft.Colors.GREY_600,
+                            ),
                             self._total_allowance,
                             ft.Text(
                                 "Updates in real time as entries are added.",
@@ -158,7 +161,10 @@ class CapitalAllowancesStep(ft.BaseControl):
             ft.DataColumn(ft.Text("Asset Type", size=12, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Description", size=12, weight=ft.FontWeight.BOLD)),
             ft.DataColumn(ft.Text("Cost (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
-            ft.DataColumn(ft.Text("Annual Allowance (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
+            ft.DataColumn(
+                ft.Text("Annual Allowance (₦)", size=12, weight=ft.FontWeight.BOLD),
+                numeric=True,
+            ),
             ft.DataColumn(ft.Text("WDV (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
             ft.DataColumn(ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD)),
         ]
@@ -211,7 +217,11 @@ class CapitalAllowancesStep(ft.BaseControl):
                     ft.Text("Supporting Documents", size=14, weight=ft.FontWeight.W_600),
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.UPLOAD_FILE_OUTLINED, color=ft.Colors.GREY_500, size=24),
+                            ft.Icon(
+                                ft.Icons.UPLOAD_FILE_OUTLINED,
+                                color=ft.Colors.GREY_500,
+                                size=24,
+                            ),
                             ft.Text(
                                 "Attach purchase receipts or invoices (PDF, JPG, PNG — max 100MB per file)",
                                 size=12,

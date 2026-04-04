@@ -10,18 +10,18 @@ Validates: Requirements 1.3, 1.7
 """
 
 import string
-import pytest
-import pytest_asyncio
+
 import hypothesis.strategies as st
+import pytest
 from hypothesis import given, settings
 from tortoise import Tortoise
 
 from lagosfile.models import Taxpayer
 
-
 # ---------------------------------------------------------------------------
 # DB fixture — init a fresh in-memory DB before each test, tear down after
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -39,6 +39,7 @@ async def tortoise_db():
 # Property 2: Profile persistence round-trip
 # Validates: Requirements 1.3, 1.7
 # ---------------------------------------------------------------------------
+
 
 @given(
     full_name=st.text(min_size=1, max_size=255),

@@ -1,17 +1,21 @@
-from typing import Optional, Dict, Any
-from lagosfile.models import Taxpayer, TaxpayerPydantic  # noqa: F401 – TaxpayerPydantic re-exported
-from lagosfile.security import security_service
-from lagosfile.constants import Constants
 import datetime
-import asyncio
-from tortoise import Tortoise, run_async
+from typing import Any
+
+from tortoise import run_async
+
+from lagosfile.constants import Constants
+from lagosfile.models import (  # noqa: F401 – TaxpayerPydantic re-exported
+    Taxpayer,
+    TaxpayerPydantic,
+)
+from lagosfile.security import security_service
 
 
 class ProfileService:
     def __init__(self):
         self._current_taxpayer = None
 
-    async def create(self, data: Dict[str, Any], pin: str) -> Taxpayer:
+    async def create(self, data: dict[str, Any], pin: str) -> Taxpayer:
         """Create a new taxpayer profile with TIN validation and DB encryption"""
         # Validate TIN (exactly 13 digits)
         tin = data.get("tin", "").strip()
@@ -26,9 +30,7 @@ class ProfileService:
             raise ValueError(f"TIN {tin} already exists")
 
         # Create taxpayer record
-        taxpayer = await Taxpayer.create(
-            tin=tin, full_name=data.get("name", ""), created_at=datetime.datetime.now()
-        )
+        taxpayer = await Taxpayer.create(tin=tin, full_name=data.get("name", ""), created_at=datetime.datetime.now())
 
         # Derive encryption key from PIN
         key = security_service.derive_key(pin)
@@ -40,7 +42,7 @@ class ProfileService:
         self._current_taxpayer = taxpayer
         return taxpayer
 
-    async def get(self) -> Optional[Taxpayer]:
+    async def get(self) -> Taxpayer | None:
         """Get the current taxpayer profile"""
         if not self._current_taxpayer:
             # Try to load from database
@@ -49,7 +51,7 @@ class ProfileService:
                 self._current_taxpayer = taxpayer
         return self._current_taxpayer
 
-    async def update(self, data: Dict[str, Any]) -> Taxpayer:
+    async def update(self, data: dict[str, Any]) -> Taxpayer:
         """Update the current taxpayer profile"""
         if not self._current_taxpayer:
             raise ValueError("No taxpayer profile exists")
@@ -73,7 +75,7 @@ class ProfileService:
         # For this implementation, we'll just ensure the base directory exists
         Constants.ensure_dirs()
 
-    def create_sync(self, data: Dict[str, Any], pin: str) -> Taxpayer:
+    def create_sync(self, data: dict[str, Any], pin: str) -> Taxpayer:
         """Sync wrapper for create"""
         # Validate TIN (exactly 13 digits)
         tin = data.get("tin", "").strip()
@@ -90,7 +92,9 @@ class ProfileService:
         # Create taxpayer record
         taxpayer = run_async(
             Taxpayer.create(
-                tin=tin, full_name=data.get("name", ""), created_at=datetime.datetime.now()
+                tin=tin,
+                full_name=data.get("name", ""),
+                created_at=datetime.datetime.now(),
             )
         )
 
@@ -103,7 +107,7 @@ class ProfileService:
         self._current_taxpayer = taxpayer
         return taxpayer
 
-    def get_sync(self) -> Optional[Taxpayer]:
+    def get_sync(self) -> Taxpayer | None:
         """Sync wrapper for get"""
         if not self._current_taxpayer:
             taxpayer = run_async(Taxpayer.all().first())
@@ -111,7 +115,7 @@ class ProfileService:
                 self._current_taxpayer = taxpayer
         return self._current_taxpayer
 
-    def update_sync(self, data: Dict[str, Any]) -> Taxpayer:
+    def update_sync(self, data: dict[str, Any]) -> Taxpayer:
         """Sync wrapper for update"""
         if not self._current_taxpayer:
             raise ValueError("No taxpayer profile exists")

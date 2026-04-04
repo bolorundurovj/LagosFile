@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import flet as ft
 
-
 # Navigation items: (label, icon, route)
 _NAV_ITEMS = [
     ("Dashboard", ft.Icons.DASHBOARD_OUTLINED, "/dashboard"),
@@ -39,7 +38,12 @@ class Sidebar(ft.BaseControl):
             content=ft.Column(
                 controls=[
                     ft.Icon(ft.Icons.HELP_OUTLINE, color=ft.Colors.BLUE_200, size=20),
-                    ft.Text("Need help?", size=12, color=ft.Colors.WHITE, weight=ft.FontWeight.W_500),
+                    ft.Text(
+                        "Need help?",
+                        size=12,
+                        color=ft.Colors.WHITE,
+                        weight=ft.FontWeight.W_500,
+                    ),
                     ft.Text(
                         "Visit the LIRS website or consult a tax advisor.",
                         size=10,
@@ -61,7 +65,11 @@ class Sidebar(ft.BaseControl):
                     ft.Container(
                         content=ft.Row(
                             controls=[
-                                ft.Icon(ft.Icons.RECEIPT_LONG, color=ft.Colors.WHITE, size=28),
+                                ft.Icon(
+                                    ft.Icons.RECEIPT_LONG,
+                                    color=ft.Colors.WHITE,
+                                    size=28,
+                                ),
                                 ft.Text(
                                     "LagosFile",
                                     size=20,
@@ -101,14 +109,14 @@ class Sidebar(ft.BaseControl):
                         label,
                         size=13,
                         color=ft.Colors.WHITE if is_active else ft.Colors.BLUE_100,
-                        weight=ft.FontWeight.W_500 if is_active else ft.FontWeight.NORMAL,
+                        weight=(ft.FontWeight.W_500 if is_active else ft.FontWeight.NORMAL),
                     ),
                 ],
                 spacing=10,
             ),
             padding=ft.padding.symmetric(horizontal=12, vertical=10),
             border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.WHITE) if is_active else ft.Colors.TRANSPARENT,
+            bgcolor=(ft.Colors.with_opacity(0.2, ft.Colors.WHITE) if is_active else ft.Colors.TRANSPARENT),
             on_click=lambda e, r=route: self.page.go(r),
             ink=True,
         )

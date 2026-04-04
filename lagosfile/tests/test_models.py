@@ -11,27 +11,26 @@ Requirements: 14.1
 """
 
 import pytest
-import pytest_asyncio
 from tortoise import Tortoise
 
 from lagosfile.models import (
     TORTOISE_ORM,
-    Taxpayer,
-    Filing,
-    IncomeEntry,
     CapitalAllowance,
-    ReliefEntry,
-    FXCache,
     Document,
+    Filing,
+    FXCache,
+    IncomeEntry,
+    ReliefEntry,
     TaxConfigModel,
+    Taxpayer,
     init_db,
     serialize_db,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _teardown():
     """Close TortoiseORM connections after each async test."""
@@ -41,6 +40,7 @@ async def _teardown():
 # ---------------------------------------------------------------------------
 # TORTOISE_ORM config
 # ---------------------------------------------------------------------------
+
 
 def test_tortoise_orm_config_exists():
     assert isinstance(TORTOISE_ORM, dict)
@@ -60,19 +60,39 @@ def test_tortoise_orm_references_lagosfile_models():
 # Model field presence checks (static — no DB needed)
 # ---------------------------------------------------------------------------
 
+
 def test_taxpayer_has_required_fields():
     field_names = set(Taxpayer._meta.fields_map.keys())
-    for f in ("id", "full_name", "tin", "address", "phone", "email", "filing_agent", "created_at"):
+    for f in (
+        "id",
+        "full_name",
+        "tin",
+        "address",
+        "phone",
+        "email",
+        "filing_agent",
+        "created_at",
+    ):
         assert f in field_names, f"Taxpayer missing field: {f}"
 
 
 def test_filing_has_required_fields():
     field_names = set(Filing._meta.fields_map.keys())
     for f in (
-        "id", "year_of_assessment", "status", "filing_reference",
-        "created_at", "confirmed_at", "total_income_ngn", "chargeable_income",
-        "tax_payable", "wht_credit", "net_tax_payable", "minimum_tax",
-        "final_tax_payable", "tax_config_version",
+        "id",
+        "year_of_assessment",
+        "status",
+        "filing_reference",
+        "created_at",
+        "confirmed_at",
+        "total_income_ngn",
+        "chargeable_income",
+        "tax_payable",
+        "wht_credit",
+        "net_tax_payable",
+        "minimum_tax",
+        "final_tax_payable",
+        "tax_config_version",
     ):
         assert f in field_names, f"Filing missing field: {f}"
 
@@ -80,10 +100,22 @@ def test_filing_has_required_fields():
 def test_income_entry_has_required_fields():
     field_names = set(IncomeEntry._meta.fields_map.keys())
     for f in (
-        "id", "income_type", "description", "gross_amount_ngn",
-        "is_foreign", "foreign_currency", "foreign_amount", "income_date",
-        "fx_rate_fetched", "fx_rate_cbn_override", "fx_rate_used", "fx_rate_source",
-        "foreign_tax_paid_ngn", "is_cgt_exempt", "cgt_proceeds", "cgt_gain",
+        "id",
+        "income_type",
+        "description",
+        "gross_amount_ngn",
+        "is_foreign",
+        "foreign_currency",
+        "foreign_amount",
+        "income_date",
+        "fx_rate_fetched",
+        "fx_rate_cbn_override",
+        "fx_rate_used",
+        "fx_rate_source",
+        "foreign_tax_paid_ngn",
+        "is_cgt_exempt",
+        "cgt_proceeds",
+        "cgt_gain",
     ):
         assert f in field_names, f"IncomeEntry missing field: {f}"
 
@@ -91,9 +123,14 @@ def test_income_entry_has_required_fields():
 def test_capital_allowance_has_required_fields():
     field_names = set(CapitalAllowance._meta.fields_map.keys())
     for f in (
-        "id", "asset_description", "asset_type", "asset_cost",
-        "acquisition_date", "tax_written_down_value",
-        "annual_allowance_rate", "annual_allowance_amount",
+        "id",
+        "asset_description",
+        "asset_type",
+        "asset_cost",
+        "acquisition_date",
+        "tax_written_down_value",
+        "annual_allowance_rate",
+        "annual_allowance_amount",
     ):
         assert f in field_names, f"CapitalAllowance missing field: {f}"
 
@@ -101,23 +138,42 @@ def test_capital_allowance_has_required_fields():
 def test_relief_entry_has_required_fields():
     field_names = set(ReliefEntry._meta.fields_map.keys())
     for f in (
-        "id", "relief_type", "claimed_amount", "approved_amount",
-        "wht_ref", "wht_income_type", "wht_date",
+        "id",
+        "relief_type",
+        "claimed_amount",
+        "approved_amount",
+        "wht_ref",
+        "wht_income_type",
+        "wht_date",
     ):
         assert f in field_names, f"ReliefEntry missing field: {f}"
 
 
 def test_fx_cache_has_required_fields():
     field_names = set(FXCache._meta.fields_map.keys())
-    for f in ("id", "base_currency", "quote_currency", "rate", "rate_date", "source", "fetched_at"):
+    for f in (
+        "id",
+        "base_currency",
+        "quote_currency",
+        "rate",
+        "rate_date",
+        "source",
+        "fetched_at",
+    ):
         assert f in field_names, f"FXCache missing field: {f}"
 
 
 def test_document_has_required_fields():
     field_names = set(Document._meta.fields_map.keys())
     for f in (
-        "id", "parent_entry_id", "parent_entry_type",
-        "file_path", "file_name", "file_type", "file_size_bytes", "uploaded_at",
+        "id",
+        "parent_entry_id",
+        "parent_entry_type",
+        "file_path",
+        "file_name",
+        "file_type",
+        "file_size_bytes",
+        "uploaded_at",
     ):
         assert f in field_names, f"Document missing field: {f}"
 
@@ -125,9 +181,17 @@ def test_document_has_required_fields():
 def test_tax_config_model_has_required_fields():
     field_names = set(TaxConfigModel._meta.fields_map.keys())
     for f in (
-        "id", "version_label", "governed_by", "band_thresholds",
-        "relief_caps", "cgt_thresholds", "allowance_rates",
-        "minimum_tax_rate", "is_active", "last_modified", "modified_by",
+        "id",
+        "version_label",
+        "governed_by",
+        "band_thresholds",
+        "relief_caps",
+        "cgt_thresholds",
+        "allowance_rates",
+        "minimum_tax_rate",
+        "is_active",
+        "last_modified",
+        "modified_by",
     ):
         assert f in field_names, f"TaxConfigModel missing field: {f}"
 
@@ -135,6 +199,7 @@ def test_tax_config_model_has_required_fields():
 # ---------------------------------------------------------------------------
 # Async lifecycle tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_init_db_creates_schemas_on_fresh_db():

@@ -7,8 +7,9 @@ Requirements: 3.1, 3.4, 3.5, 10.4, 10.5, 10.8
 """
 
 import re
-import pytest
 from datetime import date
+
+import pytest
 from tortoise import Tortoise
 
 from lagosfile.models import (
@@ -20,10 +21,10 @@ from lagosfile.models import (
 )
 from lagosfile.services.filing_service import FilingService
 
-
 # ---------------------------------------------------------------------------
 # DB + Taxpayer fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def tortoise_db():
@@ -49,6 +50,7 @@ async def taxpayer() -> Taxpayer:
 # ---------------------------------------------------------------------------
 # create_draft
 # ---------------------------------------------------------------------------
+
 
 async def test_create_draft_returns_filing(taxpayer):
     svc = FilingService()
@@ -78,6 +80,7 @@ async def test_create_draft_persisted_to_db(taxpayer):
 # save_step
 # ---------------------------------------------------------------------------
 
+
 async def test_save_step_income_entries(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
@@ -103,17 +106,19 @@ async def test_save_step_replaces_existing_income_entries(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
 
-    await svc.save_step(str(filing.id), {
-        "income_entries": [
-            {"income_type": "business", "gross_amount_ngn": 1_000_000.0}
-        ]
-    })
-    await svc.save_step(str(filing.id), {
-        "income_entries": [
-            {"income_type": "rental", "gross_amount_ngn": 2_000_000.0},
-            {"income_type": "dividend", "gross_amount_ngn": 500_000.0},
-        ]
-    })
+    await svc.save_step(
+        str(filing.id),
+        {"income_entries": [{"income_type": "business", "gross_amount_ngn": 1_000_000.0}]},
+    )
+    await svc.save_step(
+        str(filing.id),
+        {
+            "income_entries": [
+                {"income_type": "rental", "gross_amount_ngn": 2_000_000.0},
+                {"income_type": "dividend", "gross_amount_ngn": 500_000.0},
+            ]
+        },
+    )
 
     entries = await IncomeEntry.filter(filing_id=filing.id)
     assert len(entries) == 2
@@ -173,6 +178,7 @@ async def test_save_step_returns_filing(taxpayer):
 # ---------------------------------------------------------------------------
 # confirm
 # ---------------------------------------------------------------------------
+
 
 async def test_confirm_sets_status_confirmed(taxpayer):
     svc = FilingService()
@@ -241,6 +247,7 @@ async def test_confirm_snapshots_tax_config_version(taxpayer):
 # duplicate
 # ---------------------------------------------------------------------------
 
+
 async def test_duplicate_creates_yoa_plus_one(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
@@ -262,12 +269,15 @@ async def test_duplicate_creates_draft_status(taxpayer):
 async def test_duplicate_copies_income_entries(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
-    await svc.save_step(str(filing.id), {
-        "income_entries": [
-            {"income_type": "employment", "gross_amount_ngn": 6_000_000.0},
-            {"income_type": "rental", "gross_amount_ngn": 1_200_000.0},
-        ]
-    })
+    await svc.save_step(
+        str(filing.id),
+        {
+            "income_entries": [
+                {"income_type": "employment", "gross_amount_ngn": 6_000_000.0},
+                {"income_type": "rental", "gross_amount_ngn": 1_200_000.0},
+            ]
+        },
+    )
     await svc.confirm(str(filing.id))
 
     new_filing = await svc.duplicate(str(filing.id))
@@ -278,19 +288,22 @@ async def test_duplicate_copies_income_entries(taxpayer):
 async def test_duplicate_copies_capital_allowances(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
-    await svc.save_step(str(filing.id), {
-        "capital_allowances": [
-            {
-                "asset_description": "Laptop",
-                "asset_type": "Computer/Laptop",
-                "asset_cost": 500_000.0,
-                "acquisition_date": date(2024, 1, 15),
-                "tax_written_down_value": 375_000.0,
-                "annual_allowance_rate": 0.25,
-                "annual_allowance_amount": 125_000.0,
-            }
-        ]
-    })
+    await svc.save_step(
+        str(filing.id),
+        {
+            "capital_allowances": [
+                {
+                    "asset_description": "Laptop",
+                    "asset_type": "Computer/Laptop",
+                    "asset_cost": 500_000.0,
+                    "acquisition_date": date(2024, 1, 15),
+                    "tax_written_down_value": 375_000.0,
+                    "annual_allowance_rate": 0.25,
+                    "annual_allowance_amount": 125_000.0,
+                }
+            ]
+        },
+    )
     await svc.confirm(str(filing.id))
 
     new_filing = await svc.duplicate(str(filing.id))
@@ -302,11 +315,18 @@ async def test_duplicate_copies_capital_allowances(taxpayer):
 async def test_duplicate_does_not_copy_relief_entries(taxpayer):
     svc = FilingService()
     filing = await svc.create_draft(str(taxpayer.id), 2025)
-    await svc.save_step(str(filing.id), {
-        "relief_entries": [
-            {"relief_type": "pension", "claimed_amount": 200_000.0, "approved_amount": 200_000.0}
-        ]
-    })
+    await svc.save_step(
+        str(filing.id),
+        {
+            "relief_entries": [
+                {
+                    "relief_type": "pension",
+                    "claimed_amount": 200_000.0,
+                    "approved_amount": 200_000.0,
+                }
+            ]
+        },
+    )
     await svc.confirm(str(filing.id))
 
     new_filing = await svc.duplicate(str(filing.id))
@@ -325,6 +345,7 @@ async def test_duplicate_raises_if_not_confirmed(taxpayer):
 # ---------------------------------------------------------------------------
 # amend
 # ---------------------------------------------------------------------------
+
 
 async def test_amend_creates_new_draft(taxpayer):
     svc = FilingService()

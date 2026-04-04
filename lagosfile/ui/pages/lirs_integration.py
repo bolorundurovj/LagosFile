@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import flet as ft
 
+from lagosfile.services.filing_service import FilingService
+from lagosfile.services.lirs_service import AutomationResult, LIRSService
 from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
-from lagosfile.services.lirs_service import LIRSService, AutomationResult
-from lagosfile.services.filing_service import FilingService
-
 
 _FALLBACK_BANNER = (
     "Automatic form filling is currently unavailable. "
@@ -97,7 +96,11 @@ class LIRSIntegrationPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=20),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        color=ft.Colors.ORANGE_800,
+                        size=20,
+                    ),
                     ft.Text(
                         _FALLBACK_BANNER,
                         size=13,
@@ -127,19 +130,34 @@ class LIRSIntegrationPage(ft.BaseControl):
                     ft.Text("Filing Details", size=14, weight=ft.FontWeight.W_600),
                     ft.Row(
                         controls=[
-                            ft.Text("Year of Assessment:", size=12, color=ft.Colors.GREY_600, expand=1),
+                            ft.Text(
+                                "Year of Assessment:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
                             ft.Text(str(yoa), size=12, weight=ft.FontWeight.W_500, expand=2),
                         ]
                     ),
                     ft.Row(
                         controls=[
-                            ft.Text("Filing Reference:", size=12, color=ft.Colors.GREY_600, expand=1),
+                            ft.Text(
+                                "Filing Reference:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
                             ft.Text(str(ref), size=12, weight=ft.FontWeight.W_500, expand=2),
                         ]
                     ),
                     ft.Row(
                         controls=[
-                            ft.Text("Final Tax Payable:", size=12, color=ft.Colors.GREY_600, expand=1),
+                            ft.Text(
+                                "Final Tax Payable:",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                                expand=1,
+                            ),
                             ft.Text(
                                 f"₦{tax:,.2f}" if tax is not None else "—",
                                 size=12,
@@ -161,7 +179,11 @@ class LIRSIntegrationPage(ft.BaseControl):
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Submit to LIRS e-Tax Portal", size=14, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Submit to LIRS e-Tax Portal",
+                        size=14,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     ft.Text(
                         "This will attempt to pre-fill Form A on the LIRS portal using Playwright automation. "
                         "If automation fails, a Reference Panel will appear alongside the portal.",
@@ -171,7 +193,11 @@ class LIRSIntegrationPage(ft.BaseControl):
                     # Link to create portal account (Req 12.2)
                     ft.Row(
                         controls=[
-                            ft.Text("Don't have a portal account?", size=12, color=ft.Colors.GREY_600),
+                            ft.Text(
+                                "Don't have a portal account?",
+                                size=12,
+                                color=ft.Colors.GREY_600,
+                            ),
                             ft.TextButton(
                                 "Create one at etax.lirs.gov.ng",
                                 url=_LIRS_ACCOUNT_URL,
@@ -226,7 +252,11 @@ class LIRSIntegrationPage(ft.BaseControl):
                 controls=[
                     ft.Text(label, size=12, color=ft.Colors.GREY_600, expand=2),
                     ft.Text(
-                        f"₦{value:,.2f}" if isinstance(value, (int, float)) and value is not None else str(value or "—"),
+                        (
+                            f"₦{value:,.2f}"
+                            if isinstance(value, int | float) and value is not None
+                            else str(value or "—")
+                        ),
                         size=12,
                         weight=ft.FontWeight.W_500,
                         expand=1,
@@ -242,8 +272,17 @@ class LIRSIntegrationPage(ft.BaseControl):
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.TABLE_VIEW_OUTLINED, color=ft.Colors.BLUE_700, size=18),
-                            ft.Text("Reference Panel — Form A Values", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.BLUE_900),
+                            ft.Icon(
+                                ft.Icons.TABLE_VIEW_OUTLINED,
+                                color=ft.Colors.BLUE_700,
+                                size=18,
+                            ),
+                            ft.Text(
+                                "Reference Panel — Form A Values",
+                                size=14,
+                                weight=ft.FontWeight.W_600,
+                                color=ft.Colors.BLUE_900,
+                            ),
                             ft.Container(expand=True),
                             ft.TextButton(
                                 "Open LIRS Portal",

@@ -25,9 +25,7 @@ MIGRATIONS_DB = BASE_DIR / "lagosfile_migrations.db"
 # ---------------------------------------------------------------------------
 
 TORTOISE_ORM = {
-    "connections": {
-        "default": f"sqlite://{MIGRATIONS_DB}"
-    },
+    "connections": {"default": f"sqlite://{MIGRATIONS_DB}"},
     "apps": {
         "models": {
             "models": ["lagosfile.models", "aerich.models"],
@@ -38,9 +36,7 @@ TORTOISE_ORM = {
 
 # Seed-only config — no aerich.models (used by seed.py and tests)
 TORTOISE_ORM_SEED = {
-    "connections": {
-        "default": f"sqlite://{MIGRATIONS_DB}"
-    },
+    "connections": {"default": f"sqlite://{MIGRATIONS_DB}"},
     "apps": {
         "models": {
             "models": ["lagosfile.models"],

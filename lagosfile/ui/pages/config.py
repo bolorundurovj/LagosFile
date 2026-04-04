@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import flet as ft
 
+from lagosfile.services.config_engine import ConfigEngine, TaxConfig
 from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
-from lagosfile.services.config_engine import ConfigEngine, TaxConfig
-
 
 # Metadata for each config field: (field_key, label, nta_section, description)
 _BAND_SECTION = "NTA 2025 Fourth Schedule"
@@ -134,7 +133,12 @@ class ConfigurationPage(ft.BaseControl):
                     ft.Column(
                         controls=[
                             ft.Text(label, size=13, weight=ft.FontWeight.W_500),
-                            ft.Text(nta_section, size=10, color=ft.Colors.GREY_500, italic=True),
+                            ft.Text(
+                                nta_section,
+                                size=10,
+                                color=ft.Colors.GREY_500,
+                                italic=True,
+                            ),
                         ],
                         spacing=2,
                         expand=2,
@@ -157,23 +161,32 @@ class ConfigurationPage(ft.BaseControl):
             for i, band in enumerate(self._config.bands):
                 upper = band.get("upper")
                 upper_str = f"₦{upper:,.0f}" if upper is not None else "∞"
-                label = f"Band {i+1}: ₦{band['lower']:,.0f} – {upper_str}"
+                label = f"Band {i + 1}: ₦{band['lower']:,.0f} – {upper_str}"
                 rate_field = ft.TextField(
                     value=str(band["rate"]),
                     width=120,
                     keyboard_type=ft.KeyboardType.NUMBER,
                     label="Rate",
                 )
-                band_rows.append(
-                    self._config_field_row(label, f"{band['rate']*100:.0f}%", _BAND_SECTION, rate_field)
-                )
+                band_rows.append(self._config_field_row(label, f"{band['rate'] * 100:.0f}%", _BAND_SECTION, rate_field))
         else:
-            band_rows.append(ft.Text("Loading tax bands...", size=12, color=ft.Colors.GREY_500, italic=True))
+            band_rows.append(
+                ft.Text(
+                    "Loading tax bands...",
+                    size=12,
+                    color=ft.Colors.GREY_500,
+                    italic=True,
+                )
+            )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Tax Bands (NTA 2025 Fourth Schedule)", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Tax Bands (NTA 2025 Fourth Schedule)",
+                        size=15,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     *band_rows,
                 ],
                 spacing=8,
@@ -219,13 +232,13 @@ class ConfigurationPage(ft.BaseControl):
                     ft.Text("CGT Exemption Thresholds", size=15, weight=ft.FontWeight.W_600),
                     self._config_field_row(
                         "CGT Proceeds Threshold",
-                        f"₦{self._config.cgt_proceeds_threshold:,.0f}" if self._config else "—",
+                        (f"₦{self._config.cgt_proceeds_threshold:,.0f}" if self._config else "—"),
                         _CGT_SECTION,
                         self._cgt_proceeds_field,
                     ),
                     self._config_field_row(
                         "CGT Gain Threshold",
-                        f"₦{self._config.cgt_gain_threshold:,.0f}" if self._config else "—",
+                        (f"₦{self._config.cgt_gain_threshold:,.0f}" if self._config else "—"),
                         _CGT_SECTION,
                         self._cgt_gain_field,
                     ),
@@ -249,15 +262,26 @@ class ConfigurationPage(ft.BaseControl):
                     label="Rate",
                 )
                 rate_rows.append(
-                    self._config_field_row(asset_type, f"{rate*100:.0f}%", _ALLOWANCE_SECTION, rate_field)
+                    self._config_field_row(asset_type, f"{rate * 100:.0f}%", _ALLOWANCE_SECTION, rate_field)
                 )
         else:
-            rate_rows.append(ft.Text("Loading allowance rates...", size=12, color=ft.Colors.GREY_500, italic=True))
+            rate_rows.append(
+                ft.Text(
+                    "Loading allowance rates...",
+                    size=12,
+                    color=ft.Colors.GREY_500,
+                    italic=True,
+                )
+            )
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Capital Allowance Rates by Asset Type", size=15, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Capital Allowance Rates by Asset Type",
+                        size=15,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     *rate_rows,
                 ],
                 spacing=8,
@@ -278,7 +302,7 @@ class ConfigurationPage(ft.BaseControl):
                     ft.Text("Minimum Tax", size=15, weight=ft.FontWeight.W_600),
                     self._config_field_row(
                         "Minimum Tax Rate",
-                        f"{self._config.minimum_tax_rate*100:.0f}%" if self._config else "—",
+                        (f"{self._config.minimum_tax_rate * 100:.0f}%" if self._config else "—"),
                         _MIN_TAX_SECTION,
                         self._min_tax_rate_field,
                     ),
@@ -346,6 +370,7 @@ class ConfigurationPage(ft.BaseControl):
         try:
             json_str = await self._config_engine.export_json(self._config)
             from lagosfile.constants import Constants
+
             Constants.ensure_dirs()
             out_path = Constants.BASE_DIR / "tax_config_export.json"
             out_path.write_text(json_str, encoding="utf-8")
@@ -357,7 +382,10 @@ class ConfigurationPage(ft.BaseControl):
         """Import config from a JSON file."""
         # In a full implementation, open a file picker
         # For the skeleton, show a placeholder message
-        self._show_status("File picker not yet implemented. Place JSON at ~/LagosFile/tax_config_import.json", ft.Colors.BLUE_700)
+        self._show_status(
+            "File picker not yet implemented. Place JSON at ~/LagosFile/tax_config_import.json",
+            ft.Colors.BLUE_700,
+        )
 
     def _show_status(self, msg: str, color: str) -> None:
         self._status_text.value = msg

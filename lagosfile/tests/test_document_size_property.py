@@ -9,16 +9,25 @@ For any file, DocumentService should accept it if and only if its size <= 100 * 
 """
 
 import tempfile
-import pytest
 from pathlib import Path
-from hypothesis import given, settings, HealthCheck
+
+import pytest
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from lagosfile.services.document_service import DocumentService, FileTooLargeError, MAX_FILE_SIZE_BYTES
+from lagosfile.services.document_service import (
+    MAX_FILE_SIZE_BYTES,
+    DocumentService,
+    FileTooLargeError,
+)
 
 
 @given(file_size=st.integers(min_value=0, max_value=200 * 1024 * 1024))
-@settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
+@settings(
+    max_examples=25,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+    deadline=None,
+)
 def test_document_file_size_enforcement(file_size):
     """
     Property 7: Document file size enforcement

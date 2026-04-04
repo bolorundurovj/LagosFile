@@ -13,7 +13,7 @@ Requirements: 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from lagosfile.models import Filing, Taxpayer
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # WizardDraft
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class WizardDraft:
@@ -50,6 +51,7 @@ class WizardDraft:
 # AppState
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AppState:
     """Application-wide state singleton.
@@ -65,9 +67,9 @@ class AppState:
         wizard_data:    The in-memory WizardDraft accumulator.
     """
 
-    taxpayer: Optional["Taxpayer"]
-    active_filing: Optional["Filing"]
-    active_config: "TaxConfig"
+    taxpayer: Taxpayer | None
+    active_filing: Filing | None
+    active_config: TaxConfig
     current_step: int
     wizard_data: WizardDraft
 
@@ -86,7 +88,7 @@ MAX_STEP = 4
 MIN_STEP = 1
 
 
-async def advance_step(app_state: AppState, filing_service: "FilingService") -> None:
+async def advance_step(app_state: AppState, filing_service: FilingService) -> None:
     """Flush the current step's WizardDraft data to ORM and advance current_step.
 
     - Calls filing_service.save_step() with the data for the current step.
@@ -108,9 +110,7 @@ async def advance_step(app_state: AppState, filing_service: "FilingService") -> 
     key = _STEP_DATA_KEYS.get(step)
     if key is not None:
         step_data = {key: getattr(app_state.wizard_data, key)}
-        await filing_service.save_step(
-            str(app_state.active_filing.id), step_data
-        )
+        await filing_service.save_step(str(app_state.active_filing.id), step_data)
 
     # Advance step, capped at MAX_STEP
     if app_state.current_step < MAX_STEP:

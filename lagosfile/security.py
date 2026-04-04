@@ -7,12 +7,14 @@ and atomic file writes for the encrypted SQLite database.
 Requirements: 14.1, 14.2, 14.3, 14.4
 """
 
-import os
 import base64
+import os
 from pathlib import Path
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
+
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 from lagosfile.constants import Constants
 
 
@@ -120,6 +122,7 @@ def atomic_write(data: bytes, final_path: Path) -> None:
 # Convenience class — wraps the module-level functions for callers that
 # prefer an object-oriented interface (e.g. ProfileService, FilingService).
 # ---------------------------------------------------------------------------
+
 
 class SecurityService:
     """Object-oriented wrapper around the module-level security functions."""

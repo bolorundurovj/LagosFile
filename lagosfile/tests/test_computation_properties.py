@@ -12,26 +12,25 @@ Requirements: 4.4, 4.5, 8.6, 8.7
 # Feature: lagos-file, Property 6: CGT exemption threshold logic
 
 from dataclasses import dataclass
-from typing import Optional
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from lagosfile.services.computation_engine import ComputationEngine, FilingData
-from lagosfile.services.config_engine import TaxConfig, NTA_2025_BANDS
-
+from lagosfile.services.config_engine import NTA_2025_BANDS, TaxConfig
 
 # ---------------------------------------------------------------------------
 # Helpers — simple in-memory stubs (same pattern as test_computation_engine.py)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class IncomeEntry:
     income_type: str
     gross_amount_ngn: float
-    cgt_proceeds: Optional[float] = None
-    cgt_gain: Optional[float] = None
+    cgt_proceeds: float | None = None
+    cgt_gain: float | None = None
 
 
 def make_config() -> TaxConfig:
@@ -62,13 +61,10 @@ engine = ComputationEngine()
 # Validates: Requirements 4.4, 8.7
 # ---------------------------------------------------------------------------
 
+
 @given(
-    non_digital_amount=st.floats(
-        min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False
-    ),
-    digital_loss=st.floats(
-        min_value=-1e9, max_value=-0.01, allow_nan=False, allow_infinity=False
-    ),
+    non_digital_amount=st.floats(min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False),
+    digital_loss=st.floats(min_value=-1e9, max_value=-0.01, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
 def test_property_5_digital_asset_loss_ring_fencing(non_digital_amount, digital_loss):
@@ -92,9 +88,7 @@ def test_property_5_digital_asset_loss_ring_fencing(non_digital_amount, digital_
     assert result.total_gross_income == pytest.approx(non_digital_amount, rel=1e-6)
 
     # The ring-fenced loss amount must equal abs(digital_loss)
-    assert result.digital_asset_loss_ringfenced == pytest.approx(
-        abs(digital_loss), rel=1e-6
-    )
+    assert result.digital_asset_loss_ringfenced == pytest.approx(abs(digital_loss), rel=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -104,16 +98,11 @@ def test_property_5_digital_asset_loss_ring_fencing(non_digital_amount, digital_
 
 # --- Exempt case: both conditions met ---
 
+
 @given(
-    gross_amount=st.floats(
-        min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False
-    ),
-    proceeds=st.floats(
-        min_value=0.01, max_value=149_999_999.99, allow_nan=False, allow_infinity=False
-    ),
-    gain=st.floats(
-        min_value=0.01, max_value=10_000_000.0, allow_nan=False, allow_infinity=False
-    ),
+    gross_amount=st.floats(min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False),
+    proceeds=st.floats(min_value=0.01, max_value=149_999_999.99, allow_nan=False, allow_infinity=False),
+    gain=st.floats(min_value=0.01, max_value=10_000_000.0, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
 def test_property_6_cgt_exempt_when_both_thresholds_met(gross_amount, proceeds, gain):
@@ -150,21 +139,14 @@ def test_property_6_cgt_exempt_when_both_thresholds_met(gross_amount, proceeds, 
 
 # --- Not-exempt case 1: proceeds threshold exceeded ---
 
+
 @given(
-    gross_amount=st.floats(
-        min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False
-    ),
-    proceeds=st.floats(
-        min_value=150_000_000.0, max_value=1e12, allow_nan=False, allow_infinity=False
-    ),
-    gain=st.floats(
-        min_value=0.01, max_value=10_000_000.0, allow_nan=False, allow_infinity=False
-    ),
+    gross_amount=st.floats(min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False),
+    proceeds=st.floats(min_value=150_000_000.0, max_value=1e12, allow_nan=False, allow_infinity=False),
+    gain=st.floats(min_value=0.01, max_value=10_000_000.0, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
-def test_property_6_cgt_not_exempt_when_proceeds_exceed_threshold(
-    gross_amount, proceeds, gain
-):
+def test_property_6_cgt_not_exempt_when_proceeds_exceed_threshold(gross_amount, proceeds, gain):
     """
     When proceeds >= cgt_proceeds_threshold (condition fails), the entry is
     NOT excluded — it contributes to total_gross_income and cgt_exempt_amount == 0.
@@ -194,21 +176,14 @@ def test_property_6_cgt_not_exempt_when_proceeds_exceed_threshold(
 
 # --- Not-exempt case 2: gain threshold exceeded ---
 
+
 @given(
-    gross_amount=st.floats(
-        min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False
-    ),
-    proceeds=st.floats(
-        min_value=0.01, max_value=149_999_999.99, allow_nan=False, allow_infinity=False
-    ),
-    gain=st.floats(
-        min_value=10_000_000.01, max_value=1e12, allow_nan=False, allow_infinity=False
-    ),
+    gross_amount=st.floats(min_value=0.01, max_value=1e9, allow_nan=False, allow_infinity=False),
+    proceeds=st.floats(min_value=0.01, max_value=149_999_999.99, allow_nan=False, allow_infinity=False),
+    gain=st.floats(min_value=10_000_000.01, max_value=1e12, allow_nan=False, allow_infinity=False),
 )
 @settings(max_examples=25)
-def test_property_6_cgt_not_exempt_when_gain_exceeds_threshold(
-    gross_amount, proceeds, gain
-):
+def test_property_6_cgt_not_exempt_when_gain_exceeds_threshold(gross_amount, proceeds, gain):
     """
     When gain > cgt_gain_threshold (condition fails), the entry is NOT excluded —
     it contributes to total_gross_income and cgt_exempt_amount == 0.

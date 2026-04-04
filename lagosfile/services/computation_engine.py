@@ -4,15 +4,14 @@ Computation Engine — computes tax liability from filing data and Tax_Config.
 Requirements: 4.4, 4.5, 8.1, 8.2, 8.3, 8.6, 8.7
 """
 
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass
 
 from lagosfile.services.config_engine import TaxBand, TaxConfig
-
 
 # ---------------------------------------------------------------------------
 # Input / output dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FilingData:
@@ -31,6 +30,7 @@ class FilingData:
         - approved_amount: float
         - claimed_amount: float
     """
+
     income_entries: list
     capital_allowances: list
     relief_entries: list
@@ -50,7 +50,7 @@ class ComputationResult:
     prorated_capital_allowances: float
     total_deductions: float
     chargeable_income: float
-    band_breakdown: List[BandResult]
+    band_breakdown: list[BandResult]
     graduated_tax: float
     wht_credits: float
     net_tax_payable: float
@@ -64,6 +64,7 @@ class ComputationResult:
 # ---------------------------------------------------------------------------
 # ComputationEngine
 # ---------------------------------------------------------------------------
+
 
 class ComputationEngine:
     """Pure computation engine — no database access.
@@ -92,12 +93,8 @@ class ComputationEngine:
         # ------------------------------------------------------------------
         # Step 1: Separate digital asset entries
         # ------------------------------------------------------------------
-        digital_entries = [
-            e for e in income_entries if e.income_type == "digital_asset"
-        ]
-        other_entries = [
-            e for e in income_entries if e.income_type != "digital_asset"
-        ]
+        digital_entries = [e for e in income_entries if e.income_type == "digital_asset"]
+        other_entries = [e for e in income_entries if e.income_type != "digital_asset"]
 
         # ------------------------------------------------------------------
         # Step 2: Ring-fence digital asset losses
@@ -116,10 +113,7 @@ class ComputationEngine:
             if entry.income_type == "capital_gain_shares":
                 proceeds = getattr(entry, "cgt_proceeds", None) or 0.0
                 gain = getattr(entry, "cgt_gain", None) or 0.0
-                if (
-                    proceeds < config.cgt_proceeds_threshold
-                    and gain <= config.cgt_gain_threshold
-                ):
+                if proceeds < config.cgt_proceeds_threshold and gain <= config.cgt_gain_threshold:
                     cgt_exempt_amount += entry.gross_amount_ngn
                     # Exclude from computation — use 0 for this entry
                     processed_other.append(_ZeroedEntry(entry))
@@ -129,17 +123,13 @@ class ComputationEngine:
         # ------------------------------------------------------------------
         # Step 4: Total gross income
         # ------------------------------------------------------------------
-        total_gross = (
-            sum(e.gross_amount_ngn for e in processed_other) + digital_net
-        )
+        total_gross = sum(e.gross_amount_ngn for e in processed_other) + digital_net
 
         # ------------------------------------------------------------------
         # Step 5: Capital allowance proration
         # (non_taxable_income = 0 for task 3.1; proration implemented in 3.4)
         # ------------------------------------------------------------------
-        total_ca = sum(
-            ca.annual_allowance_amount for ca in filing_data.capital_allowances
-        )
+        total_ca = sum(ca.annual_allowance_amount for ca in filing_data.capital_allowances)
         non_taxable_income = 0.0  # placeholder — task 3.4 will populate this
         if total_gross > 0 and non_taxable_income / total_gross >= 0.10:
             proration_ratio = (total_gross - non_taxable_income) / total_gross
@@ -178,9 +168,7 @@ class ComputationEngine:
                 other_approved += amount
 
         rent_relief = min(annual_rent * 0.20, config.rent_relief_cap)
-        other_deductions = (
-            pension + nhis + nhf + rent_relief + life_assurance + other_approved
-        )
+        other_deductions = pension + nhis + nhf + rent_relief + life_assurance + other_approved
         total_deductions = other_deductions  # WHT applied after graduated tax
 
         # ------------------------------------------------------------------
@@ -192,7 +180,7 @@ class ComputationEngine:
         # Step 8: Progressive tax bands
         # ------------------------------------------------------------------
         graduated_tax = 0.0
-        band_breakdown: List[BandResult] = []
+        band_breakdown: list[BandResult] = []
         remaining = chargeable_income
 
         # Bands in TaxConfig are stored as dicts: {"lower", "upper", "rate"}
@@ -252,6 +240,7 @@ class ComputationEngine:
 # ---------------------------------------------------------------------------
 # Internal helper
 # ---------------------------------------------------------------------------
+
 
 class _ZeroedEntry:
     """Wraps an income entry but reports gross_amount_ngn = 0 (CGT-exempt)."""

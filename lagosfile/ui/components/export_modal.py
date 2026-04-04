@@ -60,8 +60,16 @@ class ExportModal(ft.BaseControl):
                         # Security badges (Req 11.7)
                         ft.Row(
                             controls=[
-                                self._security_badge("End-to-end Encrypted", ft.Icons.LOCK_OUTLINED, ft.Colors.GREEN_700),
-                                self._security_badge("LIRS Compliant Generation", ft.Icons.VERIFIED_OUTLINED, ft.Colors.BLUE_700),
+                                self._security_badge(
+                                    "End-to-end Encrypted",
+                                    ft.Icons.LOCK_OUTLINED,
+                                    ft.Colors.GREEN_700,
+                                ),
+                                self._security_badge(
+                                    "LIRS Compliant Generation",
+                                    ft.Icons.VERIFIED_OUTLINED,
+                                    ft.Colors.BLUE_700,
+                                ),
                             ],
                             spacing=10,
                         ),
@@ -132,7 +140,7 @@ class ExportModal(ft.BaseControl):
                 filename = f"lagosfile_{self.filing_export.yoa}_{self.filing_export.tin}.json"
                 self._save_text(data, filename)
 
-            self._status_text.value = f"Export saved successfully."
+            self._status_text.value = "Export saved successfully."
             self._status_text.color = ft.Colors.GREEN_700
         except Exception as exc:
             self._status_text.value = f"Export failed: {exc}"
@@ -145,8 +153,14 @@ class ExportModal(ft.BaseControl):
         if self.filing_export is None:
             return
         try:
-            data = self._export_engine.export_pdf(self.filing_export, include_attachments=self._include_attachments.value)
-            import tempfile, os, subprocess, sys
+            data = self._export_engine.export_pdf(
+                self.filing_export, include_attachments=self._include_attachments.value
+            )
+            import os
+            import subprocess
+            import sys
+            import tempfile
+
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                 f.write(data)
                 tmp_path = f.name
@@ -163,12 +177,14 @@ class ExportModal(ft.BaseControl):
 
     def _save_bytes(self, data: bytes, filename: str) -> None:
         from lagosfile.constants import Constants
+
         Constants.ensure_dirs()
         out_path = Constants.BASE_DIR / filename
         out_path.write_bytes(data)
 
     def _save_text(self, data: str, filename: str) -> None:
         from lagosfile.constants import Constants
+
         Constants.ensure_dirs()
         out_path = Constants.BASE_DIR / filename
         out_path.write_text(data, encoding="utf-8")

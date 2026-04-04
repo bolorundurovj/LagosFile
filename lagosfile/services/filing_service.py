@@ -8,7 +8,7 @@ Requirements: 3.1, 3.4, 3.5, 4.2, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.8
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from lagosfile.models import (
     CapitalAllowance,
@@ -19,9 +19,7 @@ from lagosfile.models import (
 from lagosfile.services.config_engine import ConfigEngine
 
 
-def calculate_annual_allowance(
-    asset_cost: float, annual_allowance_rate: float
-) -> float:
+def calculate_annual_allowance(asset_cost: float, annual_allowance_rate: float) -> float:
     """Calculate the annual capital allowance amount for an asset.
 
     Per NTA 2025 Requirement 6.5, the annual allowance amount is computed as
@@ -138,9 +136,7 @@ class FilingService:
         filing = await Filing.get(id=filing_id)
 
         if filing.status != "Draft":
-            raise ValueError(
-                f"Only Draft filings can be confirmed; current status is '{filing.status}'"
-            )
+            raise ValueError(f"Only Draft filings can be confirmed; current status is '{filing.status}'")
 
         # Sequential number = count of already-confirmed filings for this YOA + 1
         confirmed_count = await Filing.filter(
@@ -149,9 +145,7 @@ class FilingService:
         ).count()
         sequential = confirmed_count + 1
 
-        filing.filing_reference = (
-            f"LIRS/REF/{filing.year_of_assessment}/{sequential:05d}"
-        )
+        filing.filing_reference = f"LIRS/REF/{filing.year_of_assessment}/{sequential:05d}"
         filing.status = "Confirmed"
         filing.confirmed_at = datetime.utcnow()
 
@@ -181,9 +175,7 @@ class FilingService:
         original = await Filing.get(id=filing_id)
 
         if original.status != "Confirmed":
-            raise ValueError(
-                f"Only Confirmed filings can be duplicated; current status is '{original.status}'"
-            )
+            raise ValueError(f"Only Confirmed filings can be duplicated; current status is '{original.status}'")
 
         new_filing = await Filing.create(
             taxpayer_id=str(original.taxpayer_id),
@@ -237,7 +229,7 @@ class FilingService:
         taxpayer_id: str,
         page: int = 1,
         page_size: int = 20,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a paginated list of filings for a taxpayer with metric counts.
 
@@ -326,10 +318,7 @@ class FilingService:
         filing = await Filing.get(id=filing_id)
 
         if filing.status != "Confirmed":
-            raise ValueError(
-                f"Only Confirmed filings can be marked as Submitted; "
-                f"current status is '{filing.status}'"
-            )
+            raise ValueError(f"Only Confirmed filings can be marked as Submitted; current status is '{filing.status}'")
 
         filing.status = "Submitted"
         await filing.save()
@@ -353,9 +342,7 @@ class FilingService:
         original = await Filing.get(id=filing_id)
 
         if original.status != "Confirmed":
-            raise ValueError(
-                f"Only Confirmed filings can be amended; current status is '{original.status}'"
-            )
+            raise ValueError(f"Only Confirmed filings can be amended; current status is '{original.status}'")
 
         new_filing = await Filing.create(
             taxpayer_id=str(original.taxpayer_id),

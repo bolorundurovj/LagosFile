@@ -17,7 +17,6 @@ from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
 from lagosfile.utils.deadline import days_until_deadline
 
-
 # Status badge colours
 _STATUS_COLORS = {
     "Draft": ft.Colors.GREY_500,
@@ -95,7 +94,11 @@ class DashboardPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_800, size=20),
+                    ft.Icon(
+                        ft.Icons.WARNING_AMBER_ROUNDED,
+                        color=ft.Colors.ORANGE_800,
+                        size=20,
+                    ),
                     ft.Text(
                         f"Filing deadline in {days_left} day{'s' if days_left != 1 else ''} — March 31",
                         size=14,
@@ -150,7 +153,12 @@ class DashboardPage(ft.BaseControl):
             content=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, color=ft.Colors.WHITE),
-                    ft.Text("Start New Filing", color=ft.Colors.WHITE, size=14, weight=ft.FontWeight.W_500),
+                    ft.Text(
+                        "Start New Filing",
+                        color=ft.Colors.WHITE,
+                        size=14,
+                        weight=ft.FontWeight.W_500,
+                    ),
                 ],
                 spacing=8,
             ),
@@ -166,11 +174,41 @@ class DashboardPage(ft.BaseControl):
         # Header row
         header = ft.Row(
             controls=[
-                ft.Text("YOA", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=1),
-                ft.Text("Reference", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
-                ft.Text("Status", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=1),
-                ft.Text("Tax Payable", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
-                ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.GREY_600, expand=2),
+                ft.Text(
+                    "YOA",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=1,
+                ),
+                ft.Text(
+                    "Reference",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
+                ft.Text(
+                    "Status",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=1,
+                ),
+                ft.Text(
+                    "Tax Payable",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
+                ft.Text(
+                    "Actions",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.GREY_600,
+                    expand=2,
+                ),
             ],
         )
 
@@ -207,10 +245,30 @@ class DashboardPage(ft.BaseControl):
 
     def _quick_access_cards(self) -> ft.Control:
         cards_data = [
-            ("Tax Receipts", ft.Icons.RECEIPT_OUTLINED, ft.Colors.PURPLE_100, ft.Colors.PURPLE_800),
-            ("Tax Calculator", ft.Icons.CALCULATE_OUTLINED, ft.Colors.GREEN_100, ft.Colors.GREEN_800),
-            ("Compliance Status", ft.Icons.VERIFIED_OUTLINED, ft.Colors.BLUE_100, ft.Colors.BLUE_800),
-            ("Help & Guides", ft.Icons.MENU_BOOK_OUTLINED, ft.Colors.ORANGE_100, ft.Colors.ORANGE_800),
+            (
+                "Tax Receipts",
+                ft.Icons.RECEIPT_OUTLINED,
+                ft.Colors.PURPLE_100,
+                ft.Colors.PURPLE_800,
+            ),
+            (
+                "Tax Calculator",
+                ft.Icons.CALCULATE_OUTLINED,
+                ft.Colors.GREEN_100,
+                ft.Colors.GREEN_800,
+            ),
+            (
+                "Compliance Status",
+                ft.Icons.VERIFIED_OUTLINED,
+                ft.Colors.BLUE_100,
+                ft.Colors.BLUE_800,
+            ),
+            (
+                "Help & Guides",
+                ft.Icons.MENU_BOOK_OUTLINED,
+                ft.Colors.ORANGE_100,
+                ft.Colors.ORANGE_800,
+            ),
         ]
 
         cards = [
@@ -225,7 +283,12 @@ class DashboardPage(ft.BaseControl):
                             bgcolor=bg_color,
                             alignment=ft.alignment.center,
                         ),
-                        ft.Text(label, size=13, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_800),
+                        ft.Text(
+                            label,
+                            size=13,
+                            weight=ft.FontWeight.W_500,
+                            color=ft.Colors.GREY_800,
+                        ),
                     ],
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=10,
@@ -256,7 +319,11 @@ class DashboardPage(ft.BaseControl):
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.ACCOUNT_BALANCE_OUTLINED, color=ft.Colors.GREY_500, size=18),
+                    ft.Icon(
+                        ft.Icons.ACCOUNT_BALANCE_OUTLINED,
+                        color=ft.Colors.GREY_500,
+                        size=18,
+                    ),
                     ft.Text(
                         f"Lifetime total tax filed: ₦{self._lifetime_total:,.2f}",
                         size=13,
