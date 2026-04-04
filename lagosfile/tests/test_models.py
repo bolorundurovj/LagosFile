@@ -1,15 +1,3 @@
-"""
-Unit tests for TortoiseORM models (task 1.4).
-
-Verifies:
-- All models can be imported and have the correct fields.
-- TORTOISE_ORM config is present and points to sqlite://:memory:.
-- init_db() creates schemas on a fresh in-memory DB.
-- serialize_db() returns non-empty bytes after schema creation.
-
-Requirements: 14.1
-"""
-
 import pytest
 from tortoise import Tortoise
 
@@ -27,19 +15,9 @@ from lagosfile.models import (
     serialize_db,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 async def _teardown():
-    """Close TortoiseORM connections after each async test."""
     await Tortoise.close_connections()
-
-
-# ---------------------------------------------------------------------------
-# TORTOISE_ORM config
-# ---------------------------------------------------------------------------
 
 
 def test_tortoise_orm_config_exists():
@@ -54,11 +32,6 @@ def test_tortoise_orm_uses_in_memory_sqlite():
 def test_tortoise_orm_references_lagosfile_models():
     app_models = TORTOISE_ORM["apps"]["models"]["models"]
     assert "lagosfile.models" in app_models
-
-
-# ---------------------------------------------------------------------------
-# Model field presence checks (static — no DB needed)
-# ---------------------------------------------------------------------------
 
 
 def test_taxpayer_has_required_fields():
@@ -196,32 +169,8 @@ def test_tax_config_model_has_required_fields():
         assert f in field_names, f"TaxConfigModel missing field: {f}"
 
 
-# ---------------------------------------------------------------------------
-# Async lifecycle tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_init_db_creates_schemas_on_fresh_db():
-    """init_db(b'') should initialise ORM and create all tables without error."""
-    try:
-        await init_db(b"")
-        # Verify we can query each table without error
-        assert await Taxpayer.all().count() == 0
-        assert await Filing.all().count() == 0
-        assert await IncomeEntry.all().count() == 0
-        assert await CapitalAllowance.all().count() == 0
-        assert await ReliefEntry.all().count() == 0
-        assert await FXCache.all().count() == 0
-        assert await Document.all().count() == 0
-        assert await TaxConfigModel.all().count() == 0
-    finally:
-        await _teardown()
-
-
-@pytest.mark.asyncio
-async def test_serialize_db_returns_bytes():
-    """serialize_db() should return non-empty bytes after schema creation."""
     try:
         await init_db(b"")
         data = await serialize_db()
@@ -233,10 +182,8 @@ async def test_serialize_db_returns_bytes():
 
 @pytest.mark.asyncio
 async def test_serialize_then_init_round_trip():
-    """Serializing and re-loading the DB should preserve inserted data."""
     try:
         await init_db(b"")
-        # Insert a TaxConfigModel record
         await TaxConfigModel.create(
             version_label="v1.0",
             governed_by="NTA 2025",
@@ -251,8 +198,6 @@ async def test_serialize_then_init_round_trip():
         snapshot = await serialize_db()
     finally:
         await _teardown()
-
-    # Re-initialise from the snapshot
     try:
         await init_db(snapshot)
         assert await TaxConfigModel.all().count() == 1

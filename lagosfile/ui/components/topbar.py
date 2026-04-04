@@ -1,12 +1,3 @@
-"""
-Top app bar component.
-
-Shows the current Year of Assessment label, logged-in user name + TIN,
-and a user avatar.
-
-Requirements: 2.2
-"""
-
 from __future__ import annotations
 
 import datetime
@@ -15,11 +6,6 @@ import flet as ft
 
 
 class TopBar(ft.BaseControl):
-    """Top app bar showing YOA, user name, TIN, and avatar.
-
-    Requirements: 2.2
-    """
-
     def __init__(self, page: ft.Page, title: str = "") -> None:
         super().__init__()
         self.page = page
@@ -28,21 +14,16 @@ class TopBar(ft.BaseControl):
     def build(self) -> ft.Control:
         app_state = self.page.data
         current_yoa = datetime.date.today().year
-
         taxpayer_name = "—"
         tin_display = "—"
         if app_state and app_state.taxpayer:
             taxpayer_name = app_state.taxpayer.full_name or "—"
             tin = app_state.taxpayer.tin or ""
-            # Mask TIN: show last 4 digits
             tin_display = f"TIN: ***{tin[-4:]}" if len(tin) >= 4 else f"TIN: {tin}"
-
         avatar_initials = taxpayer_name[0].upper() if taxpayer_name and taxpayer_name != "—" else "?"
-
         return ft.Container(
             content=ft.Row(
                 controls=[
-                    # Page title / YOA label
                     ft.Column(
                         controls=[
                             ft.Text(
@@ -60,7 +41,6 @@ class TopBar(ft.BaseControl):
                         spacing=2,
                         expand=True,
                     ),
-                    # User info
                     ft.Column(
                         controls=[
                             ft.Text(
@@ -80,7 +60,6 @@ class TopBar(ft.BaseControl):
                         spacing=2,
                         horizontal_alignment=ft.CrossAxisAlignment.END,
                     ),
-                    # Avatar
                     ft.Container(
                         content=ft.Text(
                             avatar_initials,

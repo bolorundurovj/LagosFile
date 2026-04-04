@@ -1,15 +1,3 @@
-"""
-Property-based tests for ExportEngine — JSON round-trip and CSV required columns.
-
-Property 21: JSON export round-trip
-Tag: # Feature: lagos-file, Property 21: JSON export round-trip
-Validates: Requirements 11.3
-
-Property 22: CSV export contains required columns
-Tag: # Feature: lagos-file, Property 22: CSV export contains required columns
-Validates: Requirements 11.2
-"""
-
 import csv
 import io
 import json
@@ -27,11 +15,6 @@ from lagosfile.services.export_engine import (
 )
 
 engine = ExportEngine()
-
-# ---------------------------------------------------------------------------
-# Shared strategies
-# ---------------------------------------------------------------------------
-
 amount = st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False)
 nullable_amount = st.one_of(st.none(), amount)
 short_text = st.text(
@@ -107,7 +90,6 @@ def relief_entry_strategy(draw) -> ReliefEntryExport:
 
 @st.composite
 def filing_export_strategy(draw) -> FilingExport:
-    """FilingExport with varying numbers of entries (0 or more)."""
     return FilingExport(
         taxpayer_name=draw(short_text),
         tin=draw(valid_tin),
@@ -129,7 +111,6 @@ def filing_export_strategy(draw) -> FilingExport:
 
 @st.composite
 def filing_with_entries_strategy(draw) -> FilingExport:
-    """FilingExport with at least one income entry (required for Property 22)."""
     return FilingExport(
         taxpayer_name=draw(short_text),
         tin=draw(valid_tin),
@@ -149,66 +130,33 @@ def filing_with_entries_strategy(draw) -> FilingExport:
     )
 
 
-# ---------------------------------------------------------------------------
-# Property 21: JSON export round-trip
-# Feature: lagos-file, Property 21: JSON export round-trip
-# Validates: Requirements 11.3
-# ---------------------------------------------------------------------------
-
-
 @given(filing=filing_export_strategy())
 @settings(max_examples=25)
 def test_property_21_json_export_round_trip(filing: FilingExport):
-    """
-    For any FilingExport, serializing to JSON and deserializing should produce
-    identical field values for all income entries, capital allowances, relief
-    entries, computed totals, and document paths.
-
-    **Validates: Requirements 11.3**
-    """
-    # Feature: lagos-file, Property 21: JSON export round-trip
     json_str = engine.export_json(filing)
     data = json.loads(json_str)
-
-    # Header fields
     assert data["taxpayer_name"] == filing.taxpayer_name
     assert data["tin"] == filing.tin
     assert data["yoa"] == filing.yoa
     assert data["filing_reference"] == filing.filing_reference
     assert data["status"] == filing.status
-
-    # Computed totals
     assert data["total_income_ngn"] == filing.total_income_ngn
     assert data["chargeable_income"] == filing.chargeable_income
     assert data["tax_payable"] == filing.tax_payable
     assert data["net_tax_payable"] == filing.net_tax_payable
     assert data["minimum_tax"] == filing.minimum_tax
     assert data["final_tax_payable"] == filing.final_tax_payable
-
-    # Income entries — all fields identical
     assert len(data["income_entries"]) == len(filing.income_entries)
     for serialized, original in zip(data["income_entries"], filing.income_entries, strict=False):
         assert serialized == asdict(original)
-
-    # Capital allowances — all fields identical
     assert len(data["capital_allowances"]) == len(filing.capital_allowances)
     for serialized, original in zip(data["capital_allowances"], filing.capital_allowances, strict=False):
         assert serialized == asdict(original)
-
-    # Relief entries — all fields identical
     assert len(data["relief_entries"]) == len(filing.relief_entries)
     for serialized, original in zip(data["relief_entries"], filing.relief_entries, strict=False):
         assert serialized == asdict(original)
-
-    # Document paths
     assert data["document_paths"] == filing.document_paths
 
-
-# ---------------------------------------------------------------------------
-# Property 22: CSV export contains required columns
-# Feature: lagos-file, Property 22: CSV export contains required columns
-# Validates: Requirements 11.2
-# ---------------------------------------------------------------------------
 
 REQUIRED_COLUMNS = ExportEngine.CSV_COLUMNS
 
@@ -216,35 +164,18 @@ REQUIRED_COLUMNS = ExportEngine.CSV_COLUMNS
 @given(filing=filing_with_entries_strategy())
 @settings(max_examples=25)
 def test_property_22_csv_export_contains_required_columns(filing: FilingExport):
-    """
-    For any FilingExport with at least one income entry, the CSV export should
-    contain all required columns: income_type, description, gross_amount_ngn,
-    foreign_currency, foreign_amount, date, fetched_fx_rate, cbn_override_rate,
-    naira_equivalent, rate_source.
-
-    **Validates: Requirements 11.2**
-    """
-    # Feature: lagos-file, Property 22: CSV export contains required columns
     assert len(filing.income_entries) >= 1, "Precondition: at least one income entry"
-
     csv_str = engine.export_csv(filing)
     reader = csv.reader(io.StringIO(csv_str))
     rows = list(reader)
-
-    # Find the column header row (first row whose first cell is "income_type")
     col_row = None
     for row in rows:
         if row and row[0] == "income_type":
             col_row = row
             break
-
     assert col_row is not None, "Column header row not found in CSV output"
-
-    # Every required column must be present
     for col in REQUIRED_COLUMNS:
         assert col in col_row, f"Required column '{col}' missing from CSV header row"
-
-    # The number of data rows must equal the number of income entries
     col_row_idx = rows.index(col_row)
     data_rows = [r for r in rows[col_row_idx + 1 :] if r]
     assert len(data_rows) == len(filing.income_entries), (

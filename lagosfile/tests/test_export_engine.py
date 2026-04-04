@@ -1,13 +1,3 @@
-"""
-Unit tests for ExportEngine — JSON, CSV, and PDF exports.
-
-Covers:
-  - JSON export includes required header fields
-  - CSV export has correct column headers
-  - PDF export returns bytes
-  - PDF export is non-empty
-"""
-
 import csv
 import io
 import json
@@ -19,10 +9,6 @@ from lagosfile.services.export_engine import (
     IncomeEntryExport,
     ReliefEntryExport,
 )
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 def make_filing(**overrides) -> FilingExport:
@@ -77,11 +63,6 @@ def make_filing(**overrides) -> FilingExport:
 engine = ExportEngine()
 
 
-# ---------------------------------------------------------------------------
-# JSON export tests
-# ---------------------------------------------------------------------------
-
-
 def test_json_export_includes_taxpayer_name():
     filing = make_filing()
     result = json.loads(engine.export_json(filing))
@@ -134,25 +115,16 @@ def test_json_export_includes_computed_totals():
     assert result["final_tax_payable"] == 400_000.0
 
 
-# ---------------------------------------------------------------------------
-# CSV export tests
-# ---------------------------------------------------------------------------
-
-
 def test_csv_export_has_correct_column_headers():
     filing = make_filing()
     csv_str = engine.export_csv(filing)
     reader = csv.reader(io.StringIO(csv_str))
     rows = list(reader)
-
-    # Find the column header row (after the 3 header rows + blank row)
-    # Header block: taxpayer_name, tin, yoa, blank, then columns
     col_row = None
     for row in rows:
         if row and row[0] == "income_type":
             col_row = row
             break
-
     assert col_row is not None, "Column header row not found in CSV"
     assert col_row == ExportEngine.CSV_COLUMNS
 
@@ -180,22 +152,14 @@ def test_csv_export_has_data_row_for_each_income_entry():
     csv_str = engine.export_csv(filing)
     reader = csv.reader(io.StringIO(csv_str))
     rows = list(reader)
-
-    # Count rows after the column header row
     col_row_idx = None
     for i, row in enumerate(rows):
         if row and row[0] == "income_type":
             col_row_idx = i
             break
-
     assert col_row_idx is not None
     data_rows = [r for r in rows[col_row_idx + 1 :] if r]
     assert len(data_rows) == len(filing.income_entries)
-
-
-# ---------------------------------------------------------------------------
-# PDF export tests
-# ---------------------------------------------------------------------------
 
 
 def test_pdf_export_returns_bytes():
@@ -224,7 +188,6 @@ def test_pdf_export_without_attachments():
 
 
 def test_pdf_export_with_foreign_income():
-    """PDF with foreign income entries should include FX summary block."""
     filing = make_filing(
         income_entries=[
             IncomeEntryExport(
@@ -247,35 +210,22 @@ def test_pdf_export_with_foreign_income():
 
 
 def test_json_export_round_trip():
-    """Parse the JSON back and verify all field values match the original."""
     filing = make_filing()
     result = json.loads(engine.export_json(filing))
-
-    # Header fields
     assert result["taxpayer_name"] == filing.taxpayer_name
     assert result["tin"] == filing.tin
     assert result["yoa"] == filing.yoa
-
-    # Computed totals
     assert result["total_income_ngn"] == filing.total_income_ngn
     assert result["chargeable_income"] == filing.chargeable_income
     assert result["tax_payable"] == filing.tax_payable
     assert result["net_tax_payable"] == filing.net_tax_payable
     assert result["minimum_tax"] == filing.minimum_tax
     assert result["final_tax_payable"] == filing.final_tax_payable
-
-    # Income entries
     assert len(result["income_entries"]) == len(filing.income_entries)
     assert result["income_entries"][0]["income_type"] == filing.income_entries[0].income_type
     assert result["income_entries"][0]["gross_amount_ngn"] == filing.income_entries[0].gross_amount_ngn
-
-    # Capital allowances
     assert len(result["capital_allowances"]) == len(filing.capital_allowances)
     assert result["capital_allowances"][0]["asset_cost"] == filing.capital_allowances[0].asset_cost
-
-    # Relief entries
     assert len(result["relief_entries"]) == len(filing.relief_entries)
     assert result["relief_entries"][0]["approved_amount"] == filing.relief_entries[0].approved_amount
-
-    # Document paths
     assert result["document_paths"] == filing.document_paths

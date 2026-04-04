@@ -2,16 +2,12 @@ import hypothesis.strategies as st
 from hypothesis import example, given, settings
 
 
-# Property 1: TIN validation is exact
 @given(st.text(alphabet=st.sampled_from("0123456789"), min_size=13, max_size=13))
 @settings(max_examples=25)
 @example("1234567890123")
 @example("9876543210987")
 @example("0000000000000")
 def test_tin_validation_exact_13_digits(valid_tin: str):
-    """Test that TIN validation accepts exactly 13 digits"""
-    # This test would ideally call the actual validation logic
-    # For now, we'll just verify the format is correct
     assert len(valid_tin) == 13
     assert valid_tin.isdigit()
 
@@ -38,7 +34,4 @@ def test_tin_validation_exact_13_digits(valid_tin: str):
 @example("1234567890!@#")  # Contains special characters
 @example("0000000000000")  # Valid 13 digits but should be rejected by actual validation
 def test_tin_validation_rejects_invalid_tin(invalid_tin: str):
-    """Test that TIN validation rejects invalid formats"""
-    # This test would ideally call the actual validation logic
-    # For now, we'll just verify the format is incorrect
     assert len(invalid_tin) != 13 or not invalid_tin.isdigit() or invalid_tin == "0000000000000"

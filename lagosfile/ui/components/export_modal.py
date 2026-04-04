@@ -1,12 +1,3 @@
-"""
-Export Modal component.
-
-Renders a format selector (PDF/CSV/JSON), Include Attachments toggle,
-Download and Print buttons, and security badges.
-
-Requirements: 11.6, 11.7
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -15,17 +6,11 @@ from lagosfile.services.export_engine import ExportEngine, FilingExport
 
 
 class ExportModal(ft.BaseControl):
-    """Export modal overlay for confirmed filings.
-
-    Requirements: 11.6, 11.7
-    """
-
     def __init__(self, page: ft.Page, filing_export: FilingExport | None = None) -> None:
         super().__init__()
         self.page = page
         self.filing_export = filing_export
         self._export_engine = ExportEngine()
-
         self._format_group = ft.RadioGroup(
             content=ft.Row(
                 controls=[
@@ -50,14 +35,11 @@ class ExportModal(ft.BaseControl):
             content=ft.Container(
                 content=ft.Column(
                     controls=[
-                        # Format selector (Req 11.6)
                         ft.Text("Export Format", size=13, weight=ft.FontWeight.W_500),
                         self._format_group,
                         ft.Divider(height=8),
-                        # Include Attachments toggle (Req 11.6)
                         self._include_attachments,
                         ft.Divider(height=8),
-                        # Security badges (Req 11.7)
                         ft.Row(
                             controls=[
                                 self._security_badge(
@@ -117,15 +99,12 @@ class ExportModal(ft.BaseControl):
         self.page.update()
 
     def _on_download(self, e) -> None:
-        """Generate and download the export in the selected format."""
         if self.filing_export is None:
             self._status_text.value = "No filing data available for export."
             self.update()
             return
-
         fmt = self._format_group.value
         include_attachments = self._include_attachments.value
-
         try:
             if fmt == "pdf":
                 data = self._export_engine.export_pdf(self.filing_export, include_attachments=include_attachments)
@@ -139,17 +118,14 @@ class ExportModal(ft.BaseControl):
                 data = self._export_engine.export_json(self.filing_export)
                 filename = f"lagosfile_{self.filing_export.yoa}_{self.filing_export.tin}.json"
                 self._save_text(data, filename)
-
             self._status_text.value = "Export saved successfully."
             self._status_text.color = ft.Colors.GREEN_700
         except Exception as exc:
             self._status_text.value = f"Export failed: {exc}"
             self._status_text.color = ft.Colors.RED_400
-
         self.update()
 
     def _on_print(self, e) -> None:
-        """Generate PDF and open for printing."""
         if self.filing_export is None:
             return
         try:
@@ -191,7 +167,6 @@ class ExportModal(ft.BaseControl):
 
     @classmethod
     def show(cls, page: ft.Page, filing_export: FilingExport | None = None) -> None:
-        """Convenience method to open the export modal as a page dialog."""
         modal = cls(page, filing_export)
         page.dialog = modal.build()
         page.dialog.open = True

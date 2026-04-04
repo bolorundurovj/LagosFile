@@ -1,12 +1,3 @@
-"""
-Filing Wizard container — four-step guided filing wizard.
-
-Renders a vertical progress stepper and hosts the active step component.
-Wires Back/Continue buttons to AppState step transitions and FilingService.
-
-Requirements: 3.2, 3.3, 3.4, 3.6, 3.7
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -25,11 +16,6 @@ _STEPS = [
 
 
 class WizardPage(ft.BaseControl):
-    """Four-step filing wizard container.
-
-    Requirements: 3.2, 3.3, 3.4, 3.6, 3.7
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -38,21 +24,17 @@ class WizardPage(ft.BaseControl):
     def build(self) -> ft.Control:
         sidebar = Sidebar(self.page, active_route="/wizard")
         topbar = TopBar(self.page, title="New Filing Wizard")
-
         app_state = self.page.data
         current_step = app_state.current_step if app_state else 1
-
         stepper = self._build_stepper(current_step)
         step_content = self._build_step_content(current_step)
         nav_buttons = self._build_nav_buttons(current_step)
-
         main_content = ft.Column(
             controls=[
                 topbar,
                 ft.Container(
                     content=ft.Row(
                         controls=[
-                            # Left: vertical stepper
                             ft.Container(
                                 content=stepper,
                                 width=220,
@@ -60,7 +42,6 @@ class WizardPage(ft.BaseControl):
                                 bgcolor=ft.Colors.WHITE,
                                 border=ft.border.only(right=ft.BorderSide(1, ft.Colors.GREY_200)),
                             ),
-                            # Right: step content + nav
                             ft.Container(
                                 content=ft.Column(
                                     controls=[
@@ -90,7 +71,6 @@ class WizardPage(ft.BaseControl):
             expand=True,
             spacing=0,
         )
-
         return ft.Row(
             controls=[sidebar, main_content],
             expand=True,
@@ -98,7 +78,6 @@ class WizardPage(ft.BaseControl):
         )
 
     def _build_stepper(self, current_step: int) -> ft.Control:
-        """Vertical progress stepper showing all four steps."""
         items = []
         for step_num, step_label in _STEPS:
             if step_num < current_step:
@@ -116,7 +95,6 @@ class WizardPage(ft.BaseControl):
                 icon = ft.Icons.RADIO_BUTTON_UNCHECKED
                 icon_color = ft.Colors.GREY_400
                 label_color = ft.Colors.GREY_400
-
             items.append(
                 ft.Row(
                     controls=[
@@ -141,8 +119,6 @@ class WizardPage(ft.BaseControl):
                     spacing=10,
                 )
             )
-
-            # Connector line between steps
             if step_num < len(_STEPS):
                 items.append(
                     ft.Container(
@@ -152,7 +128,6 @@ class WizardPage(ft.BaseControl):
                         margin=ft.margin.only(left=9),
                     )
                 )
-
         return ft.Column(
             controls=[
                 ft.Text(
@@ -168,7 +143,6 @@ class WizardPage(ft.BaseControl):
         )
 
     def _build_step_content(self, current_step: int) -> ft.Control:
-        """Load the appropriate step component."""
         try:
             if current_step == 1:
                 from lagosfile.ui.pages.wizard_income import IncomeSourcesStep
@@ -188,7 +162,6 @@ class WizardPage(ft.BaseControl):
                 return ReviewConfirmStep(self.page)
         except Exception as exc:
             return ft.Text(f"Error loading step {current_step}: {exc}", color=ft.Colors.RED_400)
-
         return ft.Text("Unknown step", color=ft.Colors.RED_400)
 
     def _build_nav_buttons(self, current_step: int) -> ft.Control:
@@ -198,7 +171,6 @@ class WizardPage(ft.BaseControl):
             disabled=(current_step == 1),
             on_click=self._on_back,
         )
-
         continue_label = "Continue" if current_step < 4 else "Review & Confirm"
         continue_btn = ft.ElevatedButton(
             continue_label,
@@ -209,20 +181,17 @@ class WizardPage(ft.BaseControl):
             ),
             on_click=self._on_continue,
         )
-
         save_btn = ft.TextButton(
             "Save for Later",
             icon=ft.Icons.SAVE_OUTLINED,
             on_click=self._on_save_later,
         )
-
         return ft.Row(
             controls=[back_btn, ft.Container(expand=True), save_btn, continue_btn],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
     async def _on_continue(self, e) -> None:
-        """Flush current step data and advance to the next step."""
         app_state = self.page.data
         if app_state is None:
             return
@@ -230,11 +199,9 @@ class WizardPage(ft.BaseControl):
             await advance_step(app_state, self._filing_service)
         except Exception:
             pass
-        # Rebuild the wizard with the new step
         self.page.go(self.page.route)
 
     def _on_back(self, e) -> None:
-        """Navigate back to the previous step without data loss."""
         app_state = self.page.data
         if app_state is None:
             return
@@ -242,7 +209,6 @@ class WizardPage(ft.BaseControl):
         self.page.go(self.page.route)
 
     async def _on_save_later(self, e) -> None:
-        """Save current step data as a Draft without advancing."""
         app_state = self.page.data
         if app_state is None or app_state.active_filing is None:
             return

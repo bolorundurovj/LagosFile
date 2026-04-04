@@ -2,10 +2,12 @@
 stitch/
 .kiro/
 .idea/
+.junie/
 supporting_files/
 *.bin
 lagosfile.egg-info/
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo

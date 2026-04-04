@@ -31,6 +31,5 @@ class Constants:
         """Return the storage path for documents attached to an income/allowance/relief entry.
 
         Path format: ~/LagosFile/documents/<TIN>/<YOA>/<entry_id>/
-        Requirement 4.8, 14.5
         """
         return cls.DOCUMENT_ROOT / tin / str(yoa) / entry_id

@@ -1,12 +1,3 @@
-"""
-Wizard Step 3 — Deductions & Reliefs UI.
-
-Renders relief cards for all NTA 2025 relief types, CRA abolition notice,
-Rent Relief auto-calculation, WHT credit list, and real-time summary cards.
-
-Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -14,26 +5,17 @@ import flet as ft
 _CRA_NOTICE = (
     "The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief."
 )
-
 _RENT_RELIEF_NOTE = (
     "Homeowners cannot claim Rent Relief. LIRS may request a tenancy agreement as supporting documentation."
 )
-
 _RENT_RELIEF_CAP = 500_000.0  # ₦500,000 — sourced from Tax_Config in production
 
 
 class DeductionsReliefsStep(ft.BaseControl):
-    """Step 3 of the filing wizard — Deductions & Reliefs.
-
-    Requirements: 7.1–7.9
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
         self._wht_entries: list[dict] = []
-
-        # Relief amount fields
         self._pension_field = ft.TextField(
             label="Pension Contributions (₦)",
             width=240,
@@ -78,8 +60,6 @@ class DeductionsReliefsStep(ft.BaseControl):
             on_change=self._on_relief_change,
         )
         self._other_desc_field = ft.TextField(label="Description of Other Deductions", width=340)
-
-        # Summary displays
         self._total_deductions_text = ft.Text("₦0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_800)
         self._estimated_tax_text = ft.Text("₦0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_700)
 
@@ -97,7 +77,6 @@ class DeductionsReliefsStep(ft.BaseControl):
                     size=13,
                     color=ft.Colors.GREY_600,
                 ),
-                # CRA abolition notice (Req 7.2)
                 ft.Container(
                     content=ft.Row(
                         controls=[
@@ -121,18 +100,14 @@ class DeductionsReliefsStep(ft.BaseControl):
                     border=ft.border.all(1, ft.Colors.ORANGE_200),
                 ),
                 ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
-                # Relief cards
                 ft.Text("Relief Entries", size=15, weight=ft.FontWeight.W_600),
                 self._relief_form(),
                 ft.Divider(height=8),
-                # WHT credits section (Req 7.6, 7.7)
                 ft.Text("WHT Credits (WREN)", size=15, weight=ft.FontWeight.W_600),
                 self._wht_section(),
                 ft.Divider(height=8),
-                # Document attachment (Req 7.8)
                 self._document_zone(),
                 ft.Divider(height=8),
-                # Summary cards (Req 7.9)
                 ft.Row(
                     controls=[
                         self._deduction_summary_card(),
@@ -163,7 +138,6 @@ class DeductionsReliefsStep(ft.BaseControl):
             border_radius=4,
             bgcolor=ft.Colors.GREY_50,
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -209,7 +183,6 @@ class DeductionsReliefsStep(ft.BaseControl):
         wht_income_type = ft.TextField(label="Income Type", width=180)
         wht_date = ft.TextField(label="Date of Deduction", width=160, hint_text="YYYY-MM-DD")
         wht_amount = ft.TextField(label="Amount (₦) *", width=160, keyboard_type=ft.KeyboardType.NUMBER)
-
         wht_list = ft.Column(
             controls=[
                 (
@@ -229,7 +202,6 @@ class DeductionsReliefsStep(ft.BaseControl):
             ],
             spacing=4,
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -313,24 +285,19 @@ class DeductionsReliefsStep(ft.BaseControl):
         )
 
     def _on_rent_change(self, e) -> None:
-        """Auto-calculate Rent Relief at 20% of annual rent, capped at ₦500,000 (Req 7.3)."""
         try:
             rent = float(self._rent_field.value or 0)
         except ValueError:
             rent = 0.0
-
         if rent == 0:
             self._rent_relief_display.value = "₦0.00"
             self._rent_relief_display.hint_text = "Rent Relief is not applicable — no rent expense entered."
         else:
             relief = min(rent * 0.20, _RENT_RELIEF_CAP)
             self._rent_relief_display.value = f"₦{relief:,.2f}"
-
         self._on_relief_change(e)
 
     def _on_relief_change(self, e) -> None:
-        """Recalculate total deductions and update summary cards."""
-
         def _val(field: ft.TextField) -> float:
             try:
                 return float(field.value or 0)
@@ -339,7 +306,6 @@ class DeductionsReliefsStep(ft.BaseControl):
 
         rent = _val(self._rent_field)
         rent_relief = min(rent * 0.20, _RENT_RELIEF_CAP) if rent > 0 else 0.0
-
         total = (
             _val(self._pension_field)
             + _val(self._nhis_field)
@@ -349,8 +315,6 @@ class DeductionsReliefsStep(ft.BaseControl):
             + _val(self._other_field)
         )
         self._total_deductions_text.value = f"₦{total:,.2f}"
-
-        # Persist to wizard draft
         app_state = self.page.data
         if app_state:
             app_state.wizard_data.relief_entries = [
@@ -385,5 +349,4 @@ class DeductionsReliefsStep(ft.BaseControl):
                     "approved_amount": _val(self._other_field),
                 },
             ]
-
         self.update()

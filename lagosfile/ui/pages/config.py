@@ -1,13 +1,3 @@
-"""
-Configuration Page UI.
-
-Renders editable fields for all Tax_Config values, each showing current
-value, governing NTA 2025 section, last modified date, and modifier.
-Wires Save, Export, and Import to ConfigEngine.
-
-Requirements: 13.1–13.8
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -16,7 +6,6 @@ from lagosfile.services.config_engine import ConfigEngine, TaxConfig
 from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
 
-# Metadata for each config field: (field_key, label, nta_section, description)
 _BAND_SECTION = "NTA 2025 Fourth Schedule"
 _RELIEF_SECTION = "NTA 2025 Section 33"
 _CGT_SECTION = "NTA 2025 Section 30"
@@ -25,11 +14,6 @@ _MIN_TAX_SECTION = "NTA 2025 Section 37"
 
 
 class ConfigurationPage(ft.BaseControl):
-    """Configuration Page — edit Tax_Config values in-app.
-
-    Requirements: 13.1–13.8
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -37,8 +21,6 @@ class ConfigurationPage(ft.BaseControl):
         self._config: TaxConfig | None = None
         self._status_text = ft.Text("", size=12)
         self._version_label = ft.Text("Loading...", size=13, color=ft.Colors.GREY_600)
-
-        # Editable fields
         self._rent_relief_cap_field = ft.TextField(
             label="Rent Relief Cap (₦)",
             width=220,
@@ -63,7 +45,6 @@ class ConfigurationPage(ft.BaseControl):
     def build(self) -> ft.Control:
         sidebar = Sidebar(self.page, active_route="/config")
         topbar = TopBar(self.page, title="Configuration")
-
         content = ft.Column(
             controls=[
                 topbar,
@@ -80,7 +61,6 @@ class ConfigurationPage(ft.BaseControl):
             expand=True,
             spacing=0,
         )
-
         return ft.Row(
             controls=[sidebar, content],
             expand=True,
@@ -89,7 +69,6 @@ class ConfigurationPage(ft.BaseControl):
 
     def _build_body(self) -> list[ft.Control]:
         return [
-            # Version label (Req 13.5)
             ft.Container(
                 content=ft.Row(
                     controls=[
@@ -103,19 +82,12 @@ class ConfigurationPage(ft.BaseControl):
                 bgcolor=ft.Colors.BLUE_50,
                 border=ft.border.all(1, ft.Colors.BLUE_100),
             ),
-            # Tax bands section
             self._bands_section(),
-            # Relief caps section
             self._relief_section(),
-            # CGT thresholds section
             self._cgt_section(),
-            # Capital allowance rates section
             self._allowance_rates_section(),
-            # Minimum tax rate section
             self._min_tax_section(),
-            # Action buttons
             self._action_buttons(),
-            # Status message
             self._status_text,
         ]
 
@@ -126,7 +98,6 @@ class ConfigurationPage(ft.BaseControl):
         nta_section: str,
         field: ft.TextField | None = None,
     ) -> ft.Control:
-        """Render a config field row with label, value, NTA section, and optional edit field."""
         return ft.Container(
             content=ft.Row(
                 controls=[
@@ -178,7 +149,6 @@ class ConfigurationPage(ft.BaseControl):
                     italic=True,
                 )
             )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -201,7 +171,6 @@ class ConfigurationPage(ft.BaseControl):
         current_cap = f"₦{self._config.rent_relief_cap:,.0f}" if self._config else "—"
         if self._config:
             self._rent_relief_cap_field.value = str(self._config.rent_relief_cap)
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -225,7 +194,6 @@ class ConfigurationPage(ft.BaseControl):
         if self._config:
             self._cgt_proceeds_field.value = str(self._config.cgt_proceeds_threshold)
             self._cgt_gain_field.value = str(self._config.cgt_gain_threshold)
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -273,7 +241,6 @@ class ConfigurationPage(ft.BaseControl):
                     italic=True,
                 )
             )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -295,7 +262,6 @@ class ConfigurationPage(ft.BaseControl):
     def _min_tax_section(self) -> ft.Control:
         if self._config:
             self._min_tax_rate_field.value = str(self._config.minimum_tax_rate)
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -339,11 +305,9 @@ class ConfigurationPage(ft.BaseControl):
         )
 
     async def _on_save(self, e) -> None:
-        """Save updated config values via ConfigEngine."""
         if self._config is None:
             return
         try:
-            # Build updated config from field values
             updated = TaxConfig(
                 version_label=self._config.version_label,
                 bands=self._config.bands,
@@ -355,7 +319,6 @@ class ConfigurationPage(ft.BaseControl):
             )
             saved = await self._config_engine.save_config(updated)
             self._config = saved
-            # Update AppState
             app_state = self.page.data
             if app_state:
                 app_state.active_config = saved
@@ -364,7 +327,6 @@ class ConfigurationPage(ft.BaseControl):
             self._show_status(f"Save failed: {exc}", ft.Colors.RED_400)
 
     async def _on_export(self, e) -> None:
-        """Export active config as JSON."""
         if self._config is None:
             return
         try:
@@ -379,9 +341,6 @@ class ConfigurationPage(ft.BaseControl):
             self._show_status(f"Export failed: {exc}", ft.Colors.RED_400)
 
     async def _on_import(self, e) -> None:
-        """Import config from a JSON file."""
-        # In a full implementation, open a file picker
-        # For the skeleton, show a placeholder message
         self._show_status(
             "File picker not yet implemented. Place JSON at ~/LagosFile/tax_config_import.json",
             ft.Colors.BLUE_700,

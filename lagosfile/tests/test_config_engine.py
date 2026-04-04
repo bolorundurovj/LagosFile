@@ -6,7 +6,6 @@ from hypothesis import example, given, settings
 from lagosfile.services.config_engine import TaxConfig, config_engine
 
 
-# Property 23: Tax_Config import/export round-trip
 @given(
     st.lists(
         st.tuples(
@@ -122,8 +121,6 @@ from lagosfile.services.config_engine import TaxConfig, config_engine
 def test_tax_config_import_export_round_trip(
     bands, allowance_rates, rent_relief_cap, cgt_proceeds_threshold, minimum_tax_rate
 ):
-    """Test that exporting and importing a TaxConfig results in the same configuration"""
-    # Create test config
     config = TaxConfig(
         version_label=f"Test Config {datetime.datetime.now().timestamp()}",
         bands=[{"lower": lower, "upper": upper, "rate": rate} for lower, upper, rate in bands],
@@ -133,17 +130,10 @@ def test_tax_config_import_export_round_trip(
         cgt_gain_threshold=cgt_proceeds_threshold * 0.1,  # Related to proceeds threshold
         minimum_tax_rate=minimum_tax_rate,
     )
-
-    # Export to JSON
     json_data = config_engine.export_json_sync(config)
-
-    # Import from JSON
     imported_config = config_engine.import_json_sync(json_data)
-
-    # Compare configurations
     original_dict = config.to_dict()
     imported_dict = imported_config.to_dict()
-
     assert original_dict["version_label"] == imported_dict["version_label"]
     assert original_dict["bands"] == imported_dict["bands"]
     assert original_dict["allowance_rates"] == imported_dict["allowance_rates"]

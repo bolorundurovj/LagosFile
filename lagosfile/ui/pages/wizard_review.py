@@ -1,13 +1,3 @@
-"""
-Wizard Step 4 — Review & Confirm UI.
-
-Calls ComputationEngine.compute() and renders the full tax breakdown,
-tax band utilization bar, foreign income summary, minimum tax comparison,
-CGT exemption status, and incomplete filing warnings.
-
-Requirements: 9.1–9.9
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -52,11 +42,6 @@ def _fmt(val: float | None) -> str:
 
 
 class ReviewConfirmStep(ft.BaseControl):
-    """Step 4 of the filing wizard — Review & Confirm.
-
-    Requirements: 9.1–9.9
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -65,7 +50,6 @@ class ReviewConfirmStep(ft.BaseControl):
 
     def build(self) -> ft.Control:
         self._compute()
-
         controls: list[ft.Control] = [
             ft.Text(
                 "Step 4: Review & Confirm",
@@ -81,21 +65,13 @@ class ReviewConfirmStep(ft.BaseControl):
             ),
             ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
         ]
-
-        # Incomplete filing warnings (Req 9.6)
         if self._warnings:
             controls.append(self._warnings_card())
-
         if self._result:
-            # Full tax breakdown (Req 9.1)
             controls.append(self._breakdown_card())
-            # Tax band utilization bar (Req 9.7)
             controls.append(self._band_utilization_bar())
-            # Foreign income summary (Req 9.2, 9.3)
             controls.append(self._foreign_income_summary())
-            # Minimum tax comparison (Req 9.5)
             controls.append(self._minimum_tax_comparison())
-            # CGT exemption status (Req 9.4)
             if self._result.cgt_exempt_amount > 0:
                 controls.append(self._cgt_exemption_card())
         else:
@@ -110,13 +86,8 @@ class ReviewConfirmStep(ft.BaseControl):
                     padding=ft.padding.all(20),
                 )
             )
-
-        # Minimum tax notice (Req 8.8)
         controls.append(self._minimum_tax_notice())
-
-        # Action buttons (Req 9.8, 9.9)
         controls.append(self._action_buttons())
-
         return ft.Column(
             controls=controls,
             spacing=16,
@@ -124,15 +95,12 @@ class ReviewConfirmStep(ft.BaseControl):
         )
 
     def _compute(self) -> None:
-        """Run ComputationEngine with current wizard data."""
         app_state = self.page.data
         if app_state is None:
             return
-
         try:
             wizard = app_state.wizard_data
             config = app_state.active_config
-
             income_entries = [
                 IncomeEntry(
                     income_type=e.get("income_type", "other"),
@@ -148,7 +116,6 @@ class ReviewConfirmStep(ft.BaseControl):
                 )
                 for e in wizard.income_entries
             ]
-
             capital_allowances = [
                 CapitalAllowance(
                     annual_allowance_amount=float(a.get("annual_allowance_amount", 0)),
@@ -157,7 +124,6 @@ class ReviewConfirmStep(ft.BaseControl):
                 )
                 for a in wizard.capital_allowances
             ]
-
             relief_entries = [
                 ReliefEntry(
                     relief_type=r.get("relief_type", "other"),
@@ -165,16 +131,13 @@ class ReviewConfirmStep(ft.BaseControl):
                 )
                 for r in wizard.relief_entries
             ]
-
             filing_data = FilingData(
                 income_entries=income_entries,
                 capital_allowances=capital_allowances,
                 relief_entries=relief_entries,
             )
-
             engine = ComputationEngine()
             self._result = engine.compute(filing_data, config)
-
         except Exception as exc:
             self._warnings.append(f"Computation error: {exc}")
 
@@ -191,7 +154,6 @@ class ReviewConfirmStep(ft.BaseControl):
             ("Minimum Tax (1% of Gross Income)", _fmt(r.minimum_tax)),
             ("Final Tax Payable", _fmt(r.final_tax_payable)),
         ]
-
         data_rows = [
             ft.DataRow(
                 cells=[
@@ -219,11 +181,8 @@ class ReviewConfirmStep(ft.BaseControl):
             )
             for label, value in rows
         ]
-
-        # Add band breakdown rows
         for i, band_result in enumerate(r.band_breakdown):
             band = band_result.band
-            # band is a TaxBand dataclass with .lower, .upper, .rate
             upper_str = f"₦{band.upper:,.0f}" if band.upper is not None else "∞"
             label = f"  Band ₦{band.lower:,.0f}–{upper_str} @ {band.rate * 100:.0f}%"
             data_rows.insert(
@@ -242,7 +201,6 @@ class ReviewConfirmStep(ft.BaseControl):
                     ]
                 ),
             )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -273,7 +231,6 @@ class ReviewConfirmStep(ft.BaseControl):
         r = self._result
         if not r or r.chargeable_income == 0:
             return ft.Container()
-
         band_colors = [
             ft.Colors.GREEN_400,
             ft.Colors.BLUE_400,
@@ -282,7 +239,6 @@ class ReviewConfirmStep(ft.BaseControl):
             ft.Colors.PURPLE_400,
             ft.Colors.PINK_400,
         ]
-
         bar_segments = []
         for i, br in enumerate(r.band_breakdown):
             if br.taxable_amount > 0:
@@ -295,7 +251,6 @@ class ReviewConfirmStep(ft.BaseControl):
                         tooltip=f"Band {i + 1}: {_fmt(br.taxable_amount)} @ {br.band['rate'] * 100:.0f}%",
                     )
                 )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -319,13 +274,11 @@ class ReviewConfirmStep(ft.BaseControl):
         app_state = self.page.data
         if not app_state:
             return ft.Container()
-
         foreign_entries = [
             e for e in app_state.wizard_data.income_entries if e.get("is_foreign") or e.get("foreign_currency")
         ]
         if not foreign_entries:
             return ft.Container()
-
         rows = [
             ft.DataRow(
                 cells=[
@@ -339,7 +292,6 @@ class ReviewConfirmStep(ft.BaseControl):
             )
             for e in foreign_entries
         ]
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -369,7 +321,6 @@ class ReviewConfirmStep(ft.BaseControl):
     def _minimum_tax_comparison(self) -> ft.Control:
         r = self._result
         graduated_higher = r.net_tax_payable >= r.minimum_tax
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -567,7 +518,6 @@ class ReviewConfirmStep(ft.BaseControl):
         )
 
     async def _on_confirm(self, e) -> None:
-        """Lock the filing as an immutable Confirmed record."""
         app_state = self.page.data
         if app_state is None or app_state.active_filing is None:
             return
@@ -582,7 +532,6 @@ class ReviewConfirmStep(ft.BaseControl):
             self.update()
 
     async def _on_save_later(self, e) -> None:
-        """Save current state as a Draft without confirming."""
         app_state = self.page.data
         if app_state is None or app_state.active_filing is None:
             return

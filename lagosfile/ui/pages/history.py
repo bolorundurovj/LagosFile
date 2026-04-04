@@ -1,12 +1,3 @@
-"""
-Filing History page.
-
-Displays metric cards, a paginated/filterable filing table with action
-buttons, and an Export Analysis panel.
-
-Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -23,11 +14,6 @@ _STATUS_COLORS = {
 
 
 class FilingHistoryPage(ft.BaseControl):
-    """Filing History page with metric cards and paginated table.
-
-    Requirements: 10.1–10.7
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -42,7 +28,6 @@ class FilingHistoryPage(ft.BaseControl):
     def build(self) -> ft.Control:
         sidebar = Sidebar(self.page, active_route="/history")
         topbar = TopBar(self.page, title="Filing History")
-
         content = ft.Column(
             controls=[
                 topbar,
@@ -59,7 +44,6 @@ class FilingHistoryPage(ft.BaseControl):
             expand=True,
             spacing=0,
         )
-
         return ft.Row(
             controls=[sidebar, content],
             expand=True,
@@ -68,15 +52,10 @@ class FilingHistoryPage(ft.BaseControl):
 
     def _build_body(self) -> list[ft.Control]:
         return [
-            # Metric cards (Req 10.2)
             self._metric_cards(),
-            # Filter bar (Req 10.6)
             self._filter_bar(),
-            # Filing table (Req 10.1)
             self._filing_table(),
-            # Export Analysis panel (Req 10.7)
             self._export_analysis_panel(),
-            # Compliance note (Req 10.7)
             self._compliance_note(),
         ]
 
@@ -111,7 +90,6 @@ class FilingHistoryPage(ft.BaseControl):
                 ft.Colors.ORANGE_800,
             ),
         ]
-
         cards = [
             ft.Container(
                 content=ft.Column(
@@ -143,7 +121,6 @@ class FilingHistoryPage(ft.BaseControl):
             )
             for label, count, icon, bg_color, icon_color in cards_data
         ]
-
         return ft.Row(controls=cards, spacing=12)
 
     def _filter_bar(self) -> ft.Control:
@@ -168,7 +145,6 @@ class FilingHistoryPage(ft.BaseControl):
             icon=ft.Icons.FILTER_LIST,
             on_click=self._apply_filters,
         )
-
         return ft.Row(
             controls=[yoa_field, status_dd, apply_btn],
             spacing=12,
@@ -183,7 +159,6 @@ class FilingHistoryPage(ft.BaseControl):
             ft.DataColumn(ft.Text("Tax Payable", size=12, weight=ft.FontWeight.BOLD), numeric=True),
             ft.DataColumn(ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD)),
         ]
-
         if not self._filings:
             return ft.Container(
                 content=ft.Column(
@@ -207,9 +182,7 @@ class FilingHistoryPage(ft.BaseControl):
                 border=ft.border.all(1, ft.Colors.GREY_200),
                 padding=ft.padding.all(16),
             )
-
         rows = [self._filing_row(f) for f in self._filings]
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -236,8 +209,6 @@ class FilingHistoryPage(ft.BaseControl):
         tax_payable = getattr(filing, "final_tax_payable", None)
         yoa = getattr(filing, "year_of_assessment", "—")
         ref = getattr(filing, "filing_reference", "—") or "—"
-
-        # Action buttons depend on status
         actions = []
         if status in ("Confirmed", "Submitted"):
             actions.append(
@@ -290,7 +261,6 @@ class FilingHistoryPage(ft.BaseControl):
                     on_click=lambda e, f=filing: self._delete_draft(f),
                 )
             )
-
         return ft.DataRow(
             cells=[
                 ft.DataCell(ft.Text(str(yoa), size=12)),
@@ -368,10 +338,6 @@ class FilingHistoryPage(ft.BaseControl):
             border=ft.border.all(1, ft.Colors.BLUE_100),
         )
 
-    # ------------------------------------------------------------------
-    # Action handlers
-    # ------------------------------------------------------------------
-
     async def _apply_filters(self, e) -> None:
         app_state = self.page.data
         if not app_state or not app_state.taxpayer:
@@ -412,7 +378,6 @@ class FilingHistoryPage(ft.BaseControl):
             pass
 
     def _export_pdf(self, filing) -> None:
-        # Open export modal — in a full implementation, show as overlay
         pass
 
     def _export_csv(self, filing) -> None:

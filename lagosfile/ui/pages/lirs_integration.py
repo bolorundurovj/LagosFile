@@ -1,12 +1,3 @@
-"""
-LIRS Integration UI helpers.
-
-Provides the "File with LIRS" button, Reference Panel (docked), fallback
-banner, and "Mark as Submitted" button for confirmed filings.
-
-Requirements: 12.1, 12.2, 12.4, 12.5, 12.7, 12.8
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -20,17 +11,11 @@ _FALLBACK_BANNER = (
     "Automatic form filling is currently unavailable. "
     "Use the reference panel alongside the portal to complete your filing."
 )
-
 _LIRS_PORTAL_URL = "https://etax.lirs.gov.ng"
 _LIRS_ACCOUNT_URL = "https://etax.lirs.gov.ng/register"
 
 
 class LIRSIntegrationPage(ft.BaseControl):
-    """LIRS portal integration page for confirmed filings.
-
-    Requirements: 12.1, 12.2, 12.4, 12.5, 12.7, 12.8
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -44,7 +29,6 @@ class LIRSIntegrationPage(ft.BaseControl):
     def build(self) -> ft.Control:
         sidebar = Sidebar(self.page, active_route="/history")
         topbar = TopBar(self.page, title="File with LIRS")
-
         content = ft.Column(
             controls=[
                 topbar,
@@ -61,7 +45,6 @@ class LIRSIntegrationPage(ft.BaseControl):
             expand=True,
             spacing=0,
         )
-
         return ft.Row(
             controls=[sidebar, content],
             expand=True,
@@ -70,26 +53,14 @@ class LIRSIntegrationPage(ft.BaseControl):
 
     def _build_body(self) -> list[ft.Control]:
         controls: list[ft.Control] = []
-
-        # Fallback banner (shown when automation fails) (Req 12.5)
         if self._automation_result and not self._automation_result.success:
             controls.append(self._fallback_banner())
-
-        # Filing info card
         controls.append(self._filing_info_card())
-
-        # File with LIRS button (Req 12.1)
         controls.append(self._file_with_lirs_section())
-
-        # Reference Panel (docked, shown when fallback active) (Req 12.4)
         if self._reference_panel_visible:
             controls.append(self._reference_panel())
-
-        # Mark as Submitted button (Req 12.8)
         controls.append(self._mark_submitted_section())
-
         controls.append(self._status_text)
-
         return controls
 
     def _fallback_banner(self) -> ft.Control:
@@ -119,11 +90,9 @@ class LIRSIntegrationPage(ft.BaseControl):
     def _filing_info_card(self) -> ft.Control:
         app_state = self.page.data
         filing = app_state.active_filing if app_state else None
-
         yoa = getattr(filing, "year_of_assessment", "—") if filing else "—"
         ref = getattr(filing, "filing_reference", "—") if filing else "—"
         tax = getattr(filing, "final_tax_payable", None) if filing else None
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -190,7 +159,6 @@ class LIRSIntegrationPage(ft.BaseControl):
                         size=12,
                         color=ft.Colors.GREY_600,
                     ),
-                    # Link to create portal account (Req 12.2)
                     ft.Row(
                         controls=[
                             ft.Text(
@@ -227,10 +195,8 @@ class LIRSIntegrationPage(ft.BaseControl):
         )
 
     def _reference_panel(self) -> ft.Control:
-        """Docked Reference Panel showing all computed values labelled to Form A sections."""
         app_state = self.page.data
         filing = app_state.active_filing if app_state else None
-
         filing_data = {}
         if filing:
             filing_data = {
@@ -244,9 +210,7 @@ class LIRSIntegrationPage(ft.BaseControl):
                 "filing_reference": getattr(filing, "filing_reference", None),
                 "year_of_assessment": getattr(filing, "year_of_assessment", None),
             }
-
         ref_data = self._lirs_service.get_reference_panel_data(filing_data)
-
         rows = [
             ft.Row(
                 controls=[
@@ -266,7 +230,6 @@ class LIRSIntegrationPage(ft.BaseControl):
             )
             for label, value in ref_data.items()
         ]
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -335,13 +298,10 @@ class LIRSIntegrationPage(ft.BaseControl):
         )
 
     def _on_file_with_lirs(self, e) -> None:
-        """Attempt Playwright automation; fall back to Reference Panel on failure."""
         app_state = self.page.data
         filing = app_state.active_filing if app_state else None
-
         self._loading.visible = True
         self.update()
-
         filing_data = {}
         if filing:
             filing_data = {
@@ -351,24 +311,19 @@ class LIRSIntegrationPage(ft.BaseControl):
                 "filing_reference": getattr(filing, "filing_reference", None),
                 "year_of_assessment": getattr(filing, "year_of_assessment", None),
             }
-
         result = self._lirs_service.file_with_lirs(filing_data)
         self._automation_result = result
-
         if not result.success:
-            # Activate Reference Panel (Req 12.4, 12.7)
             self._reference_panel_visible = True
             self._status_text.value = _FALLBACK_BANNER
             self._status_text.color = ft.Colors.ORANGE_800
         else:
             self._status_text.value = "Automation completed successfully."
             self._status_text.color = ft.Colors.GREEN_700
-
         self._loading.visible = False
         self.update()
 
     async def _on_mark_submitted(self, e) -> None:
-        """Mark the active filing as Submitted."""
         app_state = self.page.data
         if not app_state or not app_state.active_filing:
             return

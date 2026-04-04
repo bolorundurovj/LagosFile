@@ -1,12 +1,3 @@
-"""
-Dashboard page.
-
-Shows deadline countdown banner, missing-filing warnings, filing history
-table, quick-access module cards, and lifetime total footer.
-
-Requirements: 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 15.1, 15.2, 15.3
-"""
-
 from __future__ import annotations
 
 import datetime
@@ -17,7 +8,6 @@ from lagosfile.ui.components.sidebar import Sidebar
 from lagosfile.ui.components.topbar import TopBar
 from lagosfile.utils.deadline import days_until_deadline
 
-# Status badge colours
 _STATUS_COLORS = {
     "Draft": ft.Colors.GREY_500,
     "Confirmed": ft.Colors.BLUE_700,
@@ -26,11 +16,6 @@ _STATUS_COLORS = {
 
 
 class DashboardPage(ft.BaseControl):
-    """Main dashboard page.
-
-    Requirements: 2.3–2.8, 15.1–15.3
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -40,7 +25,6 @@ class DashboardPage(ft.BaseControl):
     def build(self) -> ft.Control:
         sidebar = Sidebar(self.page, active_route="/dashboard")
         topbar = TopBar(self.page, title="Dashboard")
-
         content = ft.Column(
             controls=[
                 topbar,
@@ -57,7 +41,6 @@ class DashboardPage(ft.BaseControl):
             expand=True,
             spacing=0,
         )
-
         return ft.Row(
             controls=[sidebar, content],
             expand=True,
@@ -66,28 +49,15 @@ class DashboardPage(ft.BaseControl):
 
     def _build_body(self) -> list[ft.Control]:
         controls: list[ft.Control] = []
-
-        # Deadline countdown banner (Req 2.3, 15.1)
         today = datetime.date.today()
         days_left = days_until_deadline(today, today.year)
         if days_left is not None:
             controls.append(self._deadline_banner(days_left))
-
-        # Missing filing warnings (Req 2.4, 15.2, 15.3)
         controls.extend(self._missing_filing_warnings())
-
-        # Start New Filing CTA (Req 2.6)
         controls.append(self._start_filing_cta())
-
-        # Filing history table (Req 2.5)
         controls.append(self._filing_history_section())
-
-        # Quick-access module cards (Req 2.7)
         controls.append(self._quick_access_cards())
-
-        # Lifetime total footer (Req 2.8)
         controls.append(self._lifetime_footer())
-
         return controls
 
     def _deadline_banner(self, days_left: int) -> ft.Control:
@@ -119,9 +89,6 @@ class DashboardPage(ft.BaseControl):
         today = datetime.date.today()
         current_yoa = today.year
         prior_yoa = current_yoa - 1
-
-        # In a real implementation, check the DB for confirmed filings
-        # For now, show placeholder warnings
         for yoa in [current_yoa, prior_yoa]:
             warnings.append(
                 ft.Container(
@@ -171,7 +138,6 @@ class DashboardPage(ft.BaseControl):
         )
 
     def _filing_history_section(self) -> ft.Control:
-        # Header row
         header = ft.Row(
             controls=[
                 ft.Text(
@@ -211,7 +177,6 @@ class DashboardPage(ft.BaseControl):
                 ),
             ],
         )
-
         empty_row = ft.Container(
             content=ft.Text(
                 "No filings yet. Start your first filing above.",
@@ -222,7 +187,6 @@ class DashboardPage(ft.BaseControl):
             padding=ft.padding.symmetric(vertical=20),
             alignment=ft.alignment.center,
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -270,7 +234,6 @@ class DashboardPage(ft.BaseControl):
                 ft.Colors.ORANGE_800,
             ),
         ]
-
         cards = [
             ft.Container(
                 content=ft.Column(
@@ -306,7 +269,6 @@ class DashboardPage(ft.BaseControl):
             )
             for label, icon, bg_color, icon_color in cards_data
         ]
-
         return ft.Column(
             controls=[
                 ft.Text("Quick Access", size=16, weight=ft.FontWeight.W_600),

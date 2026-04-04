@@ -1,16 +1,7 @@
-"""
-Sidebar navigation component.
-
-Fixed left sidebar with LagosFile logo, navigation links, and a support card.
-
-Requirements: 2.1
-"""
-
 from __future__ import annotations
 
 import flet as ft
 
-# Navigation items: (label, icon, route)
 _NAV_ITEMS = [
     ("Dashboard", ft.Icons.DASHBOARD_OUTLINED, "/dashboard"),
     ("New Filing", ft.Icons.ADD_CIRCLE_OUTLINE, "/wizard"),
@@ -21,11 +12,6 @@ _NAV_ITEMS = [
 
 
 class Sidebar(ft.BaseControl):
-    """Fixed left sidebar with navigation links.
-
-    Requirements: 2.1
-    """
-
     def __init__(self, page: ft.Page, active_route: str = "/dashboard") -> None:
         super().__init__()
         self.page = page
@@ -33,7 +19,6 @@ class Sidebar(ft.BaseControl):
 
     def build(self) -> ft.Control:
         nav_items = [self._nav_item(label, icon, route) for label, icon, route in _NAV_ITEMS]
-
         support_card = ft.Container(
             content=ft.Column(
                 controls=[
@@ -57,11 +42,9 @@ class Sidebar(ft.BaseControl):
             bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
             margin=ft.margin.only(top=8),
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    # Logo
                     ft.Container(
                         content=ft.Row(
                             controls=[
@@ -81,11 +64,8 @@ class Sidebar(ft.BaseControl):
                         ),
                         padding=ft.padding.only(bottom=24, top=8),
                     ),
-                    # Navigation links
                     ft.Column(controls=nav_items, spacing=4),
-                    # Spacer
                     ft.Container(expand=True),
-                    # Support card at bottom
                     support_card,
                 ],
                 expand=True,

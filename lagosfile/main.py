@@ -1,16 +1,3 @@
-"""
-LagosFile — Flet desktop app entry point.
-
-Handles app routing, PIN entry, and first-run profile setup.
-
-Routes:
-  /pin   — PIN prompt on every launch (PinEntryPage)
-  /setup — First-run profile creation (ProfileSetupPage)
-  /      — Dashboard (after successful PIN entry)
-
-Requirements: 1.1, 1.2, 14.2, 14.3, 14.4
-"""
-
 from __future__ import annotations
 
 import flet as ft
@@ -21,20 +8,8 @@ from lagosfile.services.config_engine import ConfigEngine
 from lagosfile.services.profile_service import ProfileService
 from lagosfile.state import AppState, WizardDraft
 
-# ---------------------------------------------------------------------------
-# PinEntryPage
-# ---------------------------------------------------------------------------
-
 
 class PinEntryPage(ft.BaseControl):
-    """PIN prompt shown on every app launch.
-
-    Derives the Fernet key from the entered PIN, decrypts the DB,
-    initialises TortoiseORM, loads AppState, then navigates to the Dashboard.
-
-    Requirements: 14.3, 14.4
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -102,27 +77,21 @@ class PinEntryPage(ft.BaseControl):
         )
 
     async def _on_submit(self, e) -> None:
-        """Validate PIN, decrypt DB, init ORM, navigate to dashboard."""
         pin = self._pin_field.value or ""
         if not pin:
             self._error_text.value = "PIN is required."
             self.update()
             return
-
         self._loading.visible = True
         self._error_text.value = ""
         self.update()
-
         try:
             salt = load_or_create_salt()
             fernet_key = derive_key(pin, salt)
-
             enc_path = Constants.ENCRYPTED_DB
             if enc_path.exists():
                 ciphertext = enc_path.read_bytes()
                 decrypt_db(ciphertext, fernet_key)  # raises InvalidToken on wrong PIN
-
-            # Initialise TortoiseORM (in-memory SQLite for the session)
             from tortoise import Tortoise
 
             await Tortoise.init(
@@ -130,14 +99,10 @@ class PinEntryPage(ft.BaseControl):
                 modules={"models": ["lagosfile.models"]},
             )
             await Tortoise.generate_schemas()
-
-            # Load AppState
             config_engine = ConfigEngine()
             active_config = await config_engine.get_active_config()
-
             profile_service = ProfileService()
             taxpayer = await profile_service.get()
-
             app_state = AppState(
                 taxpayer=taxpayer,
                 active_filing=None,
@@ -146,12 +111,10 @@ class PinEntryPage(ft.BaseControl):
                 wizard_data=WizardDraft(),
             )
             self.page.data = app_state
-
             if taxpayer is None:
                 self.page.go("/setup")
             else:
                 self.page.go("/")
-
         except Exception as exc:
             from cryptography.fernet import InvalidToken
 
@@ -164,24 +127,10 @@ class PinEntryPage(ft.BaseControl):
             self.update()
 
 
-# ---------------------------------------------------------------------------
-# ProfileSetupPage
-# ---------------------------------------------------------------------------
-
-
 class ProfileSetupPage(ft.BaseControl):
-    """First-run profile creation and PIN setup.
-
-    Shown when no taxpayer profile exists. Collects name, TIN, optional
-    fields, and PIN, then calls ProfileService.create().
-
-    Requirements: 1.1, 1.2, 1.3, 1.4
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
-
         self._name_field = ft.TextField(label="Full Name *", width=340)
         self._tin_field = ft.TextField(
             label="TIN (13 digits) *",
@@ -281,13 +230,10 @@ class ProfileSetupPage(ft.BaseControl):
         )
 
     async def _on_submit(self, e) -> None:
-        """Validate inputs and create the taxpayer profile."""
         name = (self._name_field.value or "").strip()
         tin = (self._tin_field.value or "").strip()
         pin = self._pin_field.value or ""
         pin_confirm = self._pin_confirm_field.value or ""
-
-        # Basic validation
         if not name:
             self._show_error("Full Name is required.")
             return
@@ -303,11 +249,9 @@ class ProfileSetupPage(ft.BaseControl):
         if pin != pin_confirm:
             self._show_error("PINs do not match.")
             return
-
         self._loading.visible = True
         self._error_text.value = ""
         self.update()
-
         try:
             profile_service = ProfileService()
             profile_data = {
@@ -319,13 +263,9 @@ class ProfileSetupPage(ft.BaseControl):
                 "filing_agent": self._agent_field.value or None,
             }
             taxpayer = await profile_service.create(profile_data, pin)
-
-            # Update AppState
             if self.page.data:
                 self.page.data.taxpayer = taxpayer
-
             self.page.go("/")
-
         except ValueError as exc:
             self._show_error(str(exc))
         except Exception as exc:
@@ -339,19 +279,11 @@ class ProfileSetupPage(ft.BaseControl):
         self.update()
 
 
-# ---------------------------------------------------------------------------
-# App entry point
-# ---------------------------------------------------------------------------
-
-
 def main(page: ft.Page) -> None:
-    """Flet app entry point — sets up routing and initial navigation."""
     page.title = "LagosFile"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = ft.Colors.GREY_100
     page.padding = 0
-
-    # Lazy imports to avoid circular deps at module level
     from lagosfile.ui.pages.config import ConfigurationPage
     from lagosfile.ui.pages.dashboard import DashboardPage
     from lagosfile.ui.pages.history import FilingHistoryPage
@@ -360,11 +292,8 @@ def main(page: ft.Page) -> None:
 
     def route_change(e: ft.RouteChangeEvent) -> None:
         page.views.clear()
-
         route = page.route
-
         if route == "/pin" or route == "/":
-            # Check if DB exists; if not, go to setup
             if not Constants.ENCRYPTED_DB.exists():
                 page.views.append(
                     ft.View(
@@ -381,7 +310,6 @@ def main(page: ft.Page) -> None:
                         bgcolor=ft.Colors.GREY_100,
                     )
                 )
-
         elif route == "/setup":
             page.views.append(
                 ft.View(
@@ -390,7 +318,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         elif route == "/dashboard" or (route == "/" and page.data is not None):
             page.views.append(
                 ft.View(
@@ -400,7 +327,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         elif route.startswith("/wizard"):
             page.views.append(
                 ft.View(
@@ -410,7 +336,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         elif route == "/history":
             page.views.append(
                 ft.View(
@@ -420,7 +345,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         elif route == "/config":
             page.views.append(
                 ft.View(
@@ -430,7 +354,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         elif route.startswith("/lirs"):
             page.views.append(
                 ft.View(
@@ -440,7 +363,6 @@ def main(page: ft.Page) -> None:
                     bgcolor=ft.Colors.GREY_100,
                 )
             )
-
         page.update()
 
     def view_pop(e: ft.ViewPopEvent) -> None:
@@ -450,8 +372,6 @@ def main(page: ft.Page) -> None:
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
-
-    # Start at PIN entry (or setup if first run)
     page.push_route("/")
 
 

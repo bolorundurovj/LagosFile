@@ -1,17 +1,7 @@
-"""
-Wizard Step 1 — Income Sources UI.
-
-Renders income category cards for all NTA 2025 income types, a Foreign
-Income section with FX rate resolution, and document attachment zones.
-
-Requirements: 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 5.4, 5.8
-"""
-
 from __future__ import annotations
 
 import flet as ft
 
-# All supported Nigerian income types (Req 4.1)
 _INCOME_TYPES = [
     ("Employment", ft.Icons.WORK_OUTLINE, "Salary, bonuses, benefits-in-kind"),
     ("Business/Trade", ft.Icons.STORE_OUTLINED, "Self-employment, sole trader income"),
@@ -28,9 +18,7 @@ _INCOME_TYPES = [
     ("Prizes/Winnings", ft.Icons.EMOJI_EVENTS_OUTLINED, "Prizes, honoraria, grants"),
     ("Other", ft.Icons.MORE_HORIZ, "Other income (free-text)"),
 ]
-
 _CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "CNY", "Other"]
-
 _FX_COMPLIANCE_NOTICE = (
     "Section 20(4) NTA 2025 requires conversion at the CBN official rate. "
     "The rate fetched above is a market-rate proxy. Enter the CBN official rate "
@@ -39,11 +27,6 @@ _FX_COMPLIANCE_NOTICE = (
 
 
 class IncomeSourcesStep(ft.BaseControl):
-    """Step 1 of the filing wizard — Income Sources.
-
-    Requirements: 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 5.4, 5.8
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -64,7 +47,6 @@ class IncomeSourcesStep(ft.BaseControl):
                     color=ft.Colors.GREY_600,
                 ),
                 ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
-                # Nigerian income categories
                 ft.Text("Nigerian Income", size=15, weight=ft.FontWeight.W_600),
                 ft.GridView(
                     controls=[self._income_category_card(label, icon, hint) for label, icon, hint in _INCOME_TYPES],
@@ -75,7 +57,6 @@ class IncomeSourcesStep(ft.BaseControl):
                     run_spacing=10,
                 ),
                 ft.Divider(height=16),
-                # Foreign income section (Req 5.1)
                 ft.Text("Foreign Currency Income", size=15, weight=ft.FontWeight.W_600),
                 ft.Text(
                     "Flag any income received in a foreign currency for automatic CBN-rate conversion.",
@@ -84,7 +65,6 @@ class IncomeSourcesStep(ft.BaseControl):
                 ),
                 self._foreign_income_form(),
                 ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
-                # Document attachment zone
                 ft.Text("Supporting Documents", size=15, weight=ft.FontWeight.W_600),
                 self._document_attachment_zone(),
             ],
@@ -147,7 +127,6 @@ class IncomeSourcesStep(ft.BaseControl):
             keyboard_type=ft.KeyboardType.NUMBER,
             hint_text="Enter CBN official rate",
         )
-
         compliance_notice = ft.Container(
             content=ft.Row(
                 controls=[
@@ -167,7 +146,6 @@ class IncomeSourcesStep(ft.BaseControl):
             bgcolor=ft.Colors.BLUE_50,
             border=ft.border.all(1, ft.Colors.BLUE_100),
         )
-
         foreign_tax_field = ft.TextField(
             label="Foreign Tax Paid (₦ equivalent, optional)",
             width=240,
@@ -179,7 +157,6 @@ class IncomeSourcesStep(ft.BaseControl):
             color=ft.Colors.GREY_500,
             italic=True,
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -254,9 +231,6 @@ class IncomeSourcesStep(ft.BaseControl):
         )
 
     def _add_income_entry(self, income_type: str) -> None:
-        """Open a dialog or expand a form to add an income entry."""
-        # In a full implementation, this would open an entry form dialog
-        # For the skeleton, we just track the intent
         app_state = self.page.data
         if app_state:
             app_state.wizard_data.income_entries.append(

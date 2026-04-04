@@ -1,18 +1,8 @@
-"""
-Config Engine — reads, writes, and versions the Tax_Config.
-
-Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 13.8
-"""
-
 import json
 from dataclasses import dataclass
 from typing import Any
 
 from lagosfile.models import TaxConfigModel
-
-# ---------------------------------------------------------------------------
-# Dataclasses (as specified in the design document)
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -56,10 +46,6 @@ class TaxConfig:
         )
 
 
-# ---------------------------------------------------------------------------
-# NTA 2025 initial seed values (Fourth Schedule)
-# ---------------------------------------------------------------------------
-
 NTA_2025_BANDS = [
     {"lower": 0, "upper": 800_000, "rate": 0.00},
     {"lower": 800_000, "upper": 3_000_000, "rate": 0.15},
@@ -68,7 +54,6 @@ NTA_2025_BANDS = [
     {"lower": 25_000_000, "upper": 50_000_000, "rate": 0.23},
     {"lower": 50_000_000, "upper": None, "rate": 0.25},
 ]
-
 NTA_2025_ALLOWANCE_RATES = {
     "Computer/Laptop": 0.25,
     "Router/Networking Equipment": 0.25,
@@ -78,7 +63,6 @@ NTA_2025_ALLOWANCE_RATES = {
     "Software Licence": 0.33,
     "Other": 0.20,
 }
-
 NTA_2025_CONFIG = TaxConfig(
     version_label="Tax Config v1.0 — NTA 2025, effective 1 Jan 2026",
     bands=NTA_2025_BANDS,
@@ -90,20 +74,13 @@ NTA_2025_CONFIG = TaxConfig(
 )
 
 
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
-
-
 def _validate_config(config: TaxConfig) -> None:
-    """Raise ValueError if the config contains invalid values."""
     if not config.version_label:
         raise ValueError("version_label is required")
     if not config.bands:
         raise ValueError("bands configuration is required")
     if not config.allowance_rates:
         raise ValueError("allowance_rates configuration is required")
-
     for band in config.bands:
         if not isinstance(band, dict):
             raise ValueError("Each band must be a dict with lower, upper, and rate")
@@ -116,11 +93,9 @@ def _validate_config(config: TaxConfig) -> None:
             raise ValueError(f"Band lower ({lower}) must be less than upper ({upper})")
         if not (0 <= rate <= 1):
             raise ValueError(f"Band rate {rate} must be between 0 and 1")
-
     for asset_type, rate in config.allowance_rates.items():
         if not (0 <= rate <= 1):
             raise ValueError(f"Allowance rate for '{asset_type}' ({rate}) must be between 0 and 1")
-
     if config.rent_relief_cap <= 0:
         raise ValueError("rent_relief_cap must be positive")
     if config.cgt_proceeds_threshold <= 0:
@@ -131,13 +106,7 @@ def _validate_config(config: TaxConfig) -> None:
         raise ValueError("minimum_tax_rate must be between 0 and 1")
 
 
-# ---------------------------------------------------------------------------
-# ORM ↔ TaxConfig mapping helpers
-# ---------------------------------------------------------------------------
-
-
 def _model_to_config(model: TaxConfigModel) -> TaxConfig:
-    """Convert a TaxConfigModel ORM row to a TaxConfig dataclass."""
     cgt = model.cgt_thresholds or {}
     return TaxConfig(
         version_label=model.version_label,
@@ -151,7 +120,6 @@ def _model_to_config(model: TaxConfigModel) -> TaxConfig:
 
 
 def _config_to_model_fields(config: TaxConfig) -> dict[str, Any]:
-    """Return the ORM field dict for creating/updating a TaxConfigModel row."""
     return {
         "version_label": config.version_label,
         "governed_by": "NTA 2025",
@@ -168,99 +136,41 @@ def _config_to_model_fields(config: TaxConfig) -> dict[str, Any]:
     }
 
 
-# ---------------------------------------------------------------------------
-# ConfigEngine
-# ---------------------------------------------------------------------------
-
-
 class ConfigEngine:
-    """Reads, writes, and versions the Tax_Config.
-
-    All async methods require an active TortoiseORM connection.
-    Sync variants (export_json_sync / import_json_sync) work without a DB.
-    """
-
     def __init__(self) -> None:
         self._active_config: TaxConfig | None = None
 
-    # ------------------------------------------------------------------
-    # get_active_config
-    # ------------------------------------------------------------------
-
     async def get_active_config(self) -> TaxConfig:
-        """Return the active TaxConfig, seeding the NTA 2025 default on first run.
-
-        Requirement 13.1, 13.5
-        """
         if self._active_config is not None:
             return self._active_config
-
         model = await TaxConfigModel.filter(is_active=True).first()
         if model:
             self._active_config = _model_to_config(model)
             return self._active_config
-
-        # First run — seed the NTA 2025 config
         await self._seed_initial_config()
         return self._active_config  # type: ignore[return-value]
 
-    # ------------------------------------------------------------------
-    # save_config
-    # ------------------------------------------------------------------
-
     async def save_config(self, config: TaxConfig) -> TaxConfig:
-        """Deactivate the current config and insert a new versioned record.
-
-        Requirement 13.3, 13.4
-        """
         _validate_config(config)
-
-        # Deactivate all existing active configs
         await TaxConfigModel.filter(is_active=True).update(is_active=False)
-
-        # Insert new versioned record
         await TaxConfigModel.create(**_config_to_model_fields(config))
-
         self._active_config = config
         return config
 
-    # ------------------------------------------------------------------
-    # export_json / import_json
-    # ------------------------------------------------------------------
-
     async def export_json(self, config: TaxConfig) -> str:
-        """Serialize a TaxConfig to a JSON string.
-
-        Requirement 13.6
-        """
         return self.export_json_sync(config)
 
     async def import_json(self, raw: str) -> TaxConfig:
-        """Deserialize and validate a TaxConfig from a JSON string.
-
-        Raises ValueError with a descriptive message if validation fails.
-        Requirement 13.7, 13.8
-        """
         return self.import_json_sync(raw)
 
-    # ------------------------------------------------------------------
-    # Sync variants (no DB required — used by property tests)
-    # ------------------------------------------------------------------
-
     def export_json_sync(self, config: TaxConfig) -> str:
-        """Sync version of export_json."""
         return json.dumps(config.to_dict(), indent=2)
 
     def import_json_sync(self, raw: str) -> TaxConfig:
-        """Sync version of import_json.
-
-        Raises ValueError with a descriptive message if validation fails.
-        """
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid JSON: {exc}") from exc
-
         required_keys = {
             "version_label",
             "bands",
@@ -273,18 +183,12 @@ class ConfigEngine:
         missing = required_keys - set(data.keys())
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(sorted(missing))}")
-
         try:
             config = TaxConfig.from_dict(data)
         except (KeyError, TypeError) as exc:
             raise ValueError(f"Malformed config data: {exc}") from exc
-
         _validate_config(config)
         return config
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     async def _seed_initial_config(self) -> None:
         """Insert the NTA 2025 default config if no config exists at all."""
@@ -293,9 +197,5 @@ class ConfigEngine:
             await TaxConfigModel.create(**_config_to_model_fields(NTA_2025_CONFIG))
         self._active_config = NTA_2025_CONFIG
 
-
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
 
 config_engine = ConfigEngine()

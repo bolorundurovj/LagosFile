@@ -1,26 +1,11 @@
-"""
-TortoiseORM models for LagosFile.
-
-All ORM models follow the design document exactly.
-Provides init_db() and serialize_db() for the encrypted in-memory SQLite session.
-
-Requirements: 14.1
-"""
-
 from dataclasses import dataclass
 
 from tortoise import fields
 from tortoise.models import Model
 
-# ---------------------------------------------------------------------------
-# Plain dataclasses used by services (not ORM models)
-# ---------------------------------------------------------------------------
-
 
 @dataclass
 class TaxpayerPydantic:
-    """Plain-data representation of a Taxpayer (used by ProfileService)."""
-
     tin: str
     full_name: str
     address: str | None = None
@@ -31,8 +16,6 @@ class TaxpayerPydantic:
 
 @dataclass
 class TaxCalculationResult:
-    """Result returned by TaxCalculator.calculate_tax()."""
-
     taxable_income: float
     total_income: float
     total_allowances: float
@@ -43,11 +26,6 @@ class TaxCalculationResult:
     adjusted_income: float
     total_tax: float = 0.0
     total_relief: float = 0.0
-
-
-# ---------------------------------------------------------------------------
-# ORM Models
-# ---------------------------------------------------------------------------
 
 
 class Taxpayer(Model):
@@ -183,10 +161,6 @@ class TaxConfigModel(Model):
         table = "tax_config"
 
 
-# ---------------------------------------------------------------------------
-# TortoiseORM configuration — in-memory SQLite for the session
-# ---------------------------------------------------------------------------
-
 TORTOISE_ORM = {
     "connections": {"default": "sqlite://:memory:"},  # in-memory; backed by encrypted file
     "apps": {
@@ -198,30 +172,11 @@ TORTOISE_ORM = {
 }
 
 
-# ---------------------------------------------------------------------------
-# DB lifecycle helpers
-# ---------------------------------------------------------------------------
-
-
 async def init_db(plaintext_bytes: bytes) -> None:
-    """Load decrypted database bytes into the in-memory SQLite and initialise ORM.
-
-    If *plaintext_bytes* is non-empty it is deserialized into the in-memory
-    connection so that existing data is available immediately.  An empty bytes
-    value (first run) causes generate_schemas() to create a fresh schema.
-
-    Args:
-        plaintext_bytes: Raw SQLite database bytes obtained after Fernet
-                         decryption, or b"" on first run.
-    """
     from tortoise import Tortoise
 
     await Tortoise.init(config=TORTOISE_ORM)
-
     if plaintext_bytes:
-        # Deserialize the existing database into the in-memory connection.
-        # aiosqlite runs sqlite3 in a worker thread; use _execute() to call
-        # deserialize() safely from within that thread.
         conn = Tortoise.get_connection("default")
         async with conn.acquire_connection() as aio_conn:
 
@@ -229,16 +184,10 @@ async def init_db(plaintext_bytes: bytes) -> None:
                 aio_conn._conn.deserialize(data)  # type: ignore[attr-defined]
 
             await aio_conn._execute(_deserialize, plaintext_bytes)  # type: ignore[attr-defined]
-
     await Tortoise.generate_schemas(safe=True)
 
 
 async def serialize_db() -> bytes:
-    """Serialize the in-memory SQLite database to bytes for re-encryption.
-
-    Returns:
-        Raw SQLite database bytes ready to be passed to encrypt_db().
-    """
     from tortoise import Tortoise
 
     conn = Tortoise.get_connection("default")

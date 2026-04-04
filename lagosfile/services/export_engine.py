@@ -1,21 +1,9 @@
-"""
-Export Engine — generates PDF, CSV, and JSON exports for LagosFile filings.
-
-Works with plain Python dataclasses (not ORM objects) to keep it testable.
-
-Requirements: 11.1, 11.2, 11.3, 11.4, 11.5
-"""
-
 from __future__ import annotations
 
 import csv
 import io
 import json
 from dataclasses import asdict, dataclass, field
-
-# ---------------------------------------------------------------------------
-# Export dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -67,58 +55,27 @@ class FilingExport:
     document_paths: list[str] = field(default_factory=list)  # file paths of attached documents
 
 
-# ---------------------------------------------------------------------------
-# ExportEngine
-# ---------------------------------------------------------------------------
-
-
 class ExportEngine:
-    """Generates PDF, CSV, and JSON exports from FilingExport dataclasses."""
-
-    # -----------------------------------------------------------------------
-    # Task 5.1 — JSON export
-    # Requirements: 11.3, 11.4, 11.5
-    # -----------------------------------------------------------------------
-
     def export_json(self, filing: FilingExport) -> str:
-        """Serialize a FilingExport to a JSON string.
-
-        Includes all income entries, capital allowances, relief entries,
-        computed totals, and document file paths.  Taxpayer name, TIN, and
-        YOA appear as top-level header fields.
-
-        Requirements: 11.3, 11.4, 11.5
-        """
         data = {
-            # Header fields (Requirement 11.4)
             "taxpayer_name": filing.taxpayer_name,
             "tin": filing.tin,
             "yoa": filing.yoa,
-            # Filing metadata
             "filing_reference": filing.filing_reference,
             "status": filing.status,
-            # Computed totals
             "total_income_ngn": filing.total_income_ngn,
             "chargeable_income": filing.chargeable_income,
             "tax_payable": filing.tax_payable,
             "net_tax_payable": filing.net_tax_payable,
             "minimum_tax": filing.minimum_tax,
             "final_tax_payable": filing.final_tax_payable,
-            # Line items (Requirement 11.3)
             "income_entries": [asdict(e) for e in filing.income_entries],
             "capital_allowances": [asdict(ca) for ca in filing.capital_allowances],
             "relief_entries": [asdict(r) for r in filing.relief_entries],
-            # Document paths (Requirement 11.5)
             "document_paths": filing.document_paths,
         }
         return json.dumps(data, indent=2, ensure_ascii=False)
 
-    # -----------------------------------------------------------------------
-    # Task 5.3 — CSV export
-    # Requirements: 11.2, 11.4
-    # -----------------------------------------------------------------------
-
-    # Required column names (Requirement 11.2)
     CSV_COLUMNS = [
         "income_type",
         "description",
@@ -133,26 +90,13 @@ class ExportEngine:
     ]
 
     def export_csv(self, filing: FilingExport) -> str:
-        """Serialize a FilingExport to a CSV string.
-
-        Includes a header block (taxpayer name, TIN, YOA) followed by a
-        column-header row and one data row per income entry.
-
-        Requirements: 11.2, 11.4
-        """
         output = io.StringIO()
         writer = csv.writer(output)
-
-        # Header rows (Requirement 11.4)
         writer.writerow(["Taxpayer Name", filing.taxpayer_name])
         writer.writerow(["TIN", filing.tin])
         writer.writerow(["Year of Assessment", filing.yoa])
         writer.writerow([])  # blank separator
-
-        # Column headers (Requirement 11.2)
         writer.writerow(self.CSV_COLUMNS)
-
-        # Data rows — one per income entry
         for entry in filing.income_entries:
             writer.writerow(
                 [
@@ -168,26 +112,9 @@ class ExportEngine:
                     entry.fx_rate_source,
                 ]
             )
-
         return output.getvalue()
 
-    # -----------------------------------------------------------------------
-    # Task 5.5 — PDF export
-    # Requirements: 11.1, 11.4, 11.5
-    # -----------------------------------------------------------------------
-
     def export_pdf(self, filing: FilingExport, include_attachments: bool = True) -> bytes:
-        """Generate a print-ready PDF for the given FilingExport.
-
-        Includes:
-          - Taxpayer name, TIN, YOA header
-          - Full tax computation statement
-          - FX summary block (if any foreign income entries exist)
-          - Relief breakdown
-          - Document attachment index (when include_attachments=True)
-
-        Requirements: 11.1, 11.4, 11.5
-        """
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -209,7 +136,6 @@ class ExportEngine:
             topMargin=2 * cm,
             bottomMargin=2 * cm,
         )
-
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             "Title",
@@ -224,14 +150,10 @@ class ExportEngine:
             spaceAfter=4,
         )
         normal = styles["Normal"]
-
         story = []
-
-        # ---- Header (Requirement 11.4) ----
         story.append(Paragraph("LAGOS INTERNAL REVENUE SERVICE", title_style))
         story.append(Paragraph("Direct Assessment — Tax Computation Statement", heading_style))
         story.append(Spacer(1, 0.3 * cm))
-
         header_data = [
             ["Taxpayer Name:", filing.taxpayer_name],
             ["TIN:", filing.tin],
@@ -252,8 +174,6 @@ class ExportEngine:
         )
         story.append(header_table)
         story.append(Spacer(1, 0.5 * cm))
-
-        # ---- Tax Computation Statement ----
         story.append(Paragraph("Tax Computation", heading_style))
 
         def _fmt(val: float | None) -> str:
@@ -295,8 +215,6 @@ class ExportEngine:
         )
         story.append(comp_table)
         story.append(Spacer(1, 0.5 * cm))
-
-        # ---- FX Summary Block (if any foreign income) ----
         foreign_entries = [e for e in filing.income_entries if e.foreign_currency]
         if foreign_entries:
             story.append(Paragraph("Foreign Income Summary", heading_style))
@@ -338,8 +256,6 @@ class ExportEngine:
             )
             story.append(fx_table)
             story.append(Spacer(1, 0.5 * cm))
-
-        # ---- Relief Breakdown ----
         if filing.relief_entries:
             story.append(Paragraph("Relief Breakdown", heading_style))
             relief_data = [["Relief Type", "Claimed (₦)", "Approved (₦)"]]
@@ -369,13 +285,10 @@ class ExportEngine:
             )
             story.append(relief_table)
             story.append(Spacer(1, 0.5 * cm))
-
-        # ---- Document Attachment Index (Requirement 11.5) ----
         if include_attachments and filing.document_paths:
             story.append(Paragraph("Document Attachment Index", heading_style))
             for i, path in enumerate(filing.document_paths, start=1):
                 story.append(Paragraph(f"{i}. {path}", normal))
             story.append(Spacer(1, 0.3 * cm))
-
         doc.build(story)
         return buffer.getvalue()

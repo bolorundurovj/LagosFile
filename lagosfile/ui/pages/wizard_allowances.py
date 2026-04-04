@@ -1,17 +1,7 @@
-"""
-Wizard Step 2 — Capital Allowances UI.
-
-Renders an asset schedule table with asset type dropdown, cost, date
-acquired, auto-calculated annual allowance, and a real-time summary card.
-
-Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8
-"""
-
 from __future__ import annotations
 
 import flet as ft
 
-# Asset types supported (Req 6.2) — no initial allowance (Req 6.1)
 _ASSET_TYPES = [
     "Computer/Laptop",
     "Router/Networking Equipment",
@@ -24,11 +14,6 @@ _ASSET_TYPES = [
 
 
 class CapitalAllowancesStep(ft.BaseControl):
-    """Step 2 of the filing wizard — Capital Allowances.
-
-    Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8
-    """
-
     def __init__(self, page: ft.Page) -> None:
         super().__init__()
         self.page = page
@@ -51,16 +36,12 @@ class CapitalAllowancesStep(ft.BaseControl):
                     color=ft.Colors.GREY_600,
                 ),
                 ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
-                # Total allowance summary card (Req 6.8)
                 self._summary_card(),
                 ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
-                # Asset entry form
                 self._asset_entry_form(),
                 ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
-                # Asset schedule table
                 self._asset_table(),
                 ft.Divider(height=16, color=ft.Colors.TRANSPARENT),
-                # Document attachment zone (Req 6.7)
                 self._document_attachment_zone(),
             ],
             spacing=12,
@@ -126,7 +107,6 @@ class CapitalAllowancesStep(ft.BaseControl):
             bgcolor=ft.Colors.GREY_100,
             hint_text="Auto-calculated",
         )
-
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -168,7 +148,6 @@ class CapitalAllowancesStep(ft.BaseControl):
             ft.DataColumn(ft.Text("WDV (₦)", size=12, weight=ft.FontWeight.BOLD), numeric=True),
             ft.DataColumn(ft.Text("Actions", size=12, weight=ft.FontWeight.BOLD)),
         ]
-
         rows = [
             ft.DataRow(
                 cells=[
@@ -189,7 +168,6 @@ class CapitalAllowancesStep(ft.BaseControl):
             )
             for i, e in enumerate(self._entries)
         ]
-
         if not rows:
             return ft.Container(
                 content=ft.Text(
@@ -201,7 +179,6 @@ class CapitalAllowancesStep(ft.BaseControl):
                 padding=ft.padding.symmetric(vertical=16),
                 alignment=ft.alignment.center,
             )
-
         return ft.DataTable(
             columns=columns,
             rows=rows,
@@ -245,8 +222,6 @@ class CapitalAllowancesStep(ft.BaseControl):
         )
 
     def _on_add_asset(self, e) -> None:
-        """Add an asset entry to the schedule and update the total."""
-        # Placeholder — in a full implementation, read field values
         entry = {
             "asset_type": "Computer/Laptop",
             "asset_description": "New asset",

@@ -6,7 +6,6 @@ from hypothesis import assume, example, given, settings
 from lagosfile.services.config_engine import config_engine
 
 
-# Property 24: Invalid Tax_Config import is rejected
 @given(
     st.lists(
         st.tuples(
@@ -87,8 +86,6 @@ from lagosfile.services.config_engine import config_engine
 def test_invalid_tax_config_import_rejection(
     bands, allowance_rates, rent_relief_cap, cgt_proceeds_threshold, minimum_tax_rate
 ):
-    """Test that importing invalid TaxConfig data is rejected"""
-    # Create invalid config data
     config_data = {
         "version_label": "Invalid Test Config",
         "bands": [{"lower": lower, "upper": upper, "rate": rate} for lower, upper, rate in bands],
@@ -98,18 +95,11 @@ def test_invalid_tax_config_import_rejection(
         "cgt_gain_threshold": cgt_proceeds_threshold * 0.1,
         "minimum_tax_rate": minimum_tax_rate,
     }
-
-    # Convert to JSON
     json_data = json.dumps(config_data)
-
-    # Test that import raises ValueError
     try:
         config_engine.import_json_sync(json_data)
-        # If we get here, the test should fail
         assume(False)
     except ValueError:
-        # Expected behavior - invalid config should be rejected
         pass
     except Exception:
-        # Any other exception means the test failed
         assume(False)
