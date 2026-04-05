@@ -3,6 +3,10 @@ stitch/
 .kiro/
 .idea/
 .junie/
+.vscode/
+*.db
+*.db-shm
+*.db-wal
 supporting_files/
 *.bin
 lagosfile.egg-info/
@@ -19,6 +23,7 @@ __pycache__/
 *.tmp
 *.swp
 *.swo
+*.env
 *.DS_Store
 *.egg-info/
 /docs
