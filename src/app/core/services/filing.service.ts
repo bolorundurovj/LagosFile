@@ -34,6 +34,10 @@ export class FilingService {
     return this.tauri.invoke<Filing>('mark_filing_submitted', { id });
   }
 
+  async deleteFiling(id: string): Promise<void> {
+    return this.tauri.invoke('delete_filing', { id });
+  }
+
   async duplicateFiling(id: string): Promise<Filing> {
     return this.tauri.invoke<Filing>('duplicate_filing', { id });
   }
@@ -84,6 +88,29 @@ export class FilingService {
     return this.tauri.invoke('delete_relief_entry', { id });
   }
 
+  // ── Documents ────────────────────────────────────────────
+
+  async attachDocument(
+    parentEntryId: string,
+    parentEntryType: string,
+    filePath: string,
+    fileName: string,
+    fileType: string,
+    fileSizeBytes: number,
+  ): Promise<void> {
+    return this.tauri.invoke('attach_document', {
+      parentEntryId, parentEntryType, filePath, fileName, fileType, fileSizeBytes,
+    });
+  }
+
+  async listDocuments(parentEntryId: string): Promise<unknown[]> {
+    return this.tauri.invoke<unknown[]>('list_documents', { parentEntryId });
+  }
+
+  async deleteDocument(id: string): Promise<void> {
+    return this.tauri.invoke('delete_document', { id });
+  }
+
   // ── Computation ──────────────────────────────────────────
 
   async compute(filingId: string): Promise<ComputationResult> {
@@ -92,16 +119,16 @@ export class FilingService {
 
   // ── Export ───────────────────────────────────────────────
 
-  async exportPdf(filingId: string, includeAttachments: boolean): Promise<string> {
-    return this.tauri.invoke<string>('export_filing_pdf', { filingId, includeAttachments });
+  async exportPdf(filingId: string, savePath: string, includeAttachments: boolean): Promise<string> {
+    return this.tauri.invoke<string>('export_filing_pdf', { filingId, savePath, includeAttachments });
   }
 
-  async exportCsv(filingId: string): Promise<string> {
-    return this.tauri.invoke<string>('export_filing_csv', { filingId });
+  async exportCsv(filingId: string, savePath: string): Promise<string> {
+    return this.tauri.invoke<string>('export_filing_csv', { filingId, savePath });
   }
 
-  async exportJson(filingId: string): Promise<string> {
-    return this.tauri.invoke<string>('export_filing_json', { filingId });
+  async exportJson(filingId: string, savePath: string): Promise<string> {
+    return this.tauri.invoke<string>('export_filing_json', { filingId, savePath });
   }
 
   // ── Wizard state helpers ─────────────────────────────────

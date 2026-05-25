@@ -65,5 +65,8 @@ log = "0.4"
 # Home directory
 dirs = "5"
 
+# PDF generation
+printpdf = "0.5"
+
 [features]
 custom-protocol = ["tauri/custom-protocol"]

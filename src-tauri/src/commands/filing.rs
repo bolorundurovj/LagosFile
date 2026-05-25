@@ -184,6 +184,34 @@ pub async fn mark_filing_submitted(id: String, state: State<'_, AppState>) -> Re
     get_filing(id, state).await
 }
 
+/// Delete a filing and all its child rows (income entries, allowances, reliefs, documents).
+/// Only Draft filings may be deleted; confirmed or submitted filings are permanent records.
+#[tauri::command]
+pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+        // Guard: only drafts can be deleted
+        let status: String = conn
+            .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| r.get(0))
+            .map_err(|_| format!("Filing '{}' not found.", id))?;
+        if status != "Draft" {
+            return Err(format!(
+                "Only Draft filings can be deleted. This filing has status '{}'.",
+                status
+            ));
+        }
+
+        // ON DELETE CASCADE in the schema handles child rows automatically.
+        conn.execute("DELETE FROM filing WHERE id=?1", params![id])
+            .map_err(|e| e.to_string())?;
+    }
+    persist_db(&state).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
     let new_id = Uuid::new_v4();

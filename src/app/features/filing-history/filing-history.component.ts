@@ -2,6 +2,9 @@ import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { DatePipe, LowerCasePipe } from '@angular/common';
+import { open as shellOpen } from '@tauri-apps/plugin-shell';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { homeDir, join } from '@tauri-apps/api/path';
 import { FilingService } from '../../core/services/filing.service';
 import { Filing } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
@@ -84,7 +87,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
                 <th>Status</th>
                 <th>Filed</th>
                 <th class="align-right">Tax Payable</th>
-                <th>Actions</th>
+                <th class="align-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -107,6 +110,9 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
                       }
                       @if (f.status === 'Confirmed') {
                         <button class="btn btn--ghost btn--sm" (click)="markSubmitted(f.id)">Mark Submitted</button>
+                      }
+                      @if (f.status === 'Draft') {
+                        <button class="btn btn--danger btn--sm" (click)="openDelete(f)">Delete</button>
                       }
                     </div>
                   </td>
@@ -135,6 +141,27 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
         </div>
       </div>
     </div>
+
+    <!-- Delete confirmation modal -->
+    @if (deletingFiling()) {
+      <div class="modal-overlay" (click)="closeDelete()">
+        <div class="modal modal--sm" (click)="$event.stopPropagation()">
+          <div class="delete-modal__icon">🗑️</div>
+          <h3 class="title-md" style="margin-bottom:var(--space-2)">Delete Draft Filing?</h3>
+          <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
+            This will permanently delete the <strong>YOA {{ deletingFiling()!.yearOfAssessment }}</strong>
+            draft filing and all its income entries, allowances, and reliefs.
+            This action cannot be undone.
+          </p>
+          <div class="flex gap-3">
+            <button class="btn btn--ghost flex-1" (click)="closeDelete()" [disabled]="deleting()">Cancel</button>
+            <button class="btn btn--danger flex-1" (click)="confirmDelete()" [disabled]="deleting()">
+              @if (deleting()) { Deleting… } @else { Yes, Delete }
+            </button>
+          </div>
+        </div>
+      </div>
+    }
 
     <!-- Export modal -->
     @if (exportFiling()) {
@@ -195,7 +222,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
 
     .history-filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
 
-    .action-group { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+    .action-group { display: flex; justify-content: flex-end; gap: var(--space-1); flex-wrap: wrap; }
 
     .pagination {
       display: flex; align-items: center; justify-content: center; gap: var(--space-4);
@@ -212,6 +239,9 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
     }
 
     .security-badges { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+    .modal--sm { max-width: 420px; text-align: center; }
+    .delete-modal__icon { font-size: 2rem; margin-bottom: var(--space-3); }
   `],
 })
 export class FilingHistoryComponent implements OnInit {
@@ -222,6 +252,8 @@ export class FilingHistoryComponent implements OnInit {
   loading = signal(true);
   exportFiling = signal<Filing | null>(null);
   exporting = signal(false);
+  deletingFiling = signal<Filing | null>(null);
+  deleting = signal(false);
 
   searchQuery = '';
   statusFilter = '';
@@ -276,6 +308,24 @@ export class FilingHistoryComponent implements OnInit {
   openExport(f: Filing): void { this.exportFiling.set(f); }
   closeExport(): void { this.exportFiling.set(null); }
 
+  openDelete(f: Filing): void { this.deletingFiling.set(f); }
+  closeDelete(): void { this.deletingFiling.set(null); }
+
+  async confirmDelete(): Promise<void> {
+    const f = this.deletingFiling();
+    if (!f) return;
+    this.deleting.set(true);
+    try {
+      await this.filingService.deleteFiling(f.id);
+      this.closeDelete();
+      const all = await this.filingService.listFilings();
+      this.allFilings.set(all);
+      this.applyFilter();
+    } finally {
+      this.deleting.set(false);
+    }
+  }
+
   async duplicate(id: string): Promise<void> {
     await this.filingService.duplicateFiling(id);
     const all = await this.filingService.listFilings();
@@ -300,12 +350,38 @@ export class FilingHistoryComponent implements OnInit {
   async doExport(): Promise<void> {
     const f = this.exportFiling();
     if (!f) return;
+
+    const ext = this.exportFormat === 'pdf' ? 'pdf'
+              : this.exportFormat === 'csv' ? 'csv' : 'json';
+
+    const ref_ = f.filingReference ?? f.id.slice(0, 8);
+    const defaultName = `LagosFile_${ref_}_YOA${f.yearOfAssessment}.${ext}`;
+
+    // Build default path: ~/LagosFile/exports/<filename>
+    const home      = await homeDir();
+    const defaultPath = await join(home, 'LagosFile', 'exports', defaultName);
+
+    const filters: Array<{ name: string; extensions: string[] }> =
+      ext === 'pdf' ? [{ name: 'PDF Document', extensions: ['pdf'] }]
+    : ext === 'csv' ? [{ name: 'CSV Spreadsheet', extensions: ['csv'] }]
+                    : [{ name: 'JSON File', extensions: ['json'] }];
+
+    // Let the user choose where to save (default = exports folder)
+    const savePath = await saveDialog({ defaultPath, filters });
+    if (!savePath) return; // user cancelled
+
     this.exporting.set(true);
     try {
-      if (this.exportFormat === 'pdf') await this.filingService.exportPdf(f.id, this.includeAttachments);
-      else if (this.exportFormat === 'csv') await this.filingService.exportCsv(f.id);
-      else await this.filingService.exportJson(f.id);
+      let savedPath: string;
+      if (this.exportFormat === 'pdf')
+        savedPath = await this.filingService.exportPdf(f.id, savePath, this.includeAttachments);
+      else if (this.exportFormat === 'csv')
+        savedPath = await this.filingService.exportCsv(f.id, savePath);
+      else
+        savedPath = await this.filingService.exportJson(f.id, savePath);
+
       this.closeExport();
+      await shellOpen(savedPath);
     } finally {
       this.exporting.set(false);
     }

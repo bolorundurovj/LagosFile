@@ -382,11 +382,20 @@ export class StepIncomeComponent implements OnInit {
   }
 
   onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: IncomeEntry): void {
+    if (!file.path) {
+      alert('Drag-and-drop is not yet supported. Please use the "Attach" button to pick a file.');
+      return;
+    }
     if (file.size > 100 * 1024 * 1024) {
       alert('File exceeds the 100MB limit. Please attach a smaller file.');
       return;
     }
-    // Document saved via Tauri on final save
+    // Mark with _pending so saveAndNext knows to call attach_document
+    (entry as any)._pendingDocs = [
+      ...((entry as any)._pendingDocs ?? []),
+      { path: file.path, name: file.name, type: file.type, size: file.size },
+    ];
+    // Show it in the UI immediately (will get a real id after save)
     entry.documents = [...(entry.documents ?? []), {
       id: crypto.randomUUID(),
       parentEntryId: entry.id,
@@ -405,9 +414,23 @@ export class StepIncomeComponent implements OnInit {
   async saveAndNext(): Promise<void> {
     this.saving.set(true);
     try {
-      // Persist all entries
       for (const entry of this.entries()) {
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
+
+        // Persist any newly attached documents to disk + DB
+        const pending: Array<{ path: string; name: string; type: string; size: number }> =
+          (entry as any)._pendingDocs ?? [];
+        for (const doc of pending) {
+          try {
+            await this.filingService.attachDocument(
+              entry.id, 'income_entry', doc.path, doc.name, doc.type, doc.size,
+            );
+          } catch (err) {
+            console.error('Failed to attach document:', doc.name, err);
+            alert(`Could not attach "${doc.name}": ${err}`);
+          }
+        }
+        (entry as any)._pendingDocs = [];
       }
       this.next.emit();
     } finally {
