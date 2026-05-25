@@ -48,4 +48,3 @@ supporting_files/
 # Environment
 *.env
 *.env.local
-/docs
