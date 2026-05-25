@@ -48,3 +48,7 @@ supporting_files/
 # Environment
 *.env
 *.env.local
+
+# Scratch
+code.html
+screen.png
