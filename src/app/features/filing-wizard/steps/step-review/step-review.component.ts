@@ -1,0 +1,257 @@
+import { Component, input, output, inject, OnInit, signal } from '@angular/core';
+import { FilingService } from '../../../../core/services/filing.service';
+import { ComputationResult } from '../../../../core/models';
+import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
+
+@Component({
+  selector: 'lf-step-review',
+  standalone: true,
+  imports: [NairaPipe],
+  template: `
+    <div class="step-page">
+      <div class="step-page__header">
+        <h2 class="headline-sm">Review & Confirm</h2>
+        <p class="body-md text-muted">
+          Review your full tax computation before confirming. Confirmed filings are immutable.
+        </p>
+      </div>
+
+      @if (loading()) {
+        <div class="skeleton" style="height:500px;border-radius:var(--radius-xl)"></div>
+      } @else if (result()) {
+        <!-- Tax breakdown card -->
+        <div class="card">
+          <h3 class="title-md" style="margin-bottom:var(--space-5)">Tax Computation Breakdown</h3>
+
+          <div class="breakdown-table">
+            <div class="breakdown-row">
+              <span>Total Gross Income</span>
+              <span class="financial-value">{{ result()!.totalGrossIncome | naira }}</span>
+            </div>
+            <div class="breakdown-row breakdown-row--deduct">
+              <span>Less: Capital Allowances</span>
+              <span class="financial-value">({{ result()!.proratedCapitalAllowances | naira }})</span>
+            </div>
+            <div class="breakdown-row breakdown-row--deduct">
+              <span>Less: Deductions & Reliefs</span>
+              <span class="financial-value">({{ result()!.totalDeductions | naira }})</span>
+            </div>
+            <div class="breakdown-row breakdown-row--subtotal">
+              <span>Chargeable Income</span>
+              <span class="financial-value">{{ result()!.chargeableIncome | naira }}</span>
+            </div>
+          </div>
+
+          <!-- Band breakdown -->
+          <div style="margin:var(--space-5) 0">
+            <div class="label-sm" style="margin-bottom:var(--space-3)">TAX BY BAND</div>
+            @for (band of result()!.bandBreakdown; track band.lower) {
+              <div class="band-row">
+                <span class="band-label">
+                  {{ band.lower | naira }} – {{ band.upper != null ? (band.upper | naira) : 'above' }}
+                  <span class="badge badge--draft" style="margin-left:4px">{{ (band.rate * 100).toFixed(0) }}%</span>
+                </span>
+                <div class="band-bar-wrapper">
+                  <div class="band-bar"
+                    [style.width.%]="bandPct(band.taxableAmount)"
+                    [style.background]="bandColor(band.rate)">
+                  </div>
+                </div>
+                <span class="financial-value band-amount">{{ band.taxAmount | naira }}</span>
+              </div>
+            }
+          </div>
+
+          <div class="breakdown-table" style="margin-top:var(--space-3)">
+            <div class="breakdown-row">
+              <span>Graduated Tax</span>
+              <span class="financial-value">{{ result()!.graduatedTax | naira }}</span>
+            </div>
+            <div class="breakdown-row breakdown-row--deduct">
+              <span>Less: WHT Credits</span>
+              <span class="financial-value">({{ result()!.whtCredits | naira }})</span>
+            </div>
+            <div class="breakdown-row breakdown-row--subtotal">
+              <span>Net Tax Payable</span>
+              <span class="financial-value">{{ result()!.netTaxPayable | naira }}</span>
+            </div>
+          </div>
+
+          <!-- Minimum tax comparison -->
+          <div class="min-tax-panel">
+            <div class="min-tax-panel__title">Minimum Tax Comparison</div>
+            <div class="min-tax-panel__row">
+              <span>Graduated Tax</span>
+              <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
+                {{ result()!.netTaxPayable | naira }}
+              </span>
+            </div>
+            <div class="min-tax-panel__row">
+              <span>1% Minimum Tax (of gross income)</span>
+              <span [class.highlighted]="result()!.minimumTax > result()!.graduatedTax">
+                {{ result()!.minimumTax | naira }}
+              </span>
+            </div>
+            <div class="alert alert--warning" style="margin-top:var(--space-3)">
+              <span class="alert__icon">⚠</span>
+              <div class="alert__content">
+                The applicability of the 1% minimum tax rule to individuals under NTA 2025 is unconfirmed.
+                This computation applies the rule as configured. Verify with LIRS or a tax advisor.
+              </div>
+            </div>
+          </div>
+
+          @if (result()!.cgtExemptAmount > 0) {
+            <div class="alert alert--success" style="margin-top:var(--space-4)">
+              <span class="alert__icon">✓</span>
+              <div class="alert__content">
+                <strong>CGT Exemption Applied:</strong>
+                {{ result()!.cgtExemptAmount | naira }} excluded from chargeable income.
+                Proceeds &lt; ₦150,000,000 and gain ≤ ₦10,000,000.
+              </div>
+            </div>
+          }
+
+          @if (result()!.digitalAssetLossRingfenced > 0) {
+            <div class="alert alert--info" style="margin-top:var(--space-3)">
+              <span class="alert__icon">ℹ</span>
+              <div class="alert__content">
+                {{ result()!.digitalAssetLossRingfenced | naira }} in digital asset losses
+                ring-fenced — applied only against digital asset gains, not other income.
+              </div>
+            </div>
+          }
+        </div>
+
+        <!-- Final total -->
+        <div class="computation-total">
+          <div class="total-label">Final Tax Payable</div>
+          <div class="total-value">{{ result()!.finalTaxPayable | naira }}</div>
+          <div style="font-size:var(--text-label-sm);opacity:0.7;margin-top:var(--space-2)">
+            Tax Config: {{ result()!.configVersion }}
+          </div>
+        </div>
+
+        <!-- Confirm warning -->
+        <div class="alert alert--warning">
+          <span class="alert__icon">⚠</span>
+          <div class="alert__content">
+            <strong>Once confirmed, this filing is immutable.</strong>
+            You may file an amendment separately but the original record will not be altered.
+          </div>
+        </div>
+      }
+
+      <div class="step-nav">
+        <button class="btn btn--ghost btn--lg" (click)="back.emit()">← Back</button>
+        <div class="flex gap-3">
+          <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
+            Save for Later
+          </button>
+          <button class="btn btn--primary btn--lg" (click)="confirm()" [disabled]="confirming() || loading()">
+            @if (confirming()) { Confirming… } @else { ✓ Confirm Filing }
+          </button>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .step-page { display: flex; flex-direction: column; gap: var(--space-6); }
+    .step-page__header { display: flex; flex-direction: column; gap: var(--space-2); }
+
+    .breakdown-table { display: flex; flex-direction: column; }
+    .breakdown-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: var(--space-3) 0;
+      border-bottom: 1px solid var(--color-surface-container);
+      font-size: var(--text-body-md);
+    }
+    .breakdown-row--deduct { color: var(--color-on-surface-variant); }
+    .breakdown-row--subtotal {
+      font-weight: var(--font-weight-semibold);
+      font-size: var(--text-title-sm);
+      border-bottom: 2px solid var(--color-surface-container-highest);
+    }
+
+    .band-row {
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: var(--space-2) 0;
+    }
+    .band-label { min-width: 220px; font-size: var(--text-body-sm); }
+    .band-bar-wrapper {
+      flex: 1; height: 8px; background: var(--color-surface-container);
+      border-radius: var(--radius-full); overflow: hidden;
+    }
+    .band-bar { height: 100%; border-radius: var(--radius-full); transition: width 0.4s ease; }
+    .band-amount { min-width: 140px; font-size: var(--text-body-sm); }
+
+    .min-tax-panel {
+      margin-top: var(--space-5);
+      background: var(--color-surface-container-low);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+    }
+    .min-tax-panel__title { font-size: var(--text-label-lg); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-3); }
+    .min-tax-panel__row {
+      display: flex; justify-content: space-between;
+      font-size: var(--text-body-md); padding: var(--space-2) 0;
+    }
+    .highlighted { font-weight: var(--font-weight-bold); color: var(--color-primary); }
+
+    .step-nav { display: flex; justify-content: space-between; align-items: center; padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+  `],
+})
+export class StepReviewComponent implements OnInit {
+  filingId = input.required<string>();
+  back = output<void>();
+  confirmed = output<void>();
+
+  private filingService = inject(FilingService);
+
+  result = signal<ComputationResult | null>(null);
+  loading = signal(true);
+  confirming = signal(false);
+
+  async ngOnInit(): Promise<void> {
+    try {
+      const r = await this.filingService.compute(this.filingId());
+      this.result.set(r);
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  bandPct(amount: number): number {
+    const total = this.result()?.chargeableIncome ?? 1;
+    return Math.min((amount / total) * 100, 100);
+  }
+
+  bandColor(rate: number): string {
+    // Maps rate to a tonal shade of the primary palette
+    const shades: Record<string, string> = {
+      '0':    '#cce0ff',
+      '0.07': '#7eb5f5',
+      '0.11': '#4a91e3',
+      '0.15': '#2c6dbf',
+      '0.19': '#1a50a0',
+      '0.21': '#001e40',
+    };
+    return shades[String(rate)] ?? '#001e40';
+  }
+
+  async saveDraft(): Promise<void> {
+    // Already auto-saved; just navigate back
+    this.confirmed.emit();
+  }
+
+  async confirm(): Promise<void> {
+    if (!this.result()) return;
+    this.confirming.set(true);
+    try {
+      await this.filingService.confirmFiling(this.filingId(), this.result()!);
+      this.confirmed.emit();
+    } finally {
+      this.confirming.set(false);
+    }
+  }
+}

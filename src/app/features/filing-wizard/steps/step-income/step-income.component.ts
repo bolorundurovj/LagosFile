@@ -1,0 +1,417 @@
+import { Component, input, output, inject, OnInit, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { FilingService } from '../../../../core/services/filing.service';
+import { FxService } from '../../../../core/services/fx.service';
+import { IncomeEntry, IncomeType } from '../../../../core/models';
+import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
+import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+
+const INCOME_TYPES: { value: IncomeType; label: string }[] = [
+  { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
+  { value: 'business',            label: 'Business / Trade Income' },
+  { value: 'rental',              label: 'Rental Income' },
+  { value: 'dividend',            label: 'Dividend Income' },
+  { value: 'interest',            label: 'Interest Income (incl. FX differences)' },
+  { value: 'capital_gain_shares', label: 'Capital Gains (Nigerian Company Shares)' },
+  { value: 'digital_asset',       label: 'Digital / Virtual Asset Gains' },
+  { value: 'royalty',             label: 'Royalties' },
+  { value: 'prize',               label: 'Prizes, Winnings, Honoraria, Grants' },
+  { value: 'other',               label: 'Other Income' },
+];
+
+const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR', 'GHS'];
+
+@Component({
+  selector: 'lf-step-income',
+  standalone: true,
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent],
+  template: `
+    <div class="step-page">
+      <div class="step-page__header">
+        <h2 class="headline-sm">Income Sources</h2>
+        <p class="body-md text-muted">Enter all income received during the year of assessment.</p>
+      </div>
+
+      <!-- Entries list -->
+      <div class="entries-list">
+        @for (entry of entries(); track entry.id; let i = $index) {
+          <div class="entry-card">
+            <div class="entry-card__header">
+              <span class="entry-card__type">{{ labelFor(entry.incomeType) }}</span>
+              <button class="btn btn--danger btn--sm" (click)="removeEntry(entry.id)">Remove</button>
+            </div>
+
+            <div class="entry-grid">
+              <div class="form-group">
+                <label class="form-label">Income Type</label>
+                <select class="form-input" [(ngModel)]="entry.incomeType"
+                  [name]="'type_' + i" (change)="onTypeChange(entry)">
+                  @for (t of incomeTypes; track t.value) {
+                    <option [value]="t.value">{{ t.label }}</option>
+                  }
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Description</label>
+                <input type="text" class="form-input" [(ngModel)]="entry.description"
+                  [name]="'desc_' + i" placeholder="e.g. Employer name, client, source" />
+              </div>
+            </div>
+
+            <!-- Foreign currency toggle -->
+            <div class="entry-row">
+              <label class="toggle-label">
+                <input type="checkbox" [(ngModel)]="entry.isForeign" [name]="'foreign_' + i"
+                  (change)="onForeignToggle(entry)" />
+                <span>Foreign Currency Income</span>
+              </label>
+            </div>
+
+            @if (!entry.isForeign) {
+              <div class="form-group">
+                <label class="form-label">Amount (₦ NGN)</label>
+                <input type="number" class="form-input" [(ngModel)]="entry.grossAmountNgn"
+                  [name]="'amount_' + i" min="0" placeholder="0.00" />
+              </div>
+            }
+
+            @if (entry.isForeign) {
+              <!-- Foreign income fields -->
+              <div class="alert alert--info" style="margin:var(--space-3) 0">
+                <span class="alert__icon">ℹ</span>
+                <div class="alert__content">
+                  <strong>Section 20(4) NTA 2025</strong> requires conversion at the CBN official rate.
+                  The rate fetched below is a market-rate proxy. Enter the CBN official rate in the
+                  override field for full compliance.
+                  <a href="https://cbn.gov.ng" target="_blank" style="color:inherit;text-decoration:underline">
+                    Check the CBN website ↗
+                  </a>
+                </div>
+              </div>
+
+              <div class="entry-grid">
+                <div class="form-group">
+                  <label class="form-label">Currency</label>
+                  <select class="form-input" [(ngModel)]="entry.foreignCurrency" [name]="'cur_' + i">
+                    @for (c of currencies; track c) { <option [value]="c">{{ c }}</option> }
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Foreign Amount</label>
+                  <input type="number" class="form-input" [(ngModel)]="entry.foreignAmount"
+                    [name]="'famount_' + i" min="0" placeholder="0.00" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Date of Receipt</label>
+                  <input type="date" class="form-input" [(ngModel)]="entry.incomeDate"
+                    [name]="'date_' + i" (change)="fetchRate(entry)" />
+                </div>
+              </div>
+
+              <div class="entry-grid">
+                <div class="form-group">
+                  <label class="form-label">Fetched Rate ({{ entry.foreignCurrency }}/NGN)
+                    @if (entry.fxRateSource) {
+                      <span class="badge badge--draft" style="margin-left:4px">{{ entry.fxRateSource }}</span>
+                    }
+                  </label>
+                  <input type="number" class="form-input" [value]="entry.fxRateFetched"
+                    [name]="'frate_' + i" readonly style="opacity:0.7" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">CBN Override Rate <span class="text-muted">(optional)</span></label>
+                  <input type="number" class="form-input" [(ngModel)]="entry.fxRateCbnOverride"
+                    [name]="'cbnrate_' + i" placeholder="Enter CBN rate"
+                    (change)="applyRate(entry)" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Naira Equivalent (auto-calculated)</label>
+                <input type="number" class="form-input"
+                  [value]="entry.grossAmountNgn" readonly style="opacity:0.7;background:var(--color-surface-container)" />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Foreign Tax Paid (₦ equivalent, optional)</label>
+                <input type="number" class="form-input" [(ngModel)]="entry.foreignTaxPaidNgn"
+                  [name]="'ftax_' + i" min="0" placeholder="0.00" />
+                <span class="form-hint">
+                  Foreign tax paid is recorded for reference only in v1. Formal treaty relief requires a tax advisor.
+                </span>
+              </div>
+            }
+
+            <!-- CGT fields for share gains -->
+            @if (entry.incomeType === 'capital_gain_shares') {
+              <div class="entry-grid">
+                <div class="form-group">
+                  <label class="form-label">Disposal Proceeds (₦)</label>
+                  <input type="number" class="form-input" [(ngModel)]="entry.cgtProceeds"
+                    [name]="'proceeds_' + i" min="0" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Gain Amount (₦)</label>
+                  <input type="number" class="form-input" [(ngModel)]="entry.cgtGain"
+                    [name]="'gain_' + i" min="0" />
+                </div>
+              </div>
+              @if (isCgtExempt(entry)) {
+                <div class="alert alert--success">
+                  <span class="alert__icon">✓</span>
+                  <div class="alert__content">CGT Exemption applies — proceeds &lt; ₦150M and gain ≤ ₦10M. This entry will be excluded from chargeable income.</div>
+                </div>
+              }
+            }
+
+            <!-- BIK for employment -->
+            @if (entry.incomeType === 'employment') {
+              <div class="form-hint" style="padding:var(--space-3);background:var(--color-surface-container-low);border-radius:var(--radius-md)">
+                ℹ Benefits-in-kind are taxable at <strong>5% of the cost</strong> of the benefit (NTA 2025).
+                Include the assessed BIK value in the amount above.
+              </div>
+            }
+
+            <!-- Document attach -->
+            <div style="margin-top:var(--space-3)">
+              <label class="form-label" style="margin-bottom:var(--space-2)">Supporting Documents</label>
+              <lf-file-dropzone (fileSelected)="onFileSelected($event, entry)" />
+              @if (entry.documents.length) {
+                <ul class="doc-list">
+                  @for (doc of entry.documents; track doc.id) {
+                    <li class="doc-list__item">
+                      <span>📎 {{ doc.fileName }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Add entry -->
+      <button class="btn btn--secondary" (click)="addEntry()" style="align-self:flex-start">
+        + Add Income Source
+      </button>
+
+      <!-- Total -->
+      @if (totalNgn() > 0) {
+        <div class="step-total">
+          <span class="step-total__label">Total Gross Income (NGN)</span>
+          <span class="step-total__value headline-sm">{{ totalNgn() | naira }}</span>
+        </div>
+      }
+
+      <!-- Navigation -->
+      <div class="step-nav">
+        <div></div>
+        <button class="btn btn--primary btn--lg" (click)="saveAndNext()" [disabled]="saving()">
+          @if (saving()) { Saving… } @else { Save & Continue → }
+        </button>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .step-page {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-6);
+    }
+
+    .step-page__header { display: flex; flex-direction: column; gap: var(--space-2); }
+
+    .entries-list { display: flex; flex-direction: column; gap: var(--space-4); }
+
+    .entry-card {
+      background: var(--color-surface-container-lowest);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-card);
+      padding: var(--space-6);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    .entry-card__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .entry-card__type {
+      font-size: var(--text-label-lg);
+      font-weight: var(--font-weight-semibold);
+      color: var(--color-primary);
+    }
+
+    .entry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-4);
+    }
+
+    .entry-row { display: flex; align-items: center; gap: var(--space-3); }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: var(--text-body-md);
+      cursor: pointer;
+    }
+
+    .doc-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+      margin-top: var(--space-2);
+    }
+
+    .doc-list__item {
+      font-size: var(--text-label-md);
+      color: var(--color-on-surface-variant);
+      padding: var(--space-1) var(--space-2);
+    }
+
+    .step-total {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-4) var(--space-6);
+      background: var(--color-surface-container-low);
+      border-radius: var(--radius-lg);
+    }
+    .step-total__label { font-size: var(--text-label-lg); color: var(--color-on-surface-variant); }
+    .step-total__value { color: var(--color-primary); }
+
+    .step-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: var(--space-4);
+      border-top: 1px solid var(--color-surface-container);
+    }
+  `],
+})
+export class StepIncomeComponent implements OnInit {
+  filingId = input.required<string>();
+  next = output<void>();
+
+  private filingService = inject(FilingService);
+  private fxService = inject(FxService);
+
+  entries = signal<IncomeEntry[]>([]);
+  saving = signal(false);
+
+  readonly incomeTypes = INCOME_TYPES;
+  readonly currencies = CURRENCIES;
+
+  async ngOnInit(): Promise<void> {
+    const existing = await this.filingService.listIncomeEntries(this.filingId());
+    this.entries.set(existing);
+  }
+
+  labelFor(type: IncomeType): string {
+    return INCOME_TYPES.find(t => t.value === type)?.label ?? type;
+  }
+
+  addEntry(): void {
+    const newEntry: IncomeEntry = {
+      id: crypto.randomUUID(),
+      filingId: this.filingId(),
+      incomeType: 'employment',
+      grossAmountNgn: 0,
+      isForeign: false,
+      isCgtExempt: false,
+      documents: [],
+    };
+    this.entries.update(e => [...e, newEntry]);
+  }
+
+  removeEntry(id: string): void {
+    this.entries.update(e => e.filter(x => x.id !== id));
+  }
+
+  onTypeChange(entry: IncomeEntry): void {
+    // Reset CGT fields if type changes away from capital_gain_shares
+    if (entry.incomeType !== 'capital_gain_shares') {
+      entry.cgtProceeds = undefined;
+      entry.cgtGain = undefined;
+    }
+  }
+
+  onForeignToggle(entry: IncomeEntry): void {
+    if (!entry.isForeign) {
+      entry.foreignCurrency = undefined;
+      entry.foreignAmount = undefined;
+      entry.fxRateFetched = undefined;
+      entry.fxRateCbnOverride = undefined;
+    } else {
+      entry.foreignCurrency = 'USD';
+    }
+  }
+
+  async fetchRate(entry: IncomeEntry): Promise<void> {
+    if (!entry.foreignCurrency || !entry.incomeDate) return;
+    try {
+      const result = await this.fxService.resolveRate(entry.foreignCurrency, 'NGN', entry.incomeDate);
+      if (result.rate) {
+        entry.fxRateFetched = result.rate;
+        entry.fxRateSource = result.source;
+        this.applyRate(entry);
+      }
+    } catch (_) {}
+  }
+
+  applyRate(entry: IncomeEntry): void {
+    const rate = entry.fxRateCbnOverride ?? entry.fxRateFetched;
+    if (rate && entry.foreignAmount) {
+      entry.grossAmountNgn = rate * entry.foreignAmount;
+      entry.fxRateUsed = rate;
+      entry.fxRateSource = entry.fxRateCbnOverride ? 'cbn_override' : (entry.fxRateSource ?? 'manual');
+    }
+  }
+
+  isCgtExempt(entry: IncomeEntry): boolean {
+    const proceeds = entry.cgtProceeds ?? 0;
+    const gain = entry.cgtGain ?? 0;
+    return proceeds < 150_000_000 && gain <= 10_000_000;
+  }
+
+  onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: IncomeEntry): void {
+    if (file.size > 100 * 1024 * 1024) {
+      alert('File exceeds the 100MB limit. Please attach a smaller file.');
+      return;
+    }
+    // Document saved via Tauri on final save
+    entry.documents = [...(entry.documents ?? []), {
+      id: crypto.randomUUID(),
+      parentEntryId: entry.id,
+      parentEntryType: 'income_entry',
+      filePath: file.path,
+      fileName: file.name,
+      fileType: file.type,
+      fileSizeBytes: file.size,
+      uploadedAt: new Date().toISOString(),
+    }];
+  }
+
+  readonly totalNgn = () =>
+    this.entries().reduce((sum, e) => sum + (e.grossAmountNgn ?? 0), 0);
+
+  async saveAndNext(): Promise<void> {
+    this.saving.set(true);
+    try {
+      // Persist all entries
+      for (const entry of this.entries()) {
+        await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
+      }
+      this.next.emit();
+    } finally {
+      this.saving.set(false);
+    }
+  }
+}
