@@ -1,0 +1,69 @@
+[package]
+name = "lagosfile"
+version = "2.0.0"
+description = "LagosFile — Lagos State Direct Assessment Tax Filing"
+authors = ["LagosFile"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "lagosfile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "lagosfile"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-http = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Crypto
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+hex = "0.4"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+
+# HTTP (FX rates)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async
+async-trait = "0.1"
+
+# Unique IDs
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+
+# Home directory
+dirs = "5"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

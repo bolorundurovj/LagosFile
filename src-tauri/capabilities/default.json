@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "LagosFile — default window capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "fs:read-all",
+      "allow": [{ "path": "$HOME/LagosFile/**" }]
+    },
+    {
+      "identifier": "fs:write-all",
+      "allow": [{ "path": "$HOME/LagosFile/**" }]
+    },
+    "shell:allow-open",
+    "dialog:default",
+    "http:default"
+  ]
+}

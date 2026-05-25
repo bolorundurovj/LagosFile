@@ -1,29 +1,51 @@
-.hypothesis/
-stitch/
-.kiro/
+# Angular / Node
+node_modules/
+dist/
+.angular/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/WixTools/
+
+# Editor
 .idea/
-.junie/
 .vscode/
-*.db
-*.db-shm
-*.db-wal
-supporting_files/
-*.bin
-lagosfile.egg-info/
-venv/
-.venv/
+.junie/
+
+# OS / misc
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.bak
+*.log
+
+# Encrypted DB (user data — never commit)
+*.db.enc
+*.db.enc.tmp
+
+# Python (legacy — superseded by Angular + Tauri)
+lagosfile/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.log
-*.sqlite3
+venv/
+.venv/
+.hypothesis/
+.pytest_cache/
+.ruff_cache/
 *.db
-*.bak
-*.tmp
-*.swp
-*.swo
+*.db-shm
+*.db-wal
+lagosfile.egg-info/
+stitch/
+.kiro/
+supporting_files/
+*.bin
+
+# Environment
 *.env
-*.DS_Store
-*.egg-info/
+*.env.local
 /docs
