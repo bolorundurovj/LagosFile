@@ -73,21 +73,26 @@ const STEPS = [
           <div class="wizard__yoa-badge">YOA {{ yearOfAssessment() }}</div>
           <nav class="progress-strip" aria-label="Filing steps">
             @for (s of steps; track s.step) {
-              <div
+              <button
                 class="progress-strip__item"
                 [class.progress-strip__item--active]="currentStep() === s.step"
                 [class.progress-strip__item--done]="currentStep() > s.step"
                 [class.progress-strip__item--upcoming]="currentStep() < s.step"
+                (click)="goToStep(s.step)"
+                [attr.aria-current]="currentStep() === s.step ? 'step' : null"
+                type="button"
               >
                 <div class="progress-strip__bar"></div>
                 <div class="progress-strip__content">
-                  <div class="progress-strip__title">
-                    @if (currentStep() > s.step) { ✓ }
-                    {{ s.title }}
+                  <div class="progress-strip__step-num">
+                    @if (currentStep() > s.step) { ✓ } @else { {{ s.step }} }
                   </div>
-                  <div class="progress-strip__subtitle">{{ s.subtitle }}</div>
+                  <div class="progress-strip__text">
+                    <div class="progress-strip__title">{{ s.title }}</div>
+                    <div class="progress-strip__subtitle">{{ s.subtitle }}</div>
+                  </div>
                 </div>
-              </div>
+              </button>
             }
           </nav>
         </aside>
@@ -191,6 +196,117 @@ const STEPS = [
       overflow-y: auto;
       padding-bottom: var(--space-8);
     }
+
+    /* ── Progress strip ── */
+    .progress-strip {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .progress-strip__item {
+      display: flex;
+      align-items: stretch;
+      gap: var(--space-3);
+      background: none;
+      border: none;
+      padding: 0;
+      text-align: left;
+      cursor: pointer;
+      width: 100%;
+      position: relative;
+    }
+
+    .progress-strip__bar {
+      width: 3px;
+      border-radius: 999px;
+      flex-shrink: 0;
+      min-height: 56px;
+      background: var(--color-surface-container);
+      transition: background var(--transition-fast);
+      margin: 2px 0;
+    }
+
+    .progress-strip__item--active .progress-strip__bar {
+      background: var(--color-primary);
+    }
+
+    .progress-strip__item--done .progress-strip__bar {
+      background: var(--color-success, #2e7d32);
+    }
+
+    .progress-strip__content {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-2);
+      border-radius: var(--radius-lg);
+      flex: 1;
+      transition: background var(--transition-fast);
+    }
+
+    .progress-strip__item:hover .progress-strip__content {
+      background: var(--color-surface-container-low);
+    }
+
+    .progress-strip__item--active .progress-strip__content {
+      background: var(--color-primary-container);
+    }
+
+    .progress-strip__step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--text-label-sm);
+      font-weight: var(--font-weight-bold);
+      flex-shrink: 0;
+      background: var(--color-surface-container);
+      color: var(--color-on-surface-variant);
+      transition: all var(--transition-fast);
+    }
+
+
+    .progress-strip__item--active .progress-strip__step-num {
+      background: var(--color-primary);
+      color: white;
+    }
+
+    .progress-strip__item--done .progress-strip__step-num {
+      background: var(--color-success, #2e7d32);
+      color: white;
+    }
+
+    .progress-strip__text { flex: 1; min-width: 0; }
+
+    .progress-strip__title {
+      font-size: var(--text-body-md);
+      font-weight: var(--font-weight-medium);
+      color: var(--color-on-surface-variant);
+      transition: color var(--transition-fast);
+    }
+
+    .progress-strip__item--active .progress-strip__title {
+      color: var(--color-on-primary-container);
+      font-weight: var(--font-weight-semibold);
+    }
+
+    .progress-strip__item--done .progress-strip__title {
+      color: var(--color-on-surface);
+    }
+
+    .progress-strip__subtitle {
+      font-size: var(--text-label-sm);
+      color: var(--color-on-surface-variant);
+      margin-top: 1px;
+      opacity: 0.75;
+    }
+
+    .progress-strip__item--active .progress-strip__subtitle {
+      opacity: 1;
+    }
   `],
 })
 export class FilingWizardComponent implements OnInit {
@@ -205,10 +321,8 @@ export class FilingWizardComponent implements OnInit {
   loading = signal(true);
   starting = signal(false);
 
-  /** Year picker value for new-filing pre-step */
   selectedYear = new Date().getFullYear();
 
-  /** Last 5 years, most recent first */
   readonly availableYears: number[] = Array.from(
     { length: 5 },
     (_, i) => new Date().getFullYear() - i
@@ -218,9 +332,7 @@ export class FilingWizardComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     const id = this.route.snapshot.paramMap.get('id');
-
     if (id) {
-      // Resuming an existing filing — load it directly, no draft creation
       this.loading.set(true);
       const filing = await this.filingService.getFiling(id);
       this.filingId.set(filing.id);
@@ -228,13 +340,11 @@ export class FilingWizardComponent implements OnInit {
       this.mode.set('active');
       this.loading.set(false);
     } else {
-      // New filing — show year selector; do NOT create a draft yet
       this.mode.set('selecting-year');
       this.loading.set(false);
     }
   }
 
-  /** Called when the user confirms the year and clicks "Start Filing" */
   async beginFiling(): Promise<void> {
     this.starting.set(true);
     try {
@@ -247,23 +357,17 @@ export class FilingWizardComponent implements OnInit {
     }
   }
 
-  cancel(): void {
-    this.router.navigate(['/dashboard']);
-  }
+  cancel(): void { this.router.navigate(['/dashboard']); }
+
+  goToStep(step: WizardStep): void { this.currentStep.set(step); }
 
   goNext(_payload?: unknown): void {
-    if (this.currentStep() < 4) {
-      this.currentStep.update(s => (s + 1) as WizardStep);
-    }
+    if (this.currentStep() < 4) this.currentStep.update(s => (s + 1) as WizardStep);
   }
 
   goBack(): void {
-    if (this.currentStep() > 1) {
-      this.currentStep.update(s => (s - 1) as WizardStep);
-    }
+    if (this.currentStep() > 1) this.currentStep.update(s => (s - 1) as WizardStep);
   }
 
-  onConfirmed(): void {
-    this.router.navigate(['/history']);
-  }
+  onConfirmed(): void { this.router.navigate(['/history']); }
 }
