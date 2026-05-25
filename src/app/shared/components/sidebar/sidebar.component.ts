@@ -1,17 +1,22 @@
-import { Component, input, output } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { Component, inject, input, output } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { filter, map, startWith } from 'rxjs/operators';
 import { Taxpayer } from '../../../core/models';
 
 interface NavItem {
   label: string;
   icon: string;
   route: string;
+  /** Extra URL prefix that should also highlight this item. */
+  alsoActiveFor?: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard',        icon: '◈',  route: '/dashboard' },
   { label: 'New Filing',       icon: '+',  route: '/filing/new' },
-  { label: 'Filing History',   icon: '☰',  route: '/history' },
+  { label: 'Filing History',   icon: '☰',  route: '/history',
+    alsoActiveFor: '/filing/' },           // highlights when viewing /filing/:id
   { label: 'Configuration',    icon: '⚙',  route: '/configuration' },
   { label: 'Settings',         icon: '⊙',  route: '/settings' },
 ];
@@ -35,6 +40,7 @@ const NAV_ITEMS: NavItem[] = [
             <a
               [routerLink]="item.route"
               routerLinkActive="active"
+              [class.active]="isExtraActive(item)"
               class="sidebar__link"
             >
               <span class="sidebar__link-icon">{{ item.icon }}</span>
@@ -173,4 +179,27 @@ const NAV_ITEMS: NavItem[] = [
 export class SidebarComponent {
   taxpayer = input<Taxpayer | null>(null);
   readonly navItems = NAV_ITEMS;
+
+  private router = inject(Router);
+
+  /** Reactive current URL — updates on every navigation. */
+  readonly currentUrl = toSignal(
+    this.router.events.pipe(
+      filter(e => e instanceof NavigationEnd),
+      map((e: NavigationEnd) => e.urlAfterRedirects),
+      startWith(this.router.url),
+    ),
+    { initialValue: this.router.url },
+  );
+
+  /**
+   * Returns true when an item's `alsoActiveFor` prefix matches the current URL
+   * but the primary routerLink does NOT (avoids double-highlighting New Filing
+   * when also on /filing/new).
+   */
+  isExtraActive(item: NavItem): boolean {
+    const url = this.currentUrl() ?? '';
+    if (!item.alsoActiveFor) return false;
+    return url.startsWith(item.alsoActiveFor) && !url.startsWith(item.route);
+  }
 }
