@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"LagosFile — default window capabilities","local":true,"windows":["main"],"permissions":["core:default",{"identifier":"fs:read-all","allow":[{"path":"$HOME/LagosFile/**"}]},{"identifier":"fs:write-all","allow":[{"path":"$HOME/LagosFile/**"}]},"shell:allow-open","dialog:default","http:default"]}}
