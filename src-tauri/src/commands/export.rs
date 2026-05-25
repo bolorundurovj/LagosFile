@@ -53,9 +53,30 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
     .map_err(|e| e.to_string())
 }
 
+fn format_with_commas(n: f64) -> String {
+    let negative = n < 0.0;
+    let abs = n.abs();
+    let integer = abs.floor() as u64;
+    let cents   = (abs.fract() * 100.0).round() as u32;
+
+    // Insert commas every 3 digits from the right
+    let int_str: Vec<char> = integer.to_string().chars().collect();
+    let mut with_commas = String::new();
+    let len = int_str.len();
+    for (i, &ch) in int_str.iter().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            with_commas.push(',');
+        }
+        with_commas.push(ch);
+    }
+
+    let formatted = format!("{}.{:02}", with_commas, cents);
+    if negative { format!("-{}", formatted) } else { formatted }
+}
+
 fn naira(v: Option<f64>) -> String {
     match v {
-        Some(n) => format!("NGN {:>16.2}", n),
+        Some(n) => format!("NGN {}", format_with_commas(n)),
         None    => "—".to_string(),
     }
 }
@@ -247,13 +268,13 @@ pub async fn export_filing_csv(
          Taxpayer,{}\r\n\
          TIN,{}\r\n\
          Filing Reference,{}\r\n\
-         Final Tax Payable NGN,{:.2}\r\n\r\n",
+         Final Tax Payable NGN,{}\r\n\r\n",
         summary.year_of_assessment,
         summary.filing_reference.as_deref().unwrap_or("—"),
         summary.full_name,
         summary.tin,
         summary.filing_reference.as_deref().unwrap_or("—"),
-        summary.final_tax_payable.unwrap_or(0.0),
+        format_with_commas(summary.final_tax_payable.unwrap_or(0.0)),
     );
 
     csv.push_str(
@@ -263,10 +284,10 @@ pub async fn export_filing_csv(
 
     stmt.query_map(params![filing_id], |row| {
         Ok(format!(
-            "{},{},{:.2},{},{},{},{},{},{}\r\n",
+            "{},{},{},{},{},{},{},{},{}\r\n",
             row.get::<_, String>(0)?,
             row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            row.get::<_, f64>(2)?,
+            format_with_commas(row.get::<_, f64>(2)?),
             row.get::<_, i32>(3)?,
             row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             row.get::<_, Option<f64>>(5)?.map_or(String::new(), |v| format!("{:.2}", v)),

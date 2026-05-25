@@ -147,18 +147,16 @@ import { Router } from '@angular/router';
       padding: var(--space-3) var(--space-4);
       background: var(--color-surface-container-low); border-radius: var(--radius-lg);
     }
-    .security-badge__icon { font-size: 1.25rem; }
+    .security-badge__icon { font-size: 1.25rem; flex-shrink: 0; margin-top: 2px; }
     .security-badge__title { font-size: var(--text-body-md); font-weight: var(--font-weight-medium); }
-    .security-badge__sub { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); }
-    .security-badge--warn { background: color-mix(in srgb, var(--color-warning, #d97706) 10%, transparent); }
-
+    .security-badge__sub { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
+    .security-badge--warn { background: var(--color-error-container); }
     .about-row {
       display: flex; justify-content: space-between; align-items: center;
-      padding: var(--space-3) 0; border-bottom: 1px solid var(--color-surface-container);
-      font-size: var(--text-body-md);
-      &:first-of-type { border-top: 1px solid var(--color-surface-container); }
-      span:first-child { color: var(--color-on-surface-variant); }
+      padding: var(--space-2) 0; border-bottom: 1px solid var(--color-surface-container);
+      font-size: var(--text-body-sm);
     }
+    .about-row:last-child { border-bottom: none; }
   `],
 })
 export class SettingsComponent {
@@ -166,22 +164,22 @@ export class SettingsComponent {
   private profileService = inject(ProfileService);
   private router = inject(Router);
 
+  savingProfile = signal(false);
+  profileSaved  = signal(false);
+
   editForm = {
-    fullName: this.auth.taxpayer()?.fullName ?? '',
-    address: this.auth.taxpayer()?.address ?? '',
-    phone: this.auth.taxpayer()?.phone ?? '',
-    email: this.auth.taxpayer()?.email ?? '',
+    fullName:    this.auth.taxpayer()?.fullName    ?? '',
+    address:     this.auth.taxpayer()?.address     ?? '',
+    phone:       this.auth.taxpayer()?.phone       ?? '',
+    email:       this.auth.taxpayer()?.email       ?? '',
     filingAgent: this.auth.taxpayer()?.filingAgent ?? '',
   };
 
-  savingProfile = signal(false);
-  profileSaved = signal(false);
-
   async saveProfile(): Promise<void> {
     this.savingProfile.set(true);
+    this.profileSaved.set(false);
     try {
-      const updated = await this.profileService.update(this.editForm);
-      this.auth.setTaxpayer(updated);
+      await this.profileService.update(this.editForm);
       this.profileSaved.set(true);
       setTimeout(() => this.profileSaved.set(false), 3000);
     } finally {
@@ -189,8 +187,8 @@ export class SettingsComponent {
     }
   }
 
-  async lock(): Promise<void> {
-    await this.auth.lock();
-    this.router.navigate(['/unlock']);
+  lock(): void {
+    this.auth.lock();
+    this.router.navigate(['/']);
   }
 }

@@ -5,11 +5,12 @@ import { ConfigService } from '../../../../core/services/config.service';
 import { ReliefEntry, ReliefType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 
 @Component({
   selector: 'lf-step-deductions',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
   template: `
     <div class="step-page">
       <div class="step-page__header">

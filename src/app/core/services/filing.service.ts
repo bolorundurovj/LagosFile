@@ -133,38 +133,34 @@ export class FilingService {
 
   // ── Wizard state helpers ─────────────────────────────────
 
-  initWizard(yearOfAssessment: number, filingId?: string): void {
+  initWizard(yearOfAssessment: number, filingId: string): void {
     this._wizard.set({
-      filingId,
-      yearOfAssessment,
+      yearOfAssessment, filingId,
       currentStep: 1,
-      incomeEntries: [],
-      capitalAllowances: [],
-      reliefEntries: [],
+      incomeEntries: [], capitalAllowances: [], reliefEntries: [],
       isDirty: false,
     });
   }
 
   updateWizardStep(step: 1 | 2 | 3 | 4): void {
-    const w = this._wizard();
-    if (w) this._wizard.set({ ...w, currentStep: step });
+    this._wizard.update(w => w ? { ...w, currentStep: step } : null);
   }
 
   clearWizard(): void {
     this._wizard.set(null);
   }
 
-  // ── Deadline helpers ─────────────────────────────────────
+  // ── Deadline helpers ──────────────────────────────────────
 
-  daysUntilDeadline(year: number): number {
-    const deadline = new Date(year, 2, 31); // March 31
-    const today = new Date();
-    const ms = deadline.getTime() - today.getTime();
-    return Math.ceil(ms / (1000 * 60 * 60 * 24));
+  /** Returns the number of days until the 31 March deadline for the given YOA. */
+  daysUntilDeadline(yearOfAssessment: number): number {
+    const deadline = new Date(yearOfAssessment + 1, 2, 31); // 31 March of following year
+    const now = new Date();
+    return Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   }
 
-  isWithinDeadlineWindow(year: number): boolean {
-    const days = this.daysUntilDeadline(year);
-    return days >= 0 && days <= 45;
+  /** Returns true if today falls within 90 days of the filing deadline. */
+  isWithinDeadlineWindow(yearOfAssessment: number): boolean {
+    return this.daysUntilDeadline(yearOfAssessment) <= 90;
   }
 }

@@ -292,17 +292,21 @@ export class FilingHistoryComponent implements OnInit {
 
   applyFilter(): void {
     this.page.set(1);
-    let list = this.allFilings();
-    if (this.statusFilter) list = list.filter(f => f.status === this.statusFilter);
-    if (this.yearFilter) list = list.filter(f => f.yearOfAssessment === this.yearFilter);
-    if (this.searchQuery) {
+    let result = this.allFilings();
+    if (this.searchQuery.trim()) {
       const q = this.searchQuery.toLowerCase();
-      list = list.filter(f =>
-        f.filingReference?.toLowerCase().includes(q) ||
+      result = result.filter(f =>
+        (f.filingReference ?? '').toLowerCase().includes(q) ||
         String(f.yearOfAssessment).includes(q)
       );
     }
-    this.filtered.set(list);
+    if (this.statusFilter) {
+      result = result.filter(f => f.status === this.statusFilter);
+    }
+    if (this.yearFilter) {
+      result = result.filter(f => f.yearOfAssessment === +this.yearFilter!);
+    }
+    this.filtered.set(result);
   }
 
   openExport(f: Filing): void { this.exportFiling.set(f); }
@@ -317,10 +321,10 @@ export class FilingHistoryComponent implements OnInit {
     this.deleting.set(true);
     try {
       await this.filingService.deleteFiling(f.id);
-      this.closeDelete();
       const all = await this.filingService.listFilings();
       this.allFilings.set(all);
       this.applyFilter();
+      this.closeDelete();
     } finally {
       this.deleting.set(false);
     }
@@ -334,7 +338,7 @@ export class FilingHistoryComponent implements OnInit {
   }
 
   async amend(id: string): Promise<void> {
-    await this.filingService.amendFiling(id);
+    const f = await this.filingService.amendFiling(id);
     const all = await this.filingService.listFilings();
     this.allFilings.set(all);
     this.applyFilter();
@@ -350,38 +354,32 @@ export class FilingHistoryComponent implements OnInit {
   async doExport(): Promise<void> {
     const f = this.exportFiling();
     if (!f) return;
-
-    const ext = this.exportFormat === 'pdf' ? 'pdf'
-              : this.exportFormat === 'csv' ? 'csv' : 'json';
-
-    const ref_ = f.filingReference ?? f.id.slice(0, 8);
-    const defaultName = `LagosFile_${ref_}_YOA${f.yearOfAssessment}.${ext}`;
-
-    // Build default path: ~/LagosFile/exports/<filename>
-    const home      = await homeDir();
-    const defaultPath = await join(home, 'LagosFile', 'exports', defaultName);
-
-    const filters: Array<{ name: string; extensions: string[] }> =
-      ext === 'pdf' ? [{ name: 'PDF Document', extensions: ['pdf'] }]
-    : ext === 'csv' ? [{ name: 'CSV Spreadsheet', extensions: ['csv'] }]
-                    : [{ name: 'JSON File', extensions: ['json'] }];
-
-    // Let the user choose where to save (default = exports folder)
-    const savePath = await saveDialog({ defaultPath, filters });
-    if (!savePath) return; // user cancelled
-
     this.exporting.set(true);
     try {
-      let savedPath: string;
-      if (this.exportFormat === 'pdf')
-        savedPath = await this.filingService.exportPdf(f.id, savePath, this.includeAttachments);
-      else if (this.exportFormat === 'csv')
-        savedPath = await this.filingService.exportCsv(f.id, savePath);
-      else
-        savedPath = await this.filingService.exportJson(f.id, savePath);
+      const ref = f.filingReference ?? `YOA${f.yearOfAssessment}`;
+      const ext  = this.exportFormat === 'pdf' ? 'pdf' : this.exportFormat === 'csv' ? 'csv' : 'json';
+      const home = await homeDir();
+      const defaultPath = await join(home, 'LagosFile', 'exports', `LagosFile_${ref}.${ext}`);
 
-      this.closeExport();
+      const chosen = await saveDialog({
+        defaultPath,
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      });
+      if (!chosen) return;
+
+      let savedPath: string;
+      if (this.exportFormat === 'pdf') {
+        savedPath = await this.filingService.exportPdf(f.id, chosen, this.includeAttachments);
+      } else if (this.exportFormat === 'csv') {
+        savedPath = await this.filingService.exportCsv(f.id, chosen);
+      } else {
+        savedPath = await this.filingService.exportJson(f.id, chosen);
+      }
+
       await shellOpen(savedPath);
+      this.closeExport();
+    } catch (err) {
+      alert(`Export failed: ${err}`);
     } finally {
       this.exporting.set(false);
     }

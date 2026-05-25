@@ -5,6 +5,7 @@ import { FxService } from '../../../../core/services/fx.service';
 import { IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
   { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
@@ -24,7 +25,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
 @Component({
   selector: 'lf-step-income',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -116,21 +117,23 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                       <span class="badge badge--draft" style="margin-left:4px">{{ entry.fxRateSource }}</span>
                     }
                   </label>
-                  <input type="number" class="form-input" [value]="entry.fxRateFetched"
+                  <input type="text" class="form-input"
+                    [value]="entry.fxRateFetched != null ? entry.fxRateFetched.toFixed(4) : ''"
                     [name]="'frate_' + i" readonly style="opacity:0.7" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">CBN Override Rate <span class="text-muted">(optional)</span></label>
                   <input type="number" class="form-input" [(ngModel)]="entry.fxRateCbnOverride"
                     [name]="'cbnrate_' + i" placeholder="Enter CBN rate"
+                    [numericFormatDecimals]="4"
                     (change)="applyRate(entry)" />
                 </div>
               </div>
 
               <div class="form-group">
                 <label class="form-label">Naira Equivalent (auto-calculated)</label>
-                <input type="number" class="form-input"
-                  [value]="entry.grossAmountNgn" readonly style="opacity:0.7;background:var(--color-surface-container)" />
+                <input type="text" class="form-input"
+                  [value]="entry.grossAmountNgn | naira:false" readonly style="opacity:0.7;background:var(--color-surface-container)" />
               </div>
 
               <div class="form-group">
@@ -416,8 +419,6 @@ export class StepIncomeComponent implements OnInit {
     try {
       for (const entry of this.entries()) {
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
-
-        // Persist any newly attached documents to disk + DB
         const pending: Array<{ path: string; name: string; type: string; size: number }> =
           (entry as any)._pendingDocs ?? [];
         for (const doc of pending) {

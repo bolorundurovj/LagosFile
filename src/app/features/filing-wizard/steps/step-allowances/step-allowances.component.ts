@@ -5,6 +5,7 @@ import { ConfigService } from '../../../../core/services/config.service';
 import { CapitalAllowance, AssetType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: 'computer_laptop',     label: 'Computer / Laptop' },
@@ -19,7 +20,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
 @Component({
   selector: 'lf-step-allowances',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -78,12 +79,13 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
                     </span>
                   }
                 </label>
-                <input type="number" class="form-input" [value]="rateFor(entry.assetType) * 100"
+                <input type="text" class="form-input"
+                  [value]="(rateFor(entry.assetType) * 100).toFixed(0) + '%'"
                   [name]="'arate_' + i" readonly style="opacity:0.7" />
               </div>
               <div class="form-group">
                 <label class="form-label">Annual Allowance Amount (₦)</label>
-                <input type="number" class="form-input" [value]="entry.annualAllowanceAmount"
+                <input type="text" class="form-input" [value]="entry.annualAllowanceAmount | naira:false"
                   [name]="'aamt_' + i" readonly style="opacity:0.7;background:var(--color-surface-container)" />
               </div>
             </div>
@@ -218,6 +220,18 @@ export class StepAllowancesComponent implements OnInit {
     try {
       for (const entry of this.entries()) {
         await this.filingService.upsertAllowance({ ...entry, filingId: this.filingId() });
+        const pending: Array<{ path: string; name: string; type: string; size: number }> =
+          (entry as any)._pendingDocs ?? [];
+        for (const doc of pending) {
+          try {
+            await this.filingService.attachDocument(
+              entry.id, 'capital_allowance', doc.path, doc.name, doc.type, doc.size,
+            );
+          } catch (err) {
+            console.error('Failed to attach document:', doc.name, err);
+          }
+        }
+        (entry as any)._pendingDocs = [];
       }
       this.next.emit();
     } finally {
