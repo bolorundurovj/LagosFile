@@ -132,7 +132,7 @@ import { Router } from '@angular/router';
         <div class="about-row"><span>Tax Authority</span><span>Lagos Internal Revenue Service (LIRS)</span></div>
         <div class="about-row">
           <span>LIRS e-Tax Portal</span>
-          <a href="https://etax.lirs.gov.ng" target="_blank" class="btn btn--ghost btn--sm">Open Portal ↗</a>
+          <a href="https://etax.lirs.net" target="_blank" class="btn btn--ghost btn--sm">Open Portal ↗</a>
         </div>
       </div>
     </div>

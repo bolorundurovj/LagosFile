@@ -49,7 +49,7 @@ const NAV_ITEMS: NavItem[] = [
         <div class="support-card">
           <div class="support-card__title">Need help?</div>
           <div class="support-card__text">LIRS helpline: 01-792-9580</div>
-          <a href="https://etax.lirs.gov.ng" target="_blank" class="support-card__link">
+          <a href="https://etax.lirs.net" target="_blank" class="support-card__link">
             LIRS e-Tax Portal ↗
           </a>
         </div>
