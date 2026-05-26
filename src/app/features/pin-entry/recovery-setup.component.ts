@@ -2,6 +2,7 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { LucideAngularModule, AlertTriangle } from 'lucide-angular';
 
 const QUESTIONS = [
   'What was the name of your first pet?',
@@ -19,7 +20,7 @@ const QUESTIONS = [
 @Component({
   selector: 'lf-recovery-setup',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, LucideAngularModule],
   template: `
     <div class="auth-page">
       <div class="auth-card" style="max-width:540px;">
@@ -60,7 +61,7 @@ const QUESTIONS = [
 
           @if (error) {
             <div class="alert alert--error">
-              <span class="alert__icon">⚠</span>
+              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
               <div class="alert__content">{{ error }}</div>
             </div>
           }
@@ -126,7 +127,7 @@ export class RecoverySetupComponent {
       );
       this.router.navigate([this.returnPath]);
     } catch (err: unknown) {
-      this.error = err instanceof Error ? err.message : 'Failed to save recovery questions.';
+      this.error = err instanceof Error ? err.message : String(err);
     } finally {
       this.loading = false;
     }

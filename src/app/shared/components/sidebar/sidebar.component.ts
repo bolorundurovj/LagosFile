@@ -2,6 +2,7 @@ import { Component, inject, input, output } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { filter, map, startWith } from 'rxjs/operators';
+import { LucideAngularModule, LayoutDashboard, FilePlus2, History, Settings2, SlidersHorizontal } from 'lucide-angular';
 import { Taxpayer } from '../../../core/models';
 
 interface NavItem {
@@ -13,18 +14,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Dashboard',        icon: '◈',  route: '/dashboard' },
-  { label: 'New Filing',       icon: '+',  route: '/filing/new' },
-  { label: 'Filing History',   icon: '☰',  route: '/history',
-    alsoActiveFor: '/filing/' },           // highlights when viewing /filing/:id
-  { label: 'Configuration',    icon: '⚙',  route: '/configuration' },
-  { label: 'Settings',         icon: '⊙',  route: '/settings' },
+  { label: 'Dashboard',      icon: 'layout-dashboard',    route: '/dashboard' },
+  { label: 'New Filing',     icon: 'file-plus-2',         route: '/filing/new' },
+  { label: 'Filing History', icon: 'history',             route: '/history',
+    alsoActiveFor: '/filing/' },
+  { label: 'Configuration',  icon: 'settings-2',          route: '/configuration' },
+  { label: 'Settings',       icon: 'sliders-horizontal',  route: '/settings' },
 ];
 
 @Component({
   selector: 'lf-sidebar',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive],
+  imports: [RouterLink, RouterLinkActive, LucideAngularModule],
   template: `
     <nav class="sidebar">
       <!-- Logo -->
@@ -43,7 +44,9 @@ const NAV_ITEMS: NavItem[] = [
               [class.active]="isExtraActive(item)"
               class="sidebar__link"
             >
-              <span class="sidebar__link-icon">{{ item.icon }}</span>
+              <span class="sidebar__link-icon">
+                <lucide-icon [name]="item.icon" [size]="18" [strokeWidth]="1.75"></lucide-icon>
+              </span>
               <span class="sidebar__link-label">{{ item.label }}</span>
             </a>
           </li>
@@ -139,9 +142,10 @@ const NAV_ITEMS: NavItem[] = [
     }
 
     .sidebar__link-icon {
-      font-size: 1rem;
       width: 20px;
-      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       flex-shrink: 0;
     }
 
@@ -192,11 +196,6 @@ export class SidebarComponent {
     { initialValue: this.router.url },
   );
 
-  /**
-   * Returns true when an item's `alsoActiveFor` prefix matches the current URL
-   * but the primary routerLink does NOT (avoids double-highlighting New Filing
-   * when also on /filing/new).
-   */
   isExtraActive(item: NavItem): boolean {
     const url = this.currentUrl() ?? '';
     if (!item.alsoActiveFor) return false;

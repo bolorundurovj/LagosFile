@@ -6,6 +6,7 @@ import { IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
+import { LucideAngularModule, Check, Paperclip, Info } from 'lucide-angular';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
   { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
@@ -25,7 +26,8 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
 @Component({
   selector: 'lf-step-income',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective,
+    LucideAngularModule],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -167,7 +169,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </div>
               @if (isCgtExempt(entry)) {
                 <div class="alert alert--success">
-                  <span class="alert__icon">✓</span>
+                  <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
                   <div class="alert__content">CGT Exemption applies — proceeds &lt; ₦150M and gain ≤ ₦10M. This entry will be excluded from chargeable income.</div>
                 </div>
               }
@@ -176,7 +178,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
             <!-- BIK for employment -->
             @if (entry.incomeType === 'employment') {
               <div class="form-hint" style="padding:var(--space-3);background:var(--color-surface-container-low);border-radius:var(--radius-md)">
-                ℹ Benefits-in-kind are taxable at <strong>5% of the cost</strong> of the benefit (NTA 2025).
+                <lucide-icon name="info" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon> Benefits-in-kind are taxable at <strong>5% of the cost</strong> of the benefit (NTA 2025).
                 Include the assessed BIK value in the amount above.
               </div>
             }
@@ -189,7 +191,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                 <ul class="doc-list">
                   @for (doc of entry.documents; track doc.id) {
                     <li class="doc-list__item">
-                      <span>📎 {{ doc.fileName }}</span>
+                      <span style="display:flex;align-items:center;gap:4px"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
                     </li>
                   }
                 </ul>

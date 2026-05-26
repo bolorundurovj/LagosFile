@@ -8,13 +8,15 @@ import { homeDir, join } from '@tauri-apps/api/path';
 import { FilingService } from '../../core/services/filing.service';
 import { Filing } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
+import { LucideAngularModule, ClipboardList, Trash2, Lock, Check } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
 
 @Component({
   selector: 'lf-filing-history',
   standalone: true,
-  imports: [FormsModule, RouterLink, NairaPipe, DatePipe, LowerCasePipe],
+  imports: [FormsModule, RouterLink, NairaPipe, DatePipe, LowerCasePipe,
+    LucideAngularModule],
   template: `
     <div class="history-page">
       <div class="history-page__header">
@@ -71,7 +73,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
           <div class="skeleton" style="height:200px;border-radius:0"></div>
         } @else if (filtered().length === 0) {
           <div style="text-align:center;padding:var(--space-12);color:var(--color-on-surface-variant)">
-            <div style="font-size:2.5rem;margin-bottom:var(--space-3)">📋</div>
+            <div style="margin-bottom:var(--space-3);color:var(--color-on-surface-variant)"><lucide-icon name="clipboard-list" [size]="40" [strokeWidth]="1.25"></lucide-icon></div>
             <div class="title-sm">No filings found</div>
             <div class="body-sm text-muted mt-2">
               @if (allFilings().length === 0) { Start a new filing to see it here. }
@@ -146,7 +148,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
     @if (deletingFiling()) {
       <div class="modal-overlay" (click)="closeDelete()">
         <div class="modal modal--sm" (click)="$event.stopPropagation()">
-          <div class="delete-modal__icon">🗑️</div>
+          <div class="delete-modal__icon"><lucide-icon name="trash-2" [size]="36" [strokeWidth]="1.5" style="color:var(--color-error)"></lucide-icon></div>
           <h3 class="title-md" style="margin-bottom:var(--space-2)">Delete Draft Filing?</h3>
           <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
             This will permanently delete the <strong>YOA {{ deletingFiling()!.yearOfAssessment }}</strong>
@@ -191,8 +193,8 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
           </div>
 
           <div class="security-badges">
-            <span class="badge badge--confirmed">🔒 End-to-end Encrypted</span>
-            <span class="badge badge--confirmed">✓ LIRS Compliant Generation</span>
+            <span class="badge badge--confirmed"><lucide-icon name="lock" [size]="12" [strokeWidth]="2" style="vertical-align:middle;margin-right:3px"></lucide-icon>End-to-end Encrypted</span>
+            <span class="badge badge--confirmed"><lucide-icon name="check" [size]="12" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:3px"></lucide-icon>LIRS Compliant Generation</span>
           </div>
 
           <div class="flex gap-3" style="margin-top:var(--space-6)">

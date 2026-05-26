@@ -5,17 +5,22 @@ import { FilingService } from '../../core/services/filing.service';
 import { AuthService } from '../../core/services/auth.service';
 import { Filing } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
+import {
+  LucideAngularModule, Clock, AlertTriangle, FileText,
+  Calculator, CheckCircle, BookOpen, ClipboardList,
+} from 'lucide-angular';
 
 @Component({
   selector: 'lf-dashboard',
   standalone: true,
-  imports: [RouterLink, NairaPipe, LowerCasePipe],
+  imports: [RouterLink, NairaPipe, LowerCasePipe,
+    LucideAngularModule],
   template: `
     <div class="dashboard">
       <!-- Deadline countdown banner -->
       @if (showDeadlineBanner()) {
         <div class="alert alert--warning deadline-banner">
-          <span class="alert__icon">⏰</span>
+          <span class="alert__icon"><lucide-icon name="clock" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <div class="alert__title">Filing Deadline Approaching</div>
             <div>{{ daysLeft() }} days until March 31 — the Direct Assessment filing deadline.</div>
@@ -26,7 +31,7 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
       <!-- Missing filing warnings -->
       @if (missingCurrentYear()) {
         <div class="alert alert--error">
-          <span class="alert__icon">⚠</span>
+          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <div class="alert__title">No confirmed filing for {{ currentYear }}</div>
             <div>You have not filed your YOA {{ currentYear }} return yet.</div>
@@ -35,7 +40,7 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
       }
       @if (missingPreviousYear()) {
         <div class="alert alert--error" style="margin-top:var(--space-3)">
-          <span class="alert__icon">⚠</span>
+          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <div class="alert__title">No confirmed filing for {{ currentYear - 1 }}</div>
             <div>You may have an outstanding liability for YOA {{ currentYear - 1 }}.</div>
@@ -58,19 +63,19 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
       <!-- Quick-access module cards -->
       <div class="dashboard__modules">
         <div class="module-card">
-          <div class="module-card__icon">📄</div>
+          <div class="module-card__icon"><lucide-icon name="file-text" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Tax Receipts</div>
           <div class="module-card__desc">Download confirmed filing receipts and export PDFs.</div>
           <a routerLink="/history" class="btn btn--ghost btn--sm" style="margin-top:auto">View History →</a>
         </div>
         <div class="module-card">
-          <div class="module-card__icon">🧮</div>
+          <div class="module-card__icon"><lucide-icon name="calculator" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Tax Calculator</div>
           <div class="module-card__desc">Estimate your tax liability before filing.</div>
           <a routerLink="/filing/new" class="btn btn--ghost btn--sm" style="margin-top:auto">Start Filing →</a>
         </div>
         <div class="module-card">
-          <div class="module-card__icon">✅</div>
+          <div class="module-card__icon"><lucide-icon name="check-circle" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Compliance Status</div>
           <div class="module-card__desc">
             @if (confirmedCount() > 0) {
@@ -81,7 +86,7 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
           </div>
         </div>
         <div class="module-card">
-          <div class="module-card__icon">📚</div>
+          <div class="module-card__icon"><lucide-icon name="book-open" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Help & Guides</div>
           <div class="module-card__desc">NTA 2025 guidance, LIRS notices, and FAQs.</div>
           <a href="https://lirs.gov.ng" target="_blank" class="btn btn--ghost btn--sm" style="margin-top:auto">LIRS Website ↗</a>
@@ -99,7 +104,7 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
           <div class="skeleton" style="height:120px;border-radius:var(--radius-lg)"></div>
         } @else if (filings().length === 0) {
           <div style="text-align:center;padding:var(--space-8);color:var(--color-on-surface-variant)">
-            <div style="font-size:2rem;margin-bottom:var(--space-3)">📋</div>
+            <div style="margin-bottom:var(--space-3);color:var(--color-on-surface-variant)"><lucide-icon name="clipboard-list" [size]="40" [strokeWidth]="1.25"></lucide-icon></div>
             <div class="title-sm">No filings yet</div>
             <div class="body-sm text-muted mt-2">Start a new filing to see it here.</div>
           </div>
@@ -174,7 +179,11 @@ import { NairaPipe } from '../../shared/pipes/naira.pipe';
       min-height: 160px;
     }
 
-    .module-card__icon { font-size: 1.5rem; }
+    .module-card__icon {
+      display: flex;
+      align-items: center;
+      color: var(--color-primary);
+    }
     .module-card__title {
       font-size: var(--text-title-sm);
       font-weight: var(--font-weight-semibold);
@@ -222,18 +231,22 @@ export class DashboardComponent implements OnInit {
       const all = await this.filingService.listFilings();
       this.filings.set(all);
 
-      const dl = this.filingService.daysUntilDeadline(this.currentYear);
-      this.daysLeft.set(dl);
-      this.showDeadlineBanner.set(this.filingService.isWithinDeadlineWindow(this.currentYear));
-
-      const confirmed = all.filter(f => f.status === 'Confirmed' || f.status === 'Submitted');
+      const confirmed = all.filter(f => f.status === 'Confirmed');
       this.confirmedCount.set(confirmed.length);
-      this.missingCurrentYear.set(!confirmed.some(f => f.yearOfAssessment === this.currentYear));
-      this.missingPreviousYear.set(!confirmed.some(f => f.yearOfAssessment === this.currentYear - 1));
+      this.lifetimeTotal.set(confirmed.reduce((s, f) => s + (f.finalTaxPayable ?? 0), 0));
 
-      this.lifetimeTotal.set(
-        confirmed.reduce<number>((acc, f) => acc + (f.finalTaxPayable ?? 0), 0)
-      );
+      const cy = this.currentYear;
+      this.missingCurrentYear.set(!confirmed.some(f => f.yearOfAssessment === cy));
+      this.missingPreviousYear.set(!confirmed.some(f => f.yearOfAssessment === cy - 1));
+
+      // Deadline banner: show if within 60 days of March 31
+      const deadline = new Date(cy + 1, 2, 31); // March 31 next year
+      const today = new Date();
+      const diff = Math.ceil((deadline.getTime() - today.getTime()) / 86400000);
+      if (diff > 0 && diff <= 60) {
+        this.daysLeft.set(diff);
+        this.showDeadlineBanner.set(true);
+      }
     } finally {
       this.loading.set(false);
     }

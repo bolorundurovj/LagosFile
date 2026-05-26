@@ -4,11 +4,12 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ProfileService } from '../../core/services/profile.service';
 import { Router } from '@angular/router';
+import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriangle } from 'lucide-angular';
 
 @Component({
   selector: 'lf-settings',
   standalone: true,
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, LucideAngularModule],
   template: `
     <div class="settings-page">
       <h1 class="headline-md">Settings</h1>
@@ -45,7 +46,7 @@ import { Router } from '@angular/router';
           </div>
           @if (profileSaved()) {
             <div class="alert alert--success" style="margin-top:var(--space-4)">
-              <span class="alert__icon">✓</span>
+              <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
               <div class="alert__content">Profile updated successfully.</div>
             </div>
           }
@@ -63,21 +64,21 @@ import { Router } from '@angular/router';
         </p>
         <div class="security-badges">
           <div class="security-badge">
-            <span class="security-badge__icon">🔒</span>
+            <span class="security-badge__icon"><lucide-icon name="lock" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
             <div>
               <div class="security-badge__title">AES-256-GCM Encryption</div>
               <div class="security-badge__sub">All data encrypted at rest</div>
             </div>
           </div>
           <div class="security-badge">
-            <span class="security-badge__icon">🗝</span>
+            <span class="security-badge__icon"><lucide-icon name="key" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
             <div>
               <div class="security-badge__title">PBKDF2-SHA256 Key Derivation</div>
               <div class="security-badge__sub">480,000 iterations</div>
             </div>
           </div>
           <div class="security-badge">
-            <span class="security-badge__icon">📁</span>
+            <span class="security-badge__icon"><lucide-icon name="folder" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
             <div>
               <div class="security-badge__title">Local Storage Only</div>
               <div class="security-badge__sub">~/LagosFile/ on your machine</div>
@@ -86,7 +87,7 @@ import { Router } from '@angular/router';
         </div>
 
         <button class="btn btn--danger" style="margin-top:var(--space-5)" (click)="lock()">
-          🔒 Lock App Now
+          <lucide-icon name="lock" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>Lock App Now
         </button>
       </div>
 
@@ -100,7 +101,7 @@ import { Router } from '@angular/router';
 
         @if (auth.hasRecovery()) {
           <div class="security-badge" style="margin-bottom:var(--space-4)">
-            <span class="security-badge__icon">✅</span>
+            <span class="security-badge__icon"><lucide-icon name="check-circle" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
             <div>
               <div class="security-badge__title">Recovery questions are set up</div>
               <div class="security-badge__sub">You can reset your PIN if you forget it.</div>
@@ -111,7 +112,7 @@ import { Router } from '@angular/router';
           </a>
         } @else {
           <div class="security-badge security-badge--warn" style="margin-bottom:var(--space-4)">
-            <span class="security-badge__icon">⚠️</span>
+            <span class="security-badge__icon"><lucide-icon name="alert-triangle" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
             <div>
               <div class="security-badge__title">No recovery questions set</div>
               <div class="security-badge__sub">If you forget your PIN, your data cannot be recovered.</div>
@@ -167,21 +168,35 @@ export class SettingsComponent {
   savingProfile = signal(false);
   profileSaved  = signal(false);
 
-  editForm = {
-    fullName:    this.auth.taxpayer()?.fullName    ?? '',
-    address:     this.auth.taxpayer()?.address     ?? '',
-    phone:       this.auth.taxpayer()?.phone       ?? '',
-    email:       this.auth.taxpayer()?.email       ?? '',
-    filingAgent: this.auth.taxpayer()?.filingAgent ?? '',
-  };
+  editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
+
+  constructor() {
+    const tp = this.auth.taxpayer();
+    if (tp) {
+      this.editForm.fullName    = tp.fullName;
+      this.editForm.address     = tp.address     ?? '';
+      this.editForm.phone       = tp.phone       ?? '';
+      this.editForm.email       = tp.email       ?? '';
+      this.editForm.filingAgent = tp.filingAgent ?? '';
+    }
+  }
 
   async saveProfile(): Promise<void> {
     this.savingProfile.set(true);
-    this.profileSaved.set(false);
     try {
-      await this.profileService.update(this.editForm);
-      this.profileSaved.set(true);
-      setTimeout(() => this.profileSaved.set(false), 3000);
+      const tp = this.auth.taxpayer();
+      if (tp) {
+        await this.profileService.update({
+          ...tp,
+          fullName:    this.editForm.fullName,
+          address:     this.editForm.address     || undefined,
+          phone:       this.editForm.phone       || undefined,
+          email:       this.editForm.email       || undefined,
+          filingAgent: this.editForm.filingAgent || undefined,
+        });
+        this.profileSaved.set(true);
+        setTimeout(() => this.profileSaved.set(false), 3000);
+      }
     } finally {
       this.savingProfile.set(false);
     }
@@ -189,6 +204,6 @@ export class SettingsComponent {
 
   lock(): void {
     this.auth.lock();
-    this.router.navigate(['/']);
+    this.router.navigate(['/unlock']);
   }
 }

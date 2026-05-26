@@ -4,6 +4,7 @@ import { DatePipe } from '@angular/common';
 import { ConfigService } from '../../core/services/config.service';
 import { TaxConfig, TaxBand } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
+import { LucideAngularModule, Check, AlertTriangle } from 'lucide-angular';
 
 const NTA_SECTIONS: Record<string, string> = {
   bands: 'NTA 2025, Fourth Schedule — Tax Bands',
@@ -17,7 +18,7 @@ const NTA_SECTIONS: Record<string, string> = {
 @Component({
   selector: 'lf-configuration',
   standalone: true,
-  imports: [FormsModule, NairaPipe, DatePipe],
+  imports: [FormsModule, NairaPipe, DatePipe, LucideAngularModule],
   template: `
     <div class="config-page">
       <div class="config-page__header">
@@ -44,13 +45,13 @@ const NTA_SECTIONS: Record<string, string> = {
 
       @if (saveSuccess()) {
         <div class="alert alert--success">
-          <span class="alert__icon">✓</span>
+          <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
           <div class="alert__content">Configuration saved as a new version. All new filings will use this config.</div>
         </div>
       }
       @if (importError()) {
         <div class="alert alert--error">
-          <span class="alert__icon">⚠</span>
+          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">{{ importError() }}</div>
         </div>
       }
@@ -236,6 +237,10 @@ export class ConfigurationComponent implements OnInit {
   };
 
   async ngOnInit(): Promise<void> {
+    await this.load();
+  }
+
+  private async load(): Promise<void> {
     try {
       const cfg = await this.configService.loadActive();
       this.populate(cfg);
@@ -307,10 +312,11 @@ export class ConfigurationComponent implements OnInit {
     if (!file) return;
     const text = await file.text();
     try {
-      const cfg = await this.configService.importJson(text);
-      this.populate(cfg);
+      const imported = JSON.parse(text);
+      await this.configService.importJson(imported);
+      await this.load();
     } catch (err: unknown) {
-      this.importError.set(err instanceof Error ? err.message : 'Import failed — invalid config JSON.');
+      this.importError.set(err instanceof Error ? err.message : String(err));
     }
   }
 }

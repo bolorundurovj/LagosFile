@@ -7,6 +7,7 @@ import { StepAllowancesComponent } from './steps/step-allowances/step-allowances
 import { StepDeductionsComponent } from './steps/step-deductions/step-deductions.component';
 import { StepReviewComponent } from './steps/step-review/step-review.component';
 import { IncomeEntry, CapitalAllowance, ReliefEntry } from '../../core/models';
+import { LucideAngularModule, FileText, Check } from 'lucide-angular';
 
 type WizardStep = 1 | 2 | 3 | 4;
 type WizardMode = 'selecting-year' | 'active';
@@ -27,13 +28,14 @@ const STEPS = [
     StepAllowancesComponent,
     StepDeductionsComponent,
     StepReviewComponent,
+    LucideAngularModule,
   ],
   template: `
     <!-- ── Year-selection pre-step (new filings only) ── -->
     @if (mode() === 'selecting-year') {
       <div class="yoa-select-page">
         <div class="yoa-select-card card">
-          <div class="yoa-select-card__icon">📄</div>
+          <div class="yoa-select-card__icon"><lucide-icon name="file-text" [size]="36" [strokeWidth]="1.5"></lucide-icon></div>
           <h1 class="headline-sm" style="margin-bottom:var(--space-2)">New Direct Assessment Filing</h1>
           <p class="body-md text-muted" style="margin-bottom:var(--space-6)">
             Select the Year of Assessment you are filing for.
@@ -85,7 +87,9 @@ const STEPS = [
                 <div class="progress-strip__bar"></div>
                 <div class="progress-strip__content">
                   <div class="progress-strip__step-num">
-                    @if (currentStep() > s.step) { ✓ } @else { {{ s.step }} }
+                    @if (currentStep() > s.step) {
+                      <lucide-icon name="check" [size]="14" [strokeWidth]="2.5"></lucide-icon>
+                    } @else { {{ s.step }} }
                   </div>
                   <div class="progress-strip__text">
                     <div class="progress-strip__title">{{ s.title }}</div>
@@ -361,13 +365,17 @@ export class FilingWizardComponent implements OnInit {
 
   goToStep(step: WizardStep): void { this.currentStep.set(step); }
 
-  goNext(_payload?: unknown): void {
-    if (this.currentStep() < 4) this.currentStep.update(s => (s + 1) as WizardStep);
+  goNext(_?: unknown): void {
+    const next = (this.currentStep() + 1) as WizardStep;
+    if (next <= 4) this.currentStep.set(next);
   }
 
   goBack(): void {
-    if (this.currentStep() > 1) this.currentStep.update(s => (s - 1) as WizardStep);
+    const prev = (this.currentStep() - 1) as WizardStep;
+    if (prev >= 1) this.currentStep.set(prev);
   }
 
-  onConfirmed(): void { this.router.navigate(['/history']); }
+  onConfirmed(): void {
+    this.router.navigate(['/history']);
+  }
 }

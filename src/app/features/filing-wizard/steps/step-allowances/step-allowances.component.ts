@@ -6,6 +6,7 @@ import { CapitalAllowance, AssetType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
+import { LucideAngularModule, Paperclip } from 'lucide-angular';
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: 'computer_laptop',     label: 'Computer / Laptop' },
@@ -20,7 +21,8 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
 @Component({
   selector: 'lf-step-allowances',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective,
+    LucideAngularModule],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -104,7 +106,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
               <label class="form-label" style="margin-bottom:var(--space-2)">Supporting Documents</label>
               <lf-file-dropzone label="Attach invoice or proof of purchase" (fileSelected)="onFileSelected($event, entry)" />
               @for (doc of entry.documents; track doc.id) {
-                <div class="doc-chip">📎 {{ doc.fileName }}</div>
+                <div class="doc-chip" style="display:flex;align-items:center;gap:4px"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</div>
               }
             </div>
           </div>
@@ -229,6 +231,7 @@ export class StepAllowancesComponent implements OnInit {
             );
           } catch (err) {
             console.error('Failed to attach document:', doc.name, err);
+            alert(`Could not attach "${doc.name}": ${err}`);
           }
         }
         (entry as any)._pendingDocs = [];

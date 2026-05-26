@@ -1,5 +1,6 @@
 import { Component, output, input } from '@angular/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { LucideAngularModule, Paperclip } from 'lucide-angular';
 
 export interface DropzoneFile {
   path: string;
@@ -11,6 +12,7 @@ export interface DropzoneFile {
 @Component({
   selector: 'lf-file-dropzone',
   standalone: true,
+  imports: [LucideAngularModule],
   template: `
     <div
       class="drop-zone"
@@ -24,7 +26,7 @@ export interface DropzoneFile {
       (keydown.enter)="openFilePicker()"
       [attr.aria-label]="label()"
     >
-      <span class="drop-zone__icon">📎</span>
+      <span class="drop-zone__icon"><lucide-icon name="paperclip" [size]="22" [strokeWidth]="1.75"></lucide-icon></span>
       <span class="drop-zone__label">{{ label() }}</span>
       <span class="drop-zone__subtext">PDF, JPG, PNG · Max 100 MB each</span>
     </div>

@@ -2,11 +2,12 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { LucideAngularModule, Lock } from 'lucide-angular';
 
 @Component({
   selector: 'lf-pin-entry',
   standalone: true,
-  imports: [FormsModule, RouterLink],
+  imports: [FormsModule, RouterLink, LucideAngularModule],
   template: `
     <div class="auth-page">
       <div class="auth-card">
@@ -47,7 +48,7 @@ import { AuthService } from '../../core/services/auth.service';
             <a routerLink="/recover-pin" class="forgot-link">Forgot PIN? Use security questions →</a>
           } @else {
             <div class="auth-card__warning">
-              <span>🔒</span>
+              <span><lucide-icon name="lock" [size]="14" [strokeWidth]="2"></lucide-icon></span>
               <span>Your data is encrypted. Set up security questions in Settings to enable recovery.</span>
             </div>
           }
@@ -84,7 +85,7 @@ export class PinEntryComponent {
       if (result.success) {
         this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
       } else {
-        this.errorMsg = result.error ?? 'Incorrect PIN.';
+        this.errorMsg = result.error ?? 'Incorrect PIN. Please try again.';
       }
     } finally {
       this.loading = false;

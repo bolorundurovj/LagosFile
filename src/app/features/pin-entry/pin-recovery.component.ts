@@ -2,13 +2,14 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { LucideAngularModule, AlertTriangle, CheckCircle } from 'lucide-angular';
 
 type Step = 'answers' | 'reset' | 'done';
 
 @Component({
   selector: 'lf-pin-recovery',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, LucideAngularModule],
   template: `
     <div class="auth-page">
       <div class="auth-card">
@@ -29,7 +30,7 @@ type Step = 'answers' | 'reset' | 'done';
 
           @if (loadError()) {
             <div class="alert alert--error">
-              <span class="alert__icon">⚠</span>
+              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
               <div class="alert__content">{{ loadError() }}</div>
             </div>
           } @else if (questions().length) {
@@ -47,7 +48,7 @@ type Step = 'answers' | 'reset' | 'done';
 
               @if (error()) {
                 <div class="alert alert--error">
-                  <span class="alert__icon">⚠</span>
+                  <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
                   <div class="alert__content">{{ error() }}</div>
                 </div>
               }
@@ -96,7 +97,7 @@ type Step = 'answers' | 'reset' | 'done';
 
             @if (error()) {
               <div class="alert alert--error">
-                <span class="alert__icon">⚠</span>
+                <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
                 <div class="alert__content">{{ error() }}</div>
               </div>
             }
@@ -110,7 +111,7 @@ type Step = 'answers' | 'reset' | 'done';
         <!-- Step 3: success -->
         @if (step() === 'done') {
           <div class="success-panel">
-            <div class="success-icon">✓</div>
+            <div class="success-icon"><lucide-icon name="check-circle" [size]="40" [strokeWidth]="1.5"></lucide-icon></div>
             <h2 class="auth-card__title">PIN reset successfully</h2>
             <p class="auth-card__subtitle">
               Your new PIN is active. You are now signed in.
@@ -200,18 +201,18 @@ export class PinRecoveryComponent implements OnInit {
     try {
       await this.auth.resetPin(this.newPin);
       this.step.set('done');
-    } catch (err: unknown) {
-      this.error.set(err instanceof Error ? err.message : 'Failed to reset PIN.');
+    } catch (e: any) {
+      this.error.set(e?.toString() ?? 'Failed to reset PIN.');
     } finally {
       this.loading.set(false);
     }
   }
 
-  goToDashboard(): void {
-    this.router.navigate(['/dashboard']);
-  }
-
   goBack(): void {
     this.router.navigate(['/unlock']);
+  }
+
+  goToDashboard(): void {
+    this.router.navigate(['/dashboard']);
   }
 }

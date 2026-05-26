@@ -2,11 +2,12 @@ import { Component, input, output, inject, OnInit, signal } from '@angular/core'
 import { FilingService } from '../../../../core/services/filing.service';
 import { ComputationResult } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
+import { LucideAngularModule, AlertTriangle, Check, Info } from 'lucide-angular';
 
 @Component({
   selector: 'lf-step-review',
   standalone: true,
-  imports: [NairaPipe],
+  imports: [NairaPipe, LucideAngularModule],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -93,7 +94,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
               </span>
             </div>
             <div class="alert alert--warning" style="margin-top:var(--space-3)">
-              <span class="alert__icon">⚠</span>
+              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
               <div class="alert__content">
                 The applicability of the 1% minimum tax rule to individuals under NTA 2025 is unconfirmed.
                 This computation applies the rule as configured. Verify with LIRS or a tax advisor.
@@ -103,7 +104,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 
           @if (result()!.cgtExemptAmount > 0) {
             <div class="alert alert--success" style="margin-top:var(--space-4)">
-              <span class="alert__icon">✓</span>
+              <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
               <div class="alert__content">
                 <strong>CGT Exemption Applied:</strong>
                 {{ result()!.cgtExemptAmount | naira }} excluded from chargeable income.
@@ -114,7 +115,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 
           @if (result()!.digitalAssetLossRingfenced > 0) {
             <div class="alert alert--info" style="margin-top:var(--space-3)">
-              <span class="alert__icon">ℹ</span>
+              <span class="alert__icon"><lucide-icon name="info" [size]="16" [strokeWidth]="2"></lucide-icon></span>
               <div class="alert__content">
                 {{ result()!.digitalAssetLossRingfenced | naira }} in digital asset losses
                 ring-fenced — applied only against digital asset gains, not other income.
@@ -134,7 +135,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 
         <!-- Confirm warning -->
         <div class="alert alert--warning">
-          <span class="alert__icon">⚠</span>
+          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <strong>Once confirmed, this filing is immutable.</strong>
             You may file an amendment separately but the original record will not be altered.
@@ -149,7 +150,9 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
             Save for Later
           </button>
           <button class="btn btn--primary btn--lg" (click)="confirm()" [disabled]="confirming() || loading()">
-            @if (confirming()) { Confirming… } @else { ✓ Confirm Filing }
+            @if (confirming()) { Confirming… } @else {
+              <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
+            }
           </button>
         </div>
       </div>
@@ -230,25 +233,26 @@ export class StepReviewComponent implements OnInit {
     // Maps rate to a tonal shade of the primary palette
     const shades: Record<string, string> = {
       '0':    '#cce0ff',
-      '0.07': '#7eb5f5',
-      '0.11': '#4a91e3',
-      '0.15': '#2c6dbf',
-      '0.19': '#1a50a0',
-      '0.21': '#001e40',
+      '0.07': '#99c2ff',
+      '0.11': '#5599ff',
+      '0.15': '#2277ee',
+      '0.19': '#0055cc',
+      '0.21': '#003da0',
+      '0.24': '#002880',
     };
-    return shades[String(rate)] ?? '#001e40';
+    return shades[String(rate)] ?? '#5599ff';
   }
 
   async saveDraft(): Promise<void> {
-    // Already auto-saved; just navigate back
-    this.confirmed.emit();
+    this.back.emit();
   }
 
   async confirm(): Promise<void> {
-    if (!this.result()) return;
+    const r = this.result();
+    if (!r) return;
     this.confirming.set(true);
     try {
-      await this.filingService.confirmFiling(this.filingId(), this.result()!);
+      await this.filingService.confirmFiling(this.filingId(), r);
       this.confirmed.emit();
     } finally {
       this.confirming.set(false);

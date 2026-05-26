@@ -2,11 +2,12 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { LucideAngularModule, AlertTriangle } from 'lucide-angular';
 
 @Component({
   selector: 'lf-pin-setup',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, LucideAngularModule],
   template: `
     <div class="auth-page">
       <div class="auth-card">
@@ -59,7 +60,7 @@ import { AuthService } from '../../core/services/auth.service';
 
           @if (errors.general) {
             <div class="alert alert--error">
-              <span class="alert__icon">⚠</span>
+              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
               <div class="alert__content">{{ errors.general }}</div>
             </div>
           }
@@ -96,8 +97,8 @@ export class PinSetupComponent {
     try {
       await this.auth.setupPin(this.pin);
       this.router.navigate(['/setup-recovery']);
-    } catch (err: unknown) {
-      this.errors.general = err instanceof Error ? err.message : 'An unexpected error occurred.';
+    } catch (e: any) {
+      this.errors.general = e?.toString() ?? 'Failed to set PIN.';
     } finally {
       this.loading = false;
     }

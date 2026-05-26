@@ -3,6 +3,13 @@ import { provideRouter, withViewTransitions } from '@angular/router';
 import { routes } from './app.routes';
 import { AuthService } from './core/services/auth.service';
 import { ConfigService } from './core/services/config.service';
+import { LUCIDE_ICONS, LucideIconProvider } from 'lucide-angular';
+import {
+  AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
+  FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
+  LayoutDashboard, History, Settings2, SlidersHorizontal,
+  Paperclip, Trash2,
+} from 'lucide-angular';
 
 function initApp(auth: AuthService, config: ConfigService) {
   return async () => {
@@ -20,6 +27,16 @@ export const appConfig: ApplicationConfig = {
       useFactory: initApp,
       deps: [AuthService, ConfigService],
       multi: true,
+    },
+    {
+      provide: LUCIDE_ICONS,
+      multi: true,
+      useValue: new LucideIconProvider({
+        AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
+        FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
+        LayoutDashboard, History, Settings2, SlidersHorizontal,
+        Paperclip, Trash2,
+      }),
     },
   ],
 };
