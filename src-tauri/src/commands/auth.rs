@@ -243,6 +243,55 @@ pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<()
     Ok(())
 }
 
+// ── Change PIN ────────────────────────────────────────────────
+
+/// Change the PIN while the DB is already unlocked.
+/// Verifies the current PIN, then re-derives a new key, re-encrypts the DB,
+/// and invalidates the recovery blob (which was bound to the old key).
+#[tauri::command]
+pub async fn change_pin(
+    current_pin: String,
+    new_pin: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 1. Load the salt and verify that current_pin produces the active key
+    let salt = std::fs::read(db::salt_path()).map_err(|e| e.to_string())?;
+    let derived = security::derive_key(&current_pin, &salt);
+    {
+        let key_guard = state.key.lock().unwrap();
+        let active = key_guard.as_ref().ok_or("Database not unlocked")?;
+        if derived != *active {
+            return Err("Current PIN is incorrect.".to_string());
+        }
+    }
+
+    // 2. Generate a new salt and derive the new key
+    let new_salt = security::generate_salt();
+    let new_key = security::derive_key(&new_pin, &new_salt);
+
+    // 3. Re-encrypt the in-memory DB with the new key
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        let encrypted = security::encrypt(&bytes, &new_key).map_err(|e| e.to_string())?;
+        let tmp = db::db_path().with_extension("enc.tmp");
+        std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
+    }
+
+    // 4. Persist the new salt
+    std::fs::write(db::salt_path(), &new_salt).map_err(|e| e.to_string())?;
+
+    // 5. Update the session key
+    *state.key.lock().unwrap() = Some(new_key);
+
+    // 6. Invalidate the recovery blob — it was encrypted with the old key
+    let _ = std::fs::remove_file(recovery_path());
+
+    Ok(())
+}
+
 // ── Backup / Restore ──────────────────────────────────────────
 
 /// Copy the encrypted DB file to a user-chosen destination path.

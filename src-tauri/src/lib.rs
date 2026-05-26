@@ -35,6 +35,7 @@ pub fn run() {
             commands::auth::get_recovery_questions,
             commands::auth::recover_with_answers,
             commands::auth::reset_pin,
+            commands::auth::change_pin,
             // Backup / Restore
             commands::auth::backup_db,
             commands::auth::restore_db,

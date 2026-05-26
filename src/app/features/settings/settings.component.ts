@@ -79,6 +79,50 @@ import { homeDir, join } from '@tauri-apps/api/path';
         </div>
       </div>
 
+      <!-- Change PIN -->
+      <div class="card">
+        <h2 class="title-md" style="margin-bottom:var(--space-2)">Change PIN</h2>
+        <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
+          Changing your PIN re-encrypts the entire vault with a new key.
+          Your security questions will be cleared and must be set up again afterwards.
+        </p>
+        <div class="settings-grid" style="grid-template-columns:1fr">
+          <div class="form-group">
+            <label class="form-label">Current PIN</label>
+            <input type="password" class="form-input" [(ngModel)]="pinForm.current"
+              name="currentPin" placeholder="Enter your current PIN" autocomplete="current-password" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">New PIN</label>
+            <input type="password" class="form-input" [(ngModel)]="pinForm.next"
+              name="newPin" placeholder="At least 4 characters" autocomplete="new-password"
+              [class.form-input--error]="pinForm.next.length > 0 && pinForm.next.length < 4" />
+            @if (pinForm.next.length > 0 && pinForm.next.length < 4) {
+              <div class="form-hint form-hint--error">PIN must be at least 4 characters.</div>
+            }
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confirm New PIN</label>
+            <input type="password" class="form-input" [(ngModel)]="pinForm.confirm"
+              name="confirmPin" placeholder="Repeat new PIN" autocomplete="new-password"
+              [class.form-input--error]="pinForm.confirm.length > 0 && pinForm.confirm !== pinForm.next" />
+            @if (pinForm.confirm.length > 0 && pinForm.confirm !== pinForm.next) {
+              <div class="form-hint form-hint--error">PINs do not match.</div>
+            }
+          </div>
+        </div>
+        @if (pinError()) {
+          <div class="alert alert--error" style="margin-top:var(--space-4)">
+            <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
+            <div class="alert__content">{{ pinError() }}</div>
+          </div>
+        }
+        <button class="btn btn--primary" style="margin-top:var(--space-5)"
+          (click)="changePin()" [disabled]="!canChangePin() || changingPin()">
+          @if (changingPin()) { Changing PIN… } @else { Change PIN }
+        </button>
+      </div>
+
       <!-- Backup & Restore -->
       <div class="card">
         <h2 class="title-md" style="margin-bottom:var(--space-2)">Data & Backup</h2>
@@ -204,6 +248,9 @@ import { homeDir, join } from '@tauri-apps/api/path';
       background: var(--color-primary-container);
       color: var(--color-on-primary-container);
     }
+    .form-input--error { border-color: var(--color-error) !important; }
+    .form-hint { font-size: var(--text-label-sm); margin-top: var(--space-1); }
+    .form-hint--error { color: var(--color-error); }
     .backup-row {
       display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
       padding: var(--space-3) var(--space-4);
@@ -246,7 +293,11 @@ export class SettingsComponent {
   savingProfile = signal(false);
   backingUp = signal(false);
   restoring = signal(false);
+  changingPin = signal(false);
+  pinError = signal('');
+
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
+  pinForm = { current: '', next: '', confirm: '' };
 
   constructor() {
     const tp = this.auth.taxpayer();
@@ -257,6 +308,14 @@ export class SettingsComponent {
       this.editForm.email       = tp.email       ?? '';
       this.editForm.filingAgent = tp.filingAgent ?? '';
     }
+  }
+
+  canChangePin(): boolean {
+    return (
+      this.pinForm.current.length >= 4 &&
+      this.pinForm.next.length >= 4 &&
+      this.pinForm.next === this.pinForm.confirm
+    );
   }
 
   async saveProfile(): Promise<void> {
@@ -281,6 +340,24 @@ export class SettingsComponent {
     }
   }
 
+  async changePin(): Promise<void> {
+    if (!this.canChangePin()) return;
+    this.pinError.set('');
+    this.changingPin.set(true);
+    try {
+      await this.auth.changePin(this.pinForm.current, this.pinForm.next);
+      this.pinForm = { current: '', next: '', confirm: '' };
+      this.toast.success(
+        'PIN changed successfully. Security questions were cleared — please set them up again.',
+        { label: 'Set Up Now', fn: () => this.router.navigate(['/setup-recovery']) }
+      );
+    } catch (err: unknown) {
+      this.pinError.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.changingPin.set(false);
+    }
+  }
+
   async backupDb(): Promise<void> {
     const home = await homeDir();
     const defaultPath = await join(home, 'LagosFile', `lagosfile_backup_${new Date().toISOString().slice(0, 10)}.lf.enc`);
@@ -293,10 +370,7 @@ export class SettingsComponent {
     this.backingUp.set(true);
     try {
       await this.auth.backupDb(chosen);
-      this.toast.success('Backup saved successfully.', {
-        label: 'OK',
-        fn: () => {},
-      });
+      this.toast.success('Backup saved successfully.');
     } catch (err: unknown) {
       this.toast.error('Backup failed: ' + (err instanceof Error ? err.message : String(err)));
     } finally {

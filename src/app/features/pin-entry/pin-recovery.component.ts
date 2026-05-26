@@ -105,6 +105,10 @@ type Step = 'answers' | 'reset' | 'done';
             <button type="submit" class="btn btn--primary btn--lg w-full" [disabled]="loading()">
               @if (loading()) { Saving… } @else { Set New PIN }
             </button>
+            <button type="button" class="btn btn--ghost btn--sm w-full" style="margin-top:var(--space-2)"
+              (click)="goBack()">
+              ← Back to PIN entry
+            </button>
           </form>
         }
 
@@ -208,7 +212,13 @@ export class PinRecoveryComponent implements OnInit {
     }
   }
 
-  goBack(): void {
+  async goBack(): Promise<void> {
+    // recoverWithAnswers() unlocks the session optimistically.
+    // If the user goes back before completing the PIN reset, lock first
+    // so publicGuard doesn't redirect them to /dashboard.
+    if (this.auth.isUnlocked()) {
+      await this.auth.lock();
+    }
     this.router.navigate(['/unlock']);
   }
 

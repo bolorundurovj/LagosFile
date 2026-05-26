@@ -16,7 +16,6 @@ export class AuthService {
 
   constructor(private tauri: TauriService) {}
 
-  /** Called on app init — checks whether a DB file and profile exist */
   async init(): Promise<void> {
     const status = await this.tauri.invoke<AppStatus>('check_app_status');
     this._hasRecovery.set(status.hasRecovery);
@@ -45,7 +44,7 @@ export class AuthService {
     this._state.set('locked');
   }
 
-  // ── Recovery ────────────────────────────────────────────────
+  // Recovery
 
   async setupRecovery(
     questions: [string, string, string],
@@ -53,7 +52,7 @@ export class AuthService {
   ): Promise<void> {
     await this.tauri.invoke('setup_recovery', {
       question1: questions[0], question2: questions[1], question3: questions[2],
-      answer1: answers[0],   answer2: answers[1],   answer3: answers[2],
+      answer1: answers[0],     answer2: answers[1],     answer3: answers[2],
     });
     this._hasRecovery.set(true);
   }
@@ -78,11 +77,17 @@ export class AuthService {
 
   async resetPin(newPin: string): Promise<void> {
     await this.tauri.invoke('reset_pin', { newPin });
-    // Recovery blob deleted by backend — reflect in UI
     this._hasRecovery.set(false);
   }
 
-  // ── Backup / Restore ─────────────────────────────────────────
+  // Change PIN
+
+  async changePin(currentPin: string, newPin: string): Promise<void> {
+    await this.tauri.invoke('change_pin', { currentPin, newPin });
+    this._hasRecovery.set(false);
+  }
+
+  // Backup / Restore
 
   async backupDb(destPath: string): Promise<void> {
     await this.tauri.invoke('backup_db', { destPath });
@@ -92,7 +97,7 @@ export class AuthService {
     await this.tauri.invoke('restore_db', { srcPath });
   }
 
-  // ── Helpers ──────────────────────────────────────────────────
+  // Helpers
 
   setTaxpayer(t: Taxpayer): void {
     this._taxpayer.set(t);
