@@ -4,11 +4,12 @@ import { AuthService } from '../../core/services/auth.service';
 import { ConfigService } from '../../core/services/config.service';
 import { SidebarComponent } from '../../shared/components/sidebar/sidebar.component';
 import { TopbarComponent } from '../../shared/components/topbar/topbar.component';
+import { ToastComponent } from '../../shared/components/toast/toast.component';
 
 @Component({
   selector: 'lf-shell',
   standalone: true,
-  imports: [RouterOutlet, SidebarComponent, TopbarComponent],
+  imports: [RouterOutlet, SidebarComponent, TopbarComponent, ToastComponent],
   template: `
     <div class="shell">
       <lf-sidebar [taxpayer]="auth.taxpayer()" />
@@ -19,6 +20,7 @@ import { TopbarComponent } from '../../shared/components/topbar/topbar.component
         </main>
       </div>
     </div>
+    <lf-toast-outlet />
   `,
   styles: [`
     .shell {
