@@ -5,6 +5,7 @@ import { ConfigService } from '../../core/services/config.service';
 import { TaxConfig, TaxBand } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LucideAngularModule, Check, AlertTriangle } from 'lucide-angular';
+import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 const NTA_SECTIONS: Record<string, string> = {
   bands: 'NTA 2025, Fourth Schedule — Tax Bands',
@@ -18,7 +19,7 @@ const NTA_SECTIONS: Record<string, string> = {
 @Component({
   selector: 'lf-configuration',
   standalone: true,
-  imports: [FormsModule, NairaPipe, DatePipe, LucideAngularModule],
+  imports: [FormsModule, NairaPipe, DatePipe, LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="config-page">
       <div class="config-page__header">
@@ -63,7 +64,7 @@ const NTA_SECTIONS: Record<string, string> = {
         <div class="card">
           <div class="flex items-center justify-between" style="margin-bottom:var(--space-5)">
             <div>
-              <h2 class="title-md">Tax Bands</h2>
+              <h2 class="title-md">Tax Bands<lf-help text="Progressive rate schedule applied to chargeable income (NTA 2025, Fourth Schedule). Lower slices are taxed at lower rates. Do not modify unless LIRS publishes updated rates." align="left"></lf-help></h2>
               <div class="label-sm" style="margin-top:2px">{{ ntaSection('bands') }}</div>
             </div>
             <button class="btn btn--secondary btn--sm" (click)="addBand()">+ Add Band</button>
@@ -113,11 +114,11 @@ const NTA_SECTIONS: Record<string, string> = {
 
         <!-- Relief caps -->
         <div class="card">
-          <h2 class="title-md" style="margin-bottom:var(--space-5)">Relief Caps</h2>
+          <h2 class="title-md" style="margin-bottom:var(--space-5)">Relief Caps<lf-help text="Statutory limits on relief amounts deductible under NTA 2025. Modify only if the law changes." align="left"></lf-help></h2>
           <div class="config-grid">
             <div class="config-row">
               <div class="config-row__info">
-                <div class="config-row__label">Rent Relief Cap (₦)</div>
+                <div class="config-row__label">Rent Relief Cap (₦)<lf-help text="Maximum Rent Relief claimable per annum. Set at ₦500,000 by NTA 2025, s.33(2)."></lf-help></div>
                 <div class="config-row__section">{{ ntaSection('rentReliefCap') }}</div>
               </div>
               <input type="number" class="form-input config-row__input"
@@ -125,7 +126,7 @@ const NTA_SECTIONS: Record<string, string> = {
             </div>
             <div class="config-row">
               <div class="config-row__info">
-                <div class="config-row__label">Rent Relief Rate</div>
+                <div class="config-row__label">Rent Relief Rate<lf-help text="Fraction of annual rent deductible as Rent Relief. Fixed at 20% by NTA 2025, s.33(1)."></lf-help></div>
                 <div class="config-row__section">{{ ntaSection('rentReliefRate') }}</div>
               </div>
               <div class="flex items-center gap-2">
@@ -139,11 +140,11 @@ const NTA_SECTIONS: Record<string, string> = {
 
         <!-- CGT thresholds -->
         <div class="card">
-          <h2 class="title-md" style="margin-bottom:var(--space-5)">CGT Exemption Thresholds</h2>
+          <h2 class="title-md" style="margin-bottom:var(--space-5)">CGT Exemption Thresholds<lf-help text="Capital gains are exempt from tax when BOTH conditions are met: total proceeds are below the proceeds threshold AND the gain does not exceed the gain threshold (NTA 2025, s.56)." align="left"></lf-help></h2>
           <div class="config-grid">
             <div class="config-row">
               <div class="config-row__info">
-                <div class="config-row__label">Proceeds Threshold (₦)</div>
+                <div class="config-row__label">Proceeds Threshold (₦)<lf-help text="If total disposal proceeds are below this amount (currently ₦150,000,000), the CGT exemption may apply — subject to the gain threshold also being met."></lf-help></div>
                 <div class="config-row__section">{{ ntaSection('cgtProceedsThreshold') }}</div>
               </div>
               <input type="number" class="form-input config-row__input"
@@ -151,7 +152,7 @@ const NTA_SECTIONS: Record<string, string> = {
             </div>
             <div class="config-row">
               <div class="config-row__info">
-                <div class="config-row__label">Gain Threshold (₦)</div>
+                <div class="config-row__label">Gain Threshold (₦)<lf-help text="If the capital gain does not exceed this amount (currently ₦10,000,000), the CGT exemption may apply — subject to the proceeds threshold also being met."></lf-help></div>
                 <div class="config-row__section">{{ ntaSection('cgtGainThreshold') }}</div>
               </div>
               <input type="number" class="form-input config-row__input"
@@ -162,7 +163,7 @@ const NTA_SECTIONS: Record<string, string> = {
 
         <!-- Capital allowance rates -->
         <div class="card">
-          <h2 class="title-md" style="margin-bottom:var(--space-5)">Annual Capital Allowance Rates</h2>
+          <h2 class="title-md" style="margin-bottom:var(--space-5)">Annual Capital Allowance Rates<lf-help text="Straight-line depreciation rates per asset class under NTA 2025. Applied to the tax written-down value each year. No initial allowance is available." align="left"></lf-help></h2>
           <div class="config-grid">
             @for (kv of allowanceRateEntries(); track kv.key) {
               <div class="config-row">
@@ -185,7 +186,7 @@ const NTA_SECTIONS: Record<string, string> = {
         <div class="card">
           <div class="config-row" style="padding:0">
             <div class="config-row__info">
-              <div class="config-row__label">Minimum Tax Rate</div>
+              <div class="config-row__label">Minimum Tax Rate<lf-help text="If graduated tax falls below this percentage of gross income, the minimum tax applies instead (NTA 2025, s.43). Currently 1%. Applicability to individuals is unconfirmed — verify with LIRS."></lf-help></div>
               <div class="config-row__section">{{ ntaSection('minimumTaxRate') }}</div>
             </div>
             <div class="flex items-center gap-2">

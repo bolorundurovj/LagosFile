@@ -7,6 +7,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule, Paperclip } from 'lucide-angular';
+import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
 const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: 'computer_laptop',     label: 'Computer / Laptop' },
@@ -22,11 +23,11 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
   selector: 'lf-step-allowances',
   standalone: true,
   imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective,
-    LucideAngularModule],
+    LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
-        <h2 class="headline-sm">Capital Allowances</h2>
+        <h2 class="headline-sm">Capital Allowances<lf-help text="Annual allowances let you deduct a portion of professional equipment cost each year. Only straight-line annual allowances are permitted under NTA 2025 — no initial allowance." align="left"></lf-help></h2>
         <p class="body-md text-muted">
           Claim straight-line annual allowances on professional equipment used in your business.
           Only annual allowances are supported under NTA 2025 — no initial allowance.
@@ -74,7 +75,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
             <div class="entry-grid">
               <div class="form-group">
                 <label class="form-label">
-                  Annual Allowance Rate
+                  Annual Allowance Rate<lf-help text="The percentage of cost deductible each year, set in the NTA 2025 Fourth Schedule. Rates vary by asset type (e.g. 25% for computers, 20% for other equipment)."></lf-help>
                   @if (rateFor(entry.assetType)) {
                     <span class="badge badge--draft" style="margin-left:4px">
                       {{ (rateFor(entry.assetType) * 100).toFixed(0) }}%
@@ -93,7 +94,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
             </div>
 
             <div class="form-group">
-              <label class="form-label">Tax Written-Down Value (₦)</label>
+              <label class="form-label">Tax Written-Down Value (₦)<lf-help text="The remaining tax book value of the asset. For new acquisitions this year, enter the cost. For assets carried forward, enter the closing WDV from your prior year filing." align="left"></lf-help></label>
               <input type="number" class="form-input" [(ngModel)]="entry.taxWrittenDownValue"
                 [name]="'twdv_' + i" min="0"
                 placeholder="Auto-populated from prior year if available" />
@@ -119,7 +120,7 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
 
       @if (totalAllowance() > 0) {
         <div class="computation-total">
-          <div class="total-label">Total Capital Allowances Claimable</div>
+          <div class="total-label">Total Capital Allowances Claimable<lf-help text="Sum of annual allowance amounts across all assets. This is deducted from gross income before applying the tax rate bands." align="left"></lf-help></div>
           <div class="total-value">{{ totalAllowance() | naira }}</div>
         </div>
       }

@@ -6,15 +6,16 @@ import { ReliefEntry, ReliefType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
+import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
 @Component({
   selector: 'lf-step-deductions',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
-        <h2 class="headline-sm">Deductions & Reliefs</h2>
+        <h2 class="headline-sm">Deductions & Reliefs<lf-help text="Allowable deductions reduce your chargeable income. These are governed by NTA 2025. Unsupported deductions are disallowed." align="left"></lf-help></h2>
         <div class="alert alert--info">
           <span class="alert__icon">ℹ</span>
           <div class="alert__content">
@@ -25,13 +26,13 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
 
       <!-- Structured reliefs -->
       <div class="card">
-        <h3 class="title-md" style="margin-bottom:var(--space-5)">Standard Reliefs</h3>
+        <h3 class="title-md" style="margin-bottom:var(--space-5)">Standard Reliefs<lf-help text="These reliefs are deducted from gross income before tax is computed. Each must be supported by documentary evidence." align="left"></lf-help></h3>
         <div class="relief-grid">
 
           <!-- Pension -->
           <div class="relief-row">
             <div class="relief-row__info">
-              <div class="relief-row__label">Pension Contributions (PFA)</div>
+              <div class="relief-row__label">Pension Contributions (PFA)<lf-help text="Contributions to an approved Pension Fund Administrator under the Pension Reform Act 2004. Minimum 8% of monthly emolument for employees. Deductible in full with no cap under NTA 2025."></lf-help></div>
               <div class="relief-row__sub">Approved pension scheme contributions</div>
             </div>
             <input type="number" class="form-input relief-row__input"
@@ -41,7 +42,7 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
           <!-- NHIS -->
           <div class="relief-row">
             <div class="relief-row__info">
-              <div class="relief-row__label">NHIS Contributions</div>
+              <div class="relief-row__label">NHIS Contributions<lf-help text="Contributions paid under the National Health Insurance Authority Act. Deductible in full when supported by receipts."></lf-help></div>
               <div class="relief-row__sub">National Health Insurance Scheme</div>
             </div>
             <input type="number" class="form-input relief-row__input"
@@ -51,7 +52,7 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
           <!-- NHF -->
           <div class="relief-row">
             <div class="relief-row__info">
-              <div class="relief-row__label">NHF Contributions</div>
+              <div class="relief-row__label">NHF Contributions<lf-help text="Contributions to the National Housing Fund managed by the Federal Mortgage Bank of Nigeria (FMBN). Deductible in full."></lf-help></div>
               <div class="relief-row__sub">National Housing Fund (FMBN)</div>
             </div>
             <input type="number" class="form-input relief-row__input"
@@ -61,7 +62,7 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
           <!-- Life assurance -->
           <div class="relief-row">
             <div class="relief-row__info">
-              <div class="relief-row__label">Life Assurance Premiums</div>
+              <div class="relief-row__label">Life Assurance Premiums<lf-help text="Premiums paid on life assurance policies for yourself or your spouse, with an approved insurer. Enter total annual premium paid."></lf-help></div>
               <div class="relief-row__sub">Approved life assurance policies</div>
             </div>
             <input type="number" class="form-input relief-row__input"
@@ -71,7 +72,7 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
           <!-- Rent relief -->
           <div class="relief-row">
             <div class="relief-row__info">
-              <div class="relief-row__label">Annual Rent Paid</div>
+              <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
               <div class="relief-row__sub">
                 Rent Relief = 20% of annual rent, capped at ₦500,000.
                 Homeowners cannot claim this relief.

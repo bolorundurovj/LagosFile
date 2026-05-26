@@ -7,6 +7,7 @@ import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule, Check, Paperclip, Info } from 'lucide-angular';
+import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
   { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
@@ -27,7 +28,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
   selector: 'lf-step-income',
   standalone: true,
   imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective,
-    LucideAngularModule],
+    LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -46,7 +47,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
 
             <div class="entry-grid">
               <div class="form-group">
-                <label class="form-label">Income Type</label>
+                <label class="form-label">Income Type<lf-help text="Select the category that best describes this income source. Each type may be subject to different NTA 2025 rules."></lf-help></label>
                 <select class="form-input" [(ngModel)]="entry.incomeType"
                   [name]="'type_' + i" (change)="onTypeChange(entry)">
                   @for (t of incomeTypes; track t.value) {
@@ -67,7 +68,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               <label class="toggle-label">
                 <input type="checkbox" [(ngModel)]="entry.isForeign" [name]="'foreign_' + i"
                   (change)="onForeignToggle(entry)" />
-                <span>Foreign Currency Income</span>
+                <span>Foreign Currency Income<lf-help text="Income earned in a foreign currency must be converted to Naira at the CBN official rate on the date of receipt (NTA 2025, s.20(4))."></lf-help></span>
               </label>
             </div>
 
@@ -144,7 +145,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </div>
 
               <div class="form-group">
-                <label class="form-label">Foreign Tax Paid (₦ equivalent, optional)</label>
+                <label class="form-label">Foreign Tax Paid (₦ equivalent, optional)<lf-help text="Tax withheld or paid in the country of source. Recorded for reference; formal double-taxation treaty relief requires a tax advisor."></lf-help></label>
                 <input type="number" class="form-input" [(ngModel)]="entry.foreignTaxPaidNgn"
                   [name]="'ftax_' + i" min="0" placeholder="0.00" />
                 <span class="form-hint">
@@ -157,12 +158,12 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
             @if (entry.incomeType === 'capital_gain_shares') {
               <div class="entry-grid">
                 <div class="form-group">
-                  <label class="form-label">Disposal Proceeds (₦)</label>
+                  <label class="form-label">Disposal Proceeds (₦)<lf-help text="The full sale price received. CGT exemption applies if total proceeds are below ₦150,000,000 (NTA 2025, s.56)."></lf-help></label>
                   <input type="number" class="form-input" [(ngModel)]="entry.cgtProceeds"
                     [name]="'proceeds_' + i" min="0" />
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Gain Amount (₦)</label>
+                  <label class="form-label">Gain Amount (₦)<lf-help text="Proceeds minus allowable cost of acquisition. CGT exemption also requires the gain to be ≤ ₦10,000,000."></lf-help></label>
                   <input type="number" class="form-input" [(ngModel)]="entry.cgtGain"
                     [name]="'gain_' + i" min="0" />
                 </div>

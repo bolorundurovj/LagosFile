@@ -9,12 +9,13 @@ import {
   LucideAngularModule, Clock, AlertTriangle, FileText,
   Calculator, CheckCircle, BookOpen, ClipboardList,
 } from 'lucide-angular';
+import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 @Component({
   selector: 'lf-dashboard',
   standalone: true,
   imports: [RouterLink, NairaPipe, LowerCasePipe,
-    LucideAngularModule],
+    LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="dashboard">
       <!-- Deadline countdown banner -->
@@ -51,7 +52,7 @@ import {
       <!-- Header row -->
       <div class="dashboard__header">
         <div>
-          <h1 class="headline-md">Dashboard</h1>
+          <h1 class="headline-md">Dashboard<lf-help text="Direct Assessment is self-assessed tax for individuals outside PAYE. You must file and pay annually by 31 March following the year of assessment." align="left"></lf-help></h1>
           <p class="body-md text-muted mt-2">
             Welcome back{{ taxpayer() ? ', ' + taxpayer()!.fullName.split(' ')[0] : '' }}.
             Here is your tax overview.
@@ -138,7 +139,7 @@ import {
 
       <!-- Lifetime total footer -->
       <div class="dashboard__footer">
-        <span class="text-muted label-md">Lifetime Total Tax Filed</span>
+        <span class="text-muted label-md">Lifetime Total Tax Filed<lf-help text="Sum of Final Tax Payable across all confirmed filings on this device."></lf-help></span>
         <span class="headline-sm text-primary">{{ lifetimeTotal() | naira }}</span>
       </div>
     </div>

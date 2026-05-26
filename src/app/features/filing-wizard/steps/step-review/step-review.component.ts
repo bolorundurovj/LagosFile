@@ -2,12 +2,13 @@ import { Component, input, output, inject, OnInit, signal } from '@angular/core'
 import { FilingService } from '../../../../core/services/filing.service';
 import { ComputationResult } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
+import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 import { LucideAngularModule, AlertTriangle, Check, Info } from 'lucide-angular';
 
 @Component({
   selector: 'lf-step-review',
   standalone: true,
-  imports: [NairaPipe, LucideAngularModule],
+  imports: [NairaPipe, LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -26,19 +27,19 @@ import { LucideAngularModule, AlertTriangle, Check, Info } from 'lucide-angular'
 
           <div class="breakdown-table">
             <div class="breakdown-row">
-              <span>Total Gross Income</span>
+              <span>Total Gross Income<lf-help text="Sum of all income entries across all sources for the year of assessment, before any deductions."></lf-help></span>
               <span class="financial-value">{{ result()!.totalGrossIncome | naira }}</span>
             </div>
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: Capital Allowances</span>
+              <span>Less: Capital Allowances<lf-help text="Annual allowances on qualifying professional assets, prorated to the taxable period (NTA 2025, Fourth Schedule)."></lf-help></span>
               <span class="financial-value">({{ result()!.proratedCapitalAllowances | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: Deductions & Reliefs</span>
+              <span>Less: Deductions &amp; Reliefs<lf-help text="Total of pension, NHIS, NHF, life assurance, rent relief, WHT credits and other approved deductions."></lf-help></span>
               <span class="financial-value">({{ result()!.totalDeductions | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--subtotal">
-              <span>Chargeable Income</span>
+              <span>Chargeable Income<lf-help text="The income base on which tax rate bands are applied. = Gross Income − Capital Allowances − Deductions & Reliefs."></lf-help></span>
               <span class="financial-value">{{ result()!.chargeableIncome | naira }}</span>
             </div>
           </div>
@@ -65,24 +66,24 @@ import { LucideAngularModule, AlertTriangle, Check, Info } from 'lucide-angular'
 
           <div class="breakdown-table" style="margin-top:var(--space-3)">
             <div class="breakdown-row">
-              <span>Graduated Tax</span>
+              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
               <span class="financial-value">{{ result()!.graduatedTax | naira }}</span>
             </div>
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: WHT Credits</span>
+              <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable."></lf-help></span>
               <span class="financial-value">({{ result()!.whtCredits | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--subtotal">
-              <span>Net Tax Payable</span>
+              <span>Net Tax Payable<lf-help text="Graduated tax after subtracting WHT credits. Compared against minimum tax — the higher figure becomes the final liability."></lf-help></span>
               <span class="financial-value">{{ result()!.netTaxPayable | naira }}</span>
             </div>
           </div>
 
           <!-- Minimum tax comparison -->
           <div class="min-tax-panel">
-            <div class="min-tax-panel__title">Minimum Tax Comparison</div>
+            <div class="min-tax-panel__title">Minimum Tax Comparison<lf-help text="NTA 2025 s.43 may require a minimum tax of 1% of gross income regardless of deductions. Applicability to individuals is unconfirmed — verify with LIRS." align="left"></lf-help></div>
             <div class="min-tax-panel__row">
-              <span>Graduated Tax</span>
+              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
               <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
                 {{ result()!.netTaxPayable | naira }}
               </span>
@@ -126,7 +127,7 @@ import { LucideAngularModule, AlertTriangle, Check, Info } from 'lucide-angular'
 
         <!-- Final total -->
         <div class="computation-total">
-          <div class="total-label">Final Tax Payable</div>
+          <div class="total-label">Final Tax Payable<lf-help text="The higher of net graduated tax and minimum tax. This is the amount you owe LIRS for the year of assessment." align="left"></lf-help></div>
           <div class="total-value">{{ result()!.finalTaxPayable | naira }}</div>
           <div style="font-size:var(--text-label-sm);opacity:0.7;margin-top:var(--space-2)">
             Tax Config: {{ result()!.configVersion }}

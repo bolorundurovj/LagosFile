@@ -8,6 +8,7 @@ import { StepDeductionsComponent } from './steps/step-deductions/step-deductions
 import { StepReviewComponent } from './steps/step-review/step-review.component';
 import { IncomeEntry, CapitalAllowance, ReliefEntry } from '../../core/models';
 import { LucideAngularModule, FileText, Check } from 'lucide-angular';
+import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 type WizardStep = 1 | 2 | 3 | 4;
 type WizardMode = 'selecting-year' | 'active';
@@ -29,6 +30,7 @@ const STEPS = [
     StepDeductionsComponent,
     StepReviewComponent,
     LucideAngularModule,
+    HelpTooltipComponent,
   ],
   template: `
     <!-- ── Year-selection pre-step (new filings only) ── -->
@@ -42,7 +44,7 @@ const STEPS = [
           </p>
 
           <div class="form-group" style="margin-bottom:var(--space-6)">
-            <label class="form-label">Year of Assessment</label>
+            <label class="form-label">Year of Assessment<lf-help text="The calendar year in which the income was earned. Direct Assessment filings are due by 31 March of the following year." align="left"></lf-help></label>
             <select class="form-input" [(ngModel)]="selectedYear">
               @for (y of availableYears; track y) {
                 <option [ngValue]="y">{{ y }}</option>
