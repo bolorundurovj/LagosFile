@@ -17,6 +17,13 @@ html, body {
   overflow: hidden;
 }
 
+// Smooth colour transitions when the theme switches
+html {
+  transition:
+    background-color var(--transition-base),
+    color var(--transition-base);
+}
+
 body {
   font-family: var(--font-body);
   font-size: var(--text-body-md);

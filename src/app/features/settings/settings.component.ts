@@ -3,8 +3,9 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ProfileService } from '../../core/services/profile.service';
+import { ThemeService } from '../../core/services/theme.service';
 import { Router } from '@angular/router';
-import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriangle } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'lf-settings',
@@ -51,16 +52,41 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
             </div>
           }
           <button class="btn btn--primary" style="margin-top:var(--space-5)" (click)="saveProfile()" [disabled]="savingProfile()">
-            @if (savingProfile()) { Saving… } @else { Update Profile }
+            @if (savingProfile()) { Saving... } @else { Update Profile }
           </button>
         }
+      </div>
+
+      <!-- Appearance section -->
+      <div class="card">
+        <h2 class="title-md" style="margin-bottom:var(--space-2)">Appearance</h2>
+        <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
+          Choose how LagosFile looks. System follows your OS preference automatically.
+        </p>
+        <div class="theme-switcher">
+          <button class="theme-btn" [class.theme-btn--active]="themeService.theme() === 'light'"
+            (click)="themeService.setTheme('light')" type="button">
+            <lucide-icon name="sun" [size]="20" [strokeWidth]="1.75"></lucide-icon>
+            <span>Light</span>
+          </button>
+          <button class="theme-btn" [class.theme-btn--active]="themeService.theme() === 'dark'"
+            (click)="themeService.setTheme('dark')" type="button">
+            <lucide-icon name="moon" [size]="20" [strokeWidth]="1.75"></lucide-icon>
+            <span>Dark</span>
+          </button>
+          <button class="theme-btn" [class.theme-btn--active]="themeService.theme() === 'system'"
+            (click)="themeService.setTheme('system')" type="button">
+            <lucide-icon name="monitor" [size]="20" [strokeWidth]="1.75"></lucide-icon>
+            <span>System</span>
+          </button>
+        </div>
       </div>
 
       <!-- Security section -->
       <div class="card">
         <h2 class="title-md" style="margin-bottom:var(--space-2)">Security</h2>
         <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
-          Your data is encrypted at rest using AES-256-GCM. Your PIN is never stored — only a derived key is used.
+          Your data is encrypted at rest using AES-256-GCM. Your PIN is never stored.
         </p>
         <div class="security-badges">
           <div class="security-badge">
@@ -85,20 +111,17 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
             </div>
           </div>
         </div>
-
         <button class="btn btn--danger" style="margin-top:var(--space-5)" (click)="lock()">
           <lucide-icon name="lock" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>Lock App Now
         </button>
       </div>
 
-      <!-- Recovery / Security Questions -->
+      <!-- Recovery -->
       <div class="card">
         <h2 class="title-md" style="margin-bottom:var(--space-2)">Account Recovery</h2>
         <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
-          Security questions let you reset your PIN if you forget it. Answers are stored
-          encrypted — only you can recover your account.
+          Security questions let you reset your PIN if you forget it.
         </p>
-
         @if (auth.hasRecovery()) {
           <div class="security-badge" style="margin-bottom:var(--space-4)">
             <span class="security-badge__icon"><lucide-icon name="check-circle" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
@@ -107,9 +130,7 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
               <div class="security-badge__sub">You can reset your PIN if you forget it.</div>
             </div>
           </div>
-          <a routerLink="/setup-recovery" class="btn btn--secondary">
-            Update Security Questions
-          </a>
+          <a routerLink="/setup-recovery" class="btn btn--secondary">Update Security Questions</a>
         } @else {
           <div class="security-badge security-badge--warn" style="margin-bottom:var(--space-4)">
             <span class="security-badge__icon"><lucide-icon name="alert-triangle" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
@@ -118,9 +139,7 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
               <div class="security-badge__sub">If you forget your PIN, your data cannot be recovered.</div>
             </div>
           </div>
-          <a routerLink="/setup-recovery" class="btn btn--primary">
-            Set Up Security Questions
-          </a>
+          <a routerLink="/setup-recovery" class="btn btn--primary">Set Up Security Questions</a>
         }
       </div>
 
@@ -133,7 +152,7 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
         <div class="about-row"><span>Tax Authority</span><span>Lagos Internal Revenue Service (LIRS)</span></div>
         <div class="about-row">
           <span>LIRS e-Tax Portal</span>
-          <a href="https://etax.lirs.net" target="_blank" class="btn btn--ghost btn--sm">Open Portal ↗</a>
+          <a href="https://etax.lirs.net" target="_blank" class="btn btn--ghost btn--sm">Open Portal</a>
         </div>
       </div>
     </div>
@@ -141,14 +160,29 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
   styles: [`
     .settings-page { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
-
+    .theme-switcher { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+    .theme-btn {
+      display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+      padding: var(--space-4) var(--space-3); border-radius: var(--radius-lg);
+      border: 2px solid transparent;
+      background: var(--color-surface-container-low);
+      color: var(--color-on-surface-variant);
+      font-size: var(--text-label-lg); font-weight: var(--font-weight-medium);
+      cursor: pointer; transition: all var(--transition-base);
+    }
+    .theme-btn:hover { background: var(--color-surface-container); color: var(--color-on-surface); }
+    .theme-btn--active {
+      border-color: var(--color-primary);
+      background: var(--color-primary-container);
+      color: var(--color-on-primary-container);
+    }
     .security-badges { display: flex; flex-direction: column; gap: var(--space-3); }
     .security-badge {
       display: flex; align-items: flex-start; gap: var(--space-3);
       padding: var(--space-3) var(--space-4);
       background: var(--color-surface-container-low); border-radius: var(--radius-lg);
     }
-    .security-badge__icon { font-size: 1.25rem; flex-shrink: 0; margin-top: 2px; }
+    .security-badge__icon { flex-shrink: 0; margin-top: 2px; }
     .security-badge__title { font-size: var(--text-body-md); font-weight: var(--font-weight-medium); }
     .security-badge__sub { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
     .security-badge--warn { background: var(--color-error-container); }
@@ -162,12 +196,12 @@ import { LucideAngularModule, Check, Lock, Key, Folder, CheckCircle, AlertTriang
 })
 export class SettingsComponent {
   auth = inject(AuthService);
+  themeService = inject(ThemeService);
   private profileService = inject(ProfileService);
   private router = inject(Router);
 
   savingProfile = signal(false);
   profileSaved  = signal(false);
-
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
 
   constructor() {

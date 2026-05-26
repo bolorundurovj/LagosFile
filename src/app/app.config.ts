@@ -3,18 +3,20 @@ import { provideRouter, withViewTransitions } from '@angular/router';
 import { routes } from './app.routes';
 import { AuthService } from './core/services/auth.service';
 import { ConfigService } from './core/services/config.service';
+import { ThemeService } from './core/services/theme.service';
 import { LUCIDE_ICONS, LucideIconProvider } from 'lucide-angular';
 import {
   AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
   FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
   LayoutDashboard, History, Settings2, SlidersHorizontal,
-  Paperclip, Trash2,
+  Paperclip, Trash2, Sun, Moon, Monitor,
 } from 'lucide-angular';
 
-function initApp(auth: AuthService, config: ConfigService) {
+function initApp(auth: AuthService, config: ConfigService, theme: ThemeService) {
   return async () => {
     await auth.init();
-    // Config loads after unlock — handled lazily
+    // ThemeService self-initialises via its constructor (signal + effect)
+    void theme;
   };
 }
 
@@ -25,7 +27,7 @@ export const appConfig: ApplicationConfig = {
     {
       provide: APP_INITIALIZER,
       useFactory: initApp,
-      deps: [AuthService, ConfigService],
+      deps: [AuthService, ConfigService, ThemeService],
       multi: true,
     },
     {
@@ -35,7 +37,7 @@ export const appConfig: ApplicationConfig = {
         AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
         FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
         LayoutDashboard, History, Settings2, SlidersHorizontal,
-        Paperclip, Trash2,
+        Paperclip, Trash2, Sun, Moon, Monitor,
       }),
     },
   ],

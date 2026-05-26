@@ -146,3 +146,78 @@
   // --------------------------------------------------------
   --gradient-cta: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-container) 100%);
 }
+
+// ============================================================
+// Dark theme — applied via [data-theme="dark"] on <html>
+// ============================================================
+
+[data-theme="dark"] {
+  // --- Primary palette ---
+  --color-primary: #4d9fff;
+  --color-primary-container: #003166;
+  --color-on-primary: #ffffff;
+  --color-on-primary-container: #99c2ff;
+
+  // --- Secondary ---
+  --color-secondary: #58a6ff;
+  --color-secondary-container: #0d2a4e;
+  --color-on-secondary: #ffffff;
+  --color-on-secondary-container: #a5c8f8;
+
+  // --- Tertiary ---
+  --color-tertiary: #f8a84b;
+  --color-tertiary-container: #6b2d00;
+  --color-on-tertiary: #1a0a00;
+  --color-on-tertiary-container: #ffd8b3;
+
+  // --- Error ---
+  --color-error: #f28b82;
+  --color-error-container: #3a1010;
+  --color-on-error: #1a0000;
+  --color-on-error-container: #f9a09a;
+
+  // --- Surface hierarchy ---
+  --color-background: #0d1117;
+  --color-surface: #0d1117;
+  --color-surface-container-lowest: #161b22;
+  --color-surface-container-low: #1c2128;
+  --color-surface-container: #22272e;
+  --color-surface-container-high: #2d333b;
+  --color-surface-container-highest: #373e47;
+
+  // --- Text ---
+  --color-on-surface: #e6edf3;
+  --color-on-surface-variant: #8b949e;
+  --color-on-background: #e6edf3;
+
+  // --- Outline ---
+  --color-outline: #6e7681;
+  --color-outline-variant: #30363d;
+
+  // --- Sidebar ---
+  --color-sidebar-bg: #0d1117;
+  --color-sidebar-text: rgba(230, 237, 243, 0.87);
+  --color-sidebar-text-muted: rgba(230, 237, 243, 0.50);
+  --color-sidebar-active-bg: rgba(77, 159, 255, 0.14);
+  --color-sidebar-hover-bg: rgba(255, 255, 255, 0.05);
+
+  // --- Semantic ---
+  --color-success: #3fb950;
+  --color-success-container: #0d2a15;
+  --color-warning: #f8a84b;
+  --color-warning-container: #2c1a00;
+  --color-info: #58a6ff;
+  --color-info-container: #0d2038;
+
+  // --- Elevation / Shadows ---
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.40);
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.32);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.56);
+  --shadow-dropdown: 0 4px 16px rgba(0, 0, 0, 0.40);
+
+  // --- Glass ---
+  --glass-bg: rgba(22, 27, 34, 0.85);
+
+  // --- CTA gradient ---
+  --gradient-cta: linear-gradient(135deg, #1a6fd4 0%, #0d55b0 100%);
+}
