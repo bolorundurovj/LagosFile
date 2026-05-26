@@ -11,6 +11,38 @@ use uuid::Uuid;
 
 // ── helpers ──────────────────────────────────────────────────
 
+/// Load all documents attached to a single entry, identified by its UUID string.
+fn load_documents(conn: &rusqlite::Connection, parent_entry_id: &str) -> Vec<Document> {
+    let mut stmt = match conn.prepare(
+        "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
+         FROM document WHERE parent_entry_id=?1 ORDER BY uploaded_at",
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    let mapped = match stmt.query_map(params![parent_entry_id], |row| {
+        let id_str: String = row.get(0)?;
+        let pid_str: String = row.get(1)?;
+        let uploaded_str: String = row.get(7)?;
+        Ok(Document {
+            id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
+            parent_entry_id: Uuid::parse_str(&pid_str).unwrap_or_else(|_| Uuid::new_v4()),
+            parent_entry_type: row.get(2)?,
+            file_path: row.get(3)?,
+            file_name: row.get(4)?,
+            file_type: row.get(5)?,
+            file_size_bytes: row.get(6)?,
+            uploaded_at: chrono::DateTime::parse_from_rfc3339(&uploaded_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now()),
+        })
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return vec![],
+    };
+    mapped.filter_map(|r| r.ok()).collect()
+}
+
 fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
     Ok(Filing {
         id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
@@ -284,7 +316,7 @@ pub async fn list_income_entries(filing_id: String, state: State<'_, AppState>) 
                 is_cgt_exempt,cgt_proceeds,cgt_gain
          FROM income_entry WHERE filing_id=?1",
     ).map_err(|e| e.to_string())?;
-    let entries = stmt.query_map(params![filing_id], |row| {
+    let mut entries: Vec<IncomeEntry> = stmt.query_map(params![filing_id], |row| {
         Ok(IncomeEntry {
             id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
             filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
@@ -307,6 +339,9 @@ pub async fn list_income_entries(filing_id: String, state: State<'_, AppState>) 
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok()).collect();
+    for entry in &mut entries {
+        entry.documents = load_documents(&conn, &entry.id.to_string());
+    }
     Ok(entries)
 }
 
@@ -372,7 +407,7 @@ pub async fn list_allowances(filing_id: String, state: State<'_, AppState>) -> R
                 tax_written_down_value,annual_allowance_rate,annual_allowance_amount
          FROM capital_allowance WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
-    let entries = stmt.query_map(params![filing_id], |row| {
+    let mut entries: Vec<CapitalAllowance> = stmt.query_map(params![filing_id], |row| {
         Ok(CapitalAllowance {
             id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
             filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
@@ -387,6 +422,9 @@ pub async fn list_allowances(filing_id: String, state: State<'_, AppState>) -> R
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok()).collect();
+    for entry in &mut entries {
+        entry.documents = load_documents(&conn, &entry.id.to_string());
+    }
     Ok(entries)
 }
 
@@ -440,7 +478,7 @@ pub async fn list_relief_entries(filing_id: String, state: State<'_, AppState>) 
         "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
          FROM relief_entry WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
-    let entries = stmt.query_map(params![filing_id], |row| {
+    let mut entries: Vec<ReliefEntry> = stmt.query_map(params![filing_id], |row| {
         Ok(ReliefEntry {
             id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
             filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
@@ -454,6 +492,9 @@ pub async fn list_relief_entries(filing_id: String, state: State<'_, AppState>) 
         })
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok()).collect();
+    for entry in &mut entries {
+        entry.documents = load_documents(&conn, &entry.id.to_string());
+    }
     Ok(entries)
 }
 
