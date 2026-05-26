@@ -78,6 +78,7 @@ pub fn run() {
             commands::export::export_filing_pdf,
             commands::export::export_filing_csv,
             commands::export::export_filing_json,
+            commands::export::open_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LagosFile");

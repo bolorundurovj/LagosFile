@@ -13,7 +13,14 @@
       "identifier": "fs:write-all",
       "allow": [{ "path": "$HOME/LagosFile/**" }]
     },
-    "shell:allow-open",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://**" },
+        { "url": "file://**" }
+      ]
+    },
     "dialog:default",
     "dialog:allow-save",
     "dialog:allow-open",

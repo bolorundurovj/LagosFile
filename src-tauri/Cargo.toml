@@ -67,6 +67,8 @@ dirs = "5"
 
 # PDF generation
 printpdf = "0.5"
+image = { version = "0.24", default-features = false, features = ["jpeg", "png"] }
+lopdf = "0.27"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

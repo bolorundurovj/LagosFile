@@ -1,4 +1,5 @@
 use crate::AppState;
+use lopdf;
 use printpdf::*;
 use rusqlite::params;
 use std::io::BufWriter;
@@ -88,20 +89,270 @@ fn ensure_parent(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Attachment helpers ────────────────────────────────────────
+
+struct DocRecord {
+    file_path: String,
+    file_name: String,
+    file_type: String,
+    parent_entry_type: String,
+}
+
+fn load_filing_documents(
+    conn: &rusqlite::Connection,
+    filing_id: &str,
+) -> Result<Vec<DocRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.file_path, d.file_name, d.file_type, d.parent_entry_type
+             FROM document d
+             WHERE d.parent_entry_id IN (
+                 SELECT id FROM income_entry      WHERE filing_id = ?1
+                 UNION ALL
+                 SELECT id FROM capital_allowance WHERE filing_id = ?1
+                 UNION ALL
+                 SELECT id FROM relief_entry       WHERE filing_id = ?1
+             )
+             ORDER BY d.uploaded_at",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let docs: Vec<DocRecord> = stmt
+        .query_map(params![filing_id], |row| {
+            Ok(DocRecord {
+                file_path:         row.get(0)?,
+                file_name:         row.get(1)?,
+                file_type:         row.get(2)?,
+                parent_entry_type: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(docs)
+}
+
+fn is_image_attachment(file_type: &str, file_name: &str) -> bool {
+    let t = file_type.to_lowercase();
+    let n = file_name.to_lowercase();
+    t.contains("image") || t.contains("jpeg") || t.contains("jpg") || t.contains("png")
+        || n.ends_with(".jpg") || n.ends_with(".jpeg") || n.ends_with(".png")
+}
+
+fn is_pdf_attachment(file_type: &str, file_name: &str) -> bool {
+    let t = file_type.to_lowercase();
+    let n = file_name.to_lowercase();
+    t.contains("pdf") || n.ends_with(".pdf")
+}
+
+/// Append pages from each attachment PDF into the already-saved main PDF using lopdf.
+fn append_pdf_attachments(main_path: &str, att_paths: &[String]) -> Result<(), String> {
+    if att_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut main = lopdf::Document::load(main_path)
+        .map_err(|e| format!("Cannot reload PDF for merging: {}", e))?;
+
+    for att_path in att_paths {
+        let mut att = match lopdf::Document::load(att_path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Skipping attachment '{}': {}", att_path, e);
+                continue;
+            }
+        };
+
+        // Renumber attachment object IDs so they don't collide with main
+        let start = main.max_id + 1;
+        att.renumber_objects_with(start);
+        main.max_id = att.max_id;
+
+        // Locate main doc's Pages root — extract ID before any mutable borrow
+        let pages_root_id: lopdf::ObjectId = {
+            let root_id = main.trailer
+                .get(b"Root")
+                .and_then(|o| o.as_reference())
+                .map_err(|e| e.to_string())?;
+            let catalog_obj = main.objects.get(&root_id)
+                .ok_or("Catalog object not found")?;
+            if let lopdf::Object::Dictionary(ref catalog) = catalog_obj {
+                catalog.get(b"Pages")
+                    .and_then(|p| p.as_reference())
+                    .map_err(|e| e.to_string())?
+            } else {
+                return Err("Catalog is not a dictionary".to_string());
+            }
+        };
+
+        // Collect attachment page object IDs (sorted by page number)
+        let att_page_ids: Vec<lopdf::ObjectId> = {
+            let mut pages: Vec<_> = att.get_pages().into_iter().collect();
+            pages.sort_by_key(|(num, _)| *num);
+            pages.into_iter().map(|(_, id)| id).collect()
+        };
+        let page_count = att_page_ids.len() as i64;
+
+        // Re-parent each attachment page to main's Pages root
+        for &pid in &att_page_ids {
+            if let Some(lopdf::Object::Dictionary(ref mut d)) = att.objects.get_mut(&pid) {
+                d.set("Parent", pages_root_id);
+            }
+        }
+
+        // Move all attachment objects into main
+        for (id, obj) in att.objects {
+            main.objects.insert(id, obj);
+        }
+
+        // Update main's Pages root: append Kids + increment Count
+        if let Some(lopdf::Object::Dictionary(ref mut pd)) = main.objects.get_mut(&pages_root_id) {
+            if let Ok(lopdf::Object::Integer(ref mut count)) = pd.get_mut(b"Count") {
+                *count += page_count;
+            }
+            if let Ok(lopdf::Object::Array(ref mut kids)) = pd.get_mut(b"Kids") {
+                for &pid in &att_page_ids {
+                    kids.push(lopdf::Object::Reference(pid));
+                }
+            }
+        }
+    }
+
+    main.save(main_path)
+        .map_err(|e| format!("Failed to save merged PDF: {}", e))?;
+    Ok(())
+}
+
+fn add_attachments_appendix(
+    doc: &PdfDocumentReference,
+    records: &[DocRecord],
+    non_image_folder: Option<&str>,
+) -> Result<(), String> {
+    let (pg, ly) = doc.add_page(Mm(210.0), Mm(297.0), "Supporting Documents");
+    let layer = doc.get_page(pg).get_layer(ly);
+    let font_b = doc.add_builtin_font(BuiltinFont::HelveticaBold).map_err(|e| e.to_string())?;
+    let font   = doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| e.to_string())?;
+
+    let left  = Mm(20.0);
+    let right = Mm(190.0);
+    let mut y = Mm(275.0);
+
+    layer.use_text("APPENDIX — SUPPORTING DOCUMENTS", 13.0, left, y, &font_b);
+    y = y - Mm(4.0);
+    layer.add_shape(Line {
+        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
+        is_closed: false, has_fill: false, has_stroke: true, is_clipping_path: false,
+    });
+    y = y - Mm(7.0);
+    layer.use_text(
+        &format!("{} document(s) submitted with this filing.", records.len()),
+        9.0, left, y, &font,
+    );
+    y = y - Mm(8.0);
+
+    for (i, rec) in records.iter().enumerate() {
+        if y < Mm(30.0) { break; }
+        let note = if is_image_attachment(&rec.file_type, &rec.file_name) {
+            " [embedded — see following page(s)]"
+        } else {
+            " [copied to attachments folder]"
+        };
+        layer.use_text(
+            &format!("{}. {}{}", i + 1, rec.file_name, note),
+            9.0, left, y, &font_b,
+        );
+        y = y - Mm(5.5);
+        layer.use_text(
+            &format!("   Type: {}   |   Entry type: {}", rec.file_type, rec.parent_entry_type),
+            7.5, left, y, &font,
+        );
+        y = y - Mm(7.5);
+    }
+
+    if let Some(folder) = non_image_folder {
+        y = y - Mm(4.0);
+        layer.use_text(
+            &format!("Non-image files were saved alongside this PDF in: {}", folder),
+            7.5, left, y, &font,
+        );
+    }
+
+    Ok(())
+}
+
+fn embed_image_page(
+    doc: &PdfDocumentReference,
+    file_path: &str,
+    file_name: &str,
+) -> Result<(), String> {
+    use ::image::GenericImageView;
+
+    let img = ::image::open(file_path)
+        .map_err(|e| format!("Cannot open '{}': {}", file_name, e))?;
+    let (w_px, h_px) = img.dimensions();
+    let rgb = img.to_rgb8();
+
+    let image_xobj = ImageXObject {
+        width:              Px(w_px as usize),
+        height:             Px(h_px as usize),
+        color_space:        ColorSpace::Rgb,
+        bits_per_component: ColorBits::Bit8,
+        interpolate:        true,
+        image_data:         rgb.into_raw(),
+        image_filter:       None,
+        clipping_bbox:      None,
+    };
+    let pdf_image = Image::from(image_xobj);
+
+    // Calculate DPI so the image fits inside the 190 × 277 mm usable area
+    let dpi = (w_px as f64 * 25.4 / 190.0_f64)
+        .max(h_px as f64 * 25.4 / 277.0_f64)
+        .max(72.0);
+    let rendered_w = w_px as f64 * 25.4 / dpi;
+    let rendered_h = h_px as f64 * 25.4 / dpi;
+    let x = (210.0 - rendered_w) / 2.0;
+    let y = (297.0 - rendered_h) / 2.0;
+
+    let (pg, ly) = doc.add_page(Mm(210.0), Mm(297.0), file_name);
+    let layer = doc.get_page(pg).get_layer(ly);
+
+    if let Ok(font) = doc.add_builtin_font(BuiltinFont::Helvetica) {
+        layer.use_text(file_name, 7.5, Mm(10.0), Mm(289.0), &font);
+    }
+
+    pdf_image.add_to_layer(
+        layer,
+        ImageTransform {
+            translate_x: Some(Mm(x)),
+            translate_y: Some(Mm(y)),
+            dpi: Some(dpi),
+            ..ImageTransform::default()
+        },
+    );
+
+    Ok(())
+}
+
 // ── PDF export ────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn export_filing_pdf(
     filing_id: String,
     save_path: String,
-    _include_attachments: bool,
+    include_attachments: bool,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let summary = {
+    let (summary, documents) = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        load_summary(&conn, &filing_id)?
+        let summary = load_summary(&conn, &filing_id)?;
+        let docs = if include_attachments {
+            load_filing_documents(&conn, &filing_id).unwrap_or_default()
+        } else {
+            vec![]
+        };
+        (summary, docs)
     };
 
     ensure_parent(&save_path)?;
@@ -232,11 +483,77 @@ pub async fn export_filing_pdf(
         8.0, left, y, &font,
     );
 
-    // ── Write to disk ─────────────────────────────────────────
+    // ── Attachments (phase 1 — before printpdf save) ─────────
+    let mut pdf_att_paths: Vec<String> = Vec::new();
+
+    if include_attachments && !documents.is_empty() {
+        // Sort docs into three buckets
+        let mut images: Vec<&DocRecord>  = Vec::new();
+        let mut pdfs:   Vec<&DocRecord>  = Vec::new();
+        let mut others: Vec<&DocRecord>  = Vec::new();
+
+        for rec in &documents {
+            if is_image_attachment(&rec.file_type, &rec.file_name) {
+                images.push(rec);
+            } else if is_pdf_attachment(&rec.file_type, &rec.file_name) {
+                pdfs.push(rec);
+                pdf_att_paths.push(rec.file_path.clone());
+            } else {
+                others.push(rec);
+            }
+        }
+
+        // Sibling _attachments/ folder — PDFs will also be merged into the PDF
+        // itself; copy them to the folder as a backup alongside other files.
+        let needs_folder = !pdfs.is_empty() || !others.is_empty();
+        let attach_folder: Option<std::path::PathBuf> = if needs_folder {
+            let base   = std::path::Path::new(&save_path);
+            let stem   = base.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+            let parent = base.parent().unwrap_or(std::path::Path::new("."));
+            let dir    = parent.join(format!("{}_attachments", stem));
+            let _      = std::fs::create_dir_all(&dir);
+            for rec in pdfs.iter().chain(others.iter()) {
+                let _ = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
+            }
+            Some(dir)
+        } else {
+            None
+        };
+
+        // Appendix listing page (always comes right after the computation pages)
+        let _ = add_attachments_appendix(
+            &doc,
+            &documents,
+            attach_folder.as_ref().and_then(|d| d.to_str()),
+        );
+
+        // Embed image files directly as PDF pages
+        for rec in &images {
+            if embed_image_page(&doc, &rec.file_path, &rec.file_name).is_err() {
+                // Fallback: copy to _attachments/ folder
+                let base   = std::path::Path::new(&save_path);
+                let stem   = base.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+                let parent = base.parent().unwrap_or(std::path::Path::new("."));
+                let dir    = parent.join(format!("{}_attachments", stem));
+                let _      = std::fs::create_dir_all(&dir);
+                let _      = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
+            }
+        }
+    }
+
+    // ── Write main PDF to disk ─────────────────────────────────
     doc.save(&mut BufWriter::new(
         std::fs::File::create(&save_path).map_err(|e| e.to_string())?,
     ))
     .map_err(|e| e.to_string())?;
+
+    // ── Attachments (phase 2 — merge PDF pages with lopdf) ────
+    if !pdf_att_paths.is_empty() {
+        // Best-effort: don't fail the whole export if merging has issues
+        if let Err(e) = append_pdf_attachments(&save_path, &pdf_att_paths) {
+            eprintln!("Warning: could not merge PDF attachments: {}", e);
+        }
+    }
 
     Ok(save_path)
 }
@@ -377,4 +694,32 @@ pub async fn export_filing_json(
     ensure_parent(&save_path)?;
     std::fs::write(&save_path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(save_path)
+}
+
+// ── Open file with OS default application ────────────────
+
+#[tauri::command]
+pub async fn open_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

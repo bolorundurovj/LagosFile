@@ -94,7 +94,8 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               <div class="entry-grid">
                 <div class="form-group">
                   <label class="form-label">Currency</label>
-                  <select class="form-input" [(ngModel)]="entry.foreignCurrency" [name]="'cur_' + i">
+                  <select class="form-input" [(ngModel)]="entry.foreignCurrency" [name]="'cur_' + i"
+                    (change)="fetchRate(entry)">
                     @for (c of currencies; track c) { <option [value]="c">{{ c }}</option> }
                   </select>
                 </div>
@@ -113,8 +114,12 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               <div class="entry-grid">
                 <div class="form-group">
                   <label class="form-label">Fetched Rate ({{ entry.foreignCurrency }}/NGN)
-                    @if (entry.fxRateSource) {
-                      <span class="badge badge--draft" style="margin-left:4px">{{ entry.fxRateSource }}</span>
+                    @if (fetchingRate[entry.id]) {
+                      <span class="badge badge--draft" style="margin-left:4px">fetching…</span>
+                    } @else if (entry.fxRateSource) {
+                      <span class="badge badge--draft" style="margin-left:4px">
+                        {{ entry.fxRateSource }}{{ liveRateEntries.has(entry.id) ? ' · live' : '' }}
+                      </span>
                     }
                   </label>
                   <input type="text" class="form-input"
@@ -354,19 +359,36 @@ export class StepIncomeComponent implements OnInit {
       entry.fxRateCbnOverride = undefined;
     } else {
       entry.foreignCurrency = 'USD';
+      // Auto-fetch for today if date not yet filled; re-fetch if date already set
+      this.fetchRate(entry);
     }
   }
 
+  /** Key: entry id → true while a fetch is in-flight */
+  fetchingRate: Record<string, boolean> = {};
+  /** Entry ids whose displayed rate is live (no date of receipt supplied) */
+  liveRateEntries = new Set<string>();
+
   async fetchRate(entry: IncomeEntry): Promise<void> {
-    if (!entry.foreignCurrency || !entry.incomeDate) return;
+    if (!entry.foreignCurrency) return;
+    // Use the date of receipt if provided; fall back to today for a live indicative rate
+    const isHistorical = !!entry.incomeDate;
+    const dateStr = entry.incomeDate || new Date().toISOString().slice(0, 10);
+    this.fetchingRate[entry.id] = true;
     try {
-      const result = await this.fxService.resolveRate(entry.foreignCurrency, 'NGN', entry.incomeDate);
+      const result = await this.fxService.resolveRate(entry.foreignCurrency, 'NGN', dateStr);
       if (result.rate) {
         entry.fxRateFetched = result.rate;
         entry.fxRateSource = result.source;
+        if (isHistorical) this.liveRateEntries.delete(entry.id);
+        else this.liveRateEntries.add(entry.id);
         this.applyRate(entry);
       }
-    } catch (_) {}
+    } catch (_) {
+      // silently leave any previously fetched rate intact
+    } finally {
+      this.fetchingRate[entry.id] = false;
+    }
   }
 
   applyRate(entry: IncomeEntry): void {

@@ -2,7 +2,7 @@ import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { DatePipe, LowerCasePipe } from '@angular/common';
-import { open as shellOpen } from '@tauri-apps/plugin-shell';
+import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir, join } from '@tauri-apps/api/path';
 import { FilingService } from '../../core/services/filing.service';
@@ -187,7 +187,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
 
           <div class="toggle-label" style="margin-bottom:var(--space-5)">
             <input type="checkbox" [(ngModel)]="includeAttachments" />
-            <span>Include attachment references</span>
+            <span>Include attachments <span class="text-muted" style="font-size:var(--text-label-sm)">(images embedded · PDFs appended)</span></span>
           </div>
 
           <div class="security-badges">
@@ -376,7 +376,7 @@ export class FilingHistoryComponent implements OnInit {
         savedPath = await this.filingService.exportJson(f.id, chosen);
       }
 
-      await shellOpen(savedPath);
+      await invoke('open_file', { path: savedPath });
       this.closeExport();
     } catch (err) {
       alert(`Export failed: ${err}`);
