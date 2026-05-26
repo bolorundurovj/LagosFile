@@ -82,6 +82,16 @@ export class AuthService {
     this._hasRecovery.set(false);
   }
 
+  // ── Backup / Restore ─────────────────────────────────────────
+
+  async backupDb(destPath: string): Promise<void> {
+    await this.tauri.invoke('backup_db', { destPath });
+  }
+
+  async restoreDb(srcPath: string): Promise<void> {
+    await this.tauri.invoke('restore_db', { srcPath });
+  }
+
   // ── Helpers ──────────────────────────────────────────────────
 
   setTaxpayer(t: Taxpayer): void {

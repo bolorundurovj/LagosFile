@@ -74,3 +74,12 @@ pub async fn list_fx_cache(state: State<'_, AppState>) -> Result<Vec<FxCacheEntr
         .collect();
     Ok(entries)
 }
+
+#[tauri::command]
+pub async fn clear_fx_cache(state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM fx_cache", []).map_err(|e| e.to_string())?;
+    Ok(())
+}

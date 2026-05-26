@@ -35,6 +35,9 @@ pub fn run() {
             commands::auth::get_recovery_questions,
             commands::auth::recover_with_answers,
             commands::auth::reset_pin,
+            // Backup / Restore
+            commands::auth::backup_db,
+            commands::auth::restore_db,
             // Profile
             commands::profile::create_profile,
             commands::profile::get_profile,
@@ -71,6 +74,7 @@ pub fn run() {
             // FX
             commands::fx::resolve_fx_rate,
             commands::fx::list_fx_cache,
+            commands::fx::clear_fx_cache,
             // Documents
             commands::document::attach_document,
             commands::document::list_documents,

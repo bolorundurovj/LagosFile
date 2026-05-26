@@ -2,6 +2,8 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
 import { ConfigService } from '../../core/services/config.service';
+import { FxService, FxCacheEntry } from '../../core/services/fx.service';
+import { ToastService } from '../../core/services/toast.service';
 import { TaxConfig, TaxBand } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LucideAngularModule, Check, AlertTriangle } from 'lucide-angular';
@@ -196,6 +198,48 @@ const NTA_SECTIONS: Record<string, string> = {
             </div>
           </div>
         </div>
+        <!-- FX Rate Cache -->
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-2)">
+            <h2 class="title-md">FX Rate Cache</h2>
+            <button class="btn btn--ghost btn--sm" (click)="loadFxCache()" [disabled]="fxLoading()">Refresh</button>
+          </div>
+          <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
+            Exchange rates fetched from live sources are cached locally to avoid repeat API calls.
+            Entries expire after 24 hours. Clear the cache to force fresh lookups.
+          </p>
+          @if (fxLoading()) {
+            <div class="skeleton" style="height:80px;border-radius:var(--radius-lg)"></div>
+          } @else if (fxEntries().length === 0) {
+            <div class="body-sm text-muted" style="padding:var(--space-4) 0">No cached rates. Rates are fetched when you enter foreign income in the filing wizard.</div>
+          } @else {
+            <table class="data-table" style="margin-bottom:var(--space-4)">
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Rate</th>
+                  <th>Rate Date</th>
+                  <th>Source</th>
+                  <th>Cached At</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (entry of fxEntries(); track entry.id) {
+                  <tr>
+                    <td><strong>{{ entry.baseCurrency }}/{{ entry.quoteCurrency }}</strong></td>
+                    <td class="financial-value">{{ entry.rate.toFixed(4) }}</td>
+                    <td class="text-muted" style="font-size:var(--text-label-sm)">{{ entry.rateDate }}</td>
+                    <td><span class="badge badge--draft">{{ entry.source }}</span></td>
+                    <td class="text-muted" style="font-size:var(--text-label-sm)">{{ entry.fetchedAt | date:'short' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+          <button class="btn btn--danger-outline" (click)="clearFxCache()" [disabled]="fxClearing() || fxEntries().length === 0">
+            @if (fxClearing()) { Clearing… } @else { Clear All Cached Rates ({{ fxEntries().length }}) }
+          </button>
+        </div>
       }
     </div>
   `,
@@ -212,10 +256,20 @@ const NTA_SECTIONS: Record<string, string> = {
     .config-row__label { font-size: var(--text-body-md); font-weight: var(--font-weight-medium); }
     .config-row__section { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
     .config-row__input { width: 200px; flex-shrink: 0; }
+    .btn--danger-outline {
+      border: 1.5px solid var(--color-error); background: transparent;
+      color: var(--color-error); padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-md); font-size: var(--text-label-lg);
+      font-weight: var(--font-weight-medium); cursor: pointer; transition: all var(--transition-base);
+    }
+    .btn--danger-outline:hover { background: var(--color-error-container); }
+    .btn--danger-outline:disabled { opacity: 0.4; cursor: not-allowed; }
   `],
 })
 export class ConfigurationComponent implements OnInit {
   private configService = inject(ConfigService);
+  private fxService = inject(FxService);
+  private toast = inject(ToastService);
 
   config = signal<TaxConfig | null>(null);
   bands = signal<TaxBand[]>([]);
@@ -226,6 +280,9 @@ export class ConfigurationComponent implements OnInit {
   saving = signal(false);
   saveSuccess = signal(false);
   importError = signal('');
+  fxEntries = signal<FxCacheEntry[]>([]);
+  fxLoading = signal(false);
+  fxClearing = signal(false);
 
   private readonly ASSET_LABELS: Record<string, string> = {
     computer_laptop: 'Computer / Laptop',
@@ -318,6 +375,26 @@ export class ConfigurationComponent implements OnInit {
       await this.load();
     } catch (err: unknown) {
       this.importError.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async loadFxCache(): Promise<void> {
+    this.fxLoading.set(true);
+    try { this.fxEntries.set(await this.fxService.getCachedRates()); }
+    catch { /* silently ignore */ }
+    finally { this.fxLoading.set(false); }
+  }
+
+  async clearFxCache(): Promise<void> {
+    this.fxClearing.set(true);
+    try {
+      await this.fxService.clearCache();
+      this.fxEntries.set([]);
+      this.toast.success('FX rate cache cleared.');
+    } catch (err: unknown) {
+      this.toast.error('Failed to clear cache: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.fxClearing.set(false);
     }
   }
 }

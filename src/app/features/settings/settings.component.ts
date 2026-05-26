@@ -4,8 +4,11 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ProfileService } from '../../core/services/profile.service';
 import { ThemeService } from '../../core/services/theme.service';
+import { ToastService } from '../../core/services/toast.service';
 import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
+import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { homeDir, join } from '@tauri-apps/api/path';
 
 @Component({
   selector: 'lf-settings',
@@ -45,12 +48,6 @@ import { LucideAngularModule } from 'lucide-angular';
               <input type="text" class="form-input" [(ngModel)]="editForm.filingAgent" name="filingAgent" />
             </div>
           </div>
-          @if (profileSaved()) {
-            <div class="alert alert--success" style="margin-top:var(--space-4)">
-              <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
-              <div class="alert__content">Profile updated successfully.</div>
-            </div>
-          }
           <button class="btn btn--primary" style="margin-top:var(--space-5)" (click)="saveProfile()" [disabled]="savingProfile()">
             @if (savingProfile()) { Saving... } @else { Update Profile }
           </button>
@@ -78,6 +75,37 @@ import { LucideAngularModule } from 'lucide-angular';
             (click)="themeService.setTheme('system')" type="button">
             <lucide-icon name="monitor" [size]="20" [strokeWidth]="1.75"></lucide-icon>
             <span>System</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Backup & Restore -->
+      <div class="card">
+        <h2 class="title-md" style="margin-bottom:var(--space-2)">Data & Backup</h2>
+        <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
+          Back up your encrypted vault to any location. The backup file is protected by your current PIN —
+          it cannot be opened without it. Restore replaces your current data with the backup.
+        </p>
+        <div class="backup-row">
+          <div class="backup-item">
+            <div class="backup-item__title">Backup vault</div>
+            <div class="backup-item__sub">Save an encrypted copy of all your filing data</div>
+          </div>
+          <button class="btn btn--secondary" (click)="backupDb()" [disabled]="backingUp()">
+            @if (backingUp()) { Saving… } @else {
+              <lucide-icon name="paperclip" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>Backup
+            }
+          </button>
+        </div>
+        <div class="backup-row" style="margin-top:var(--space-3)">
+          <div class="backup-item">
+            <div class="backup-item__title">Restore from backup</div>
+            <div class="backup-item__sub">Replace current data with a previous backup (requires same PIN)</div>
+          </div>
+          <button class="btn btn--danger-outline" (click)="restoreDb()" [disabled]="restoring()">
+            @if (restoring()) { Restoring… } @else {
+              <lucide-icon name="folder" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>Restore
+            }
           </button>
         </div>
       </div>
@@ -176,6 +204,20 @@ import { LucideAngularModule } from 'lucide-angular';
       background: var(--color-primary-container);
       color: var(--color-on-primary-container);
     }
+    .backup-row {
+      display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-surface-container-low); border-radius: var(--radius-lg);
+    }
+    .backup-item__title { font-size: var(--text-body-md); font-weight: var(--font-weight-medium); }
+    .backup-item__sub { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
+    .btn--danger-outline {
+      border: 1.5px solid var(--color-error); background: transparent;
+      color: var(--color-error); padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-md); font-size: var(--text-label-lg);
+      font-weight: var(--font-weight-medium); cursor: pointer; transition: all var(--transition-base);
+    }
+    .btn--danger-outline:hover { background: var(--color-error-container); }
     .security-badges { display: flex; flex-direction: column; gap: var(--space-3); }
     .security-badge {
       display: flex; align-items: flex-start; gap: var(--space-3);
@@ -198,10 +240,12 @@ export class SettingsComponent {
   auth = inject(AuthService);
   themeService = inject(ThemeService);
   private profileService = inject(ProfileService);
+  private toast = inject(ToastService);
   private router = inject(Router);
 
   savingProfile = signal(false);
-  profileSaved  = signal(false);
+  backingUp = signal(false);
+  restoring = signal(false);
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
 
   constructor() {
@@ -228,11 +272,55 @@ export class SettingsComponent {
           email:       this.editForm.email       || undefined,
           filingAgent: this.editForm.filingAgent || undefined,
         });
-        this.profileSaved.set(true);
-        setTimeout(() => this.profileSaved.set(false), 3000);
+        this.toast.success('Profile updated successfully.');
       }
+    } catch (err: unknown) {
+      this.toast.error('Failed to save profile: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.savingProfile.set(false);
+    }
+  }
+
+  async backupDb(): Promise<void> {
+    const home = await homeDir();
+    const defaultPath = await join(home, 'LagosFile', `lagosfile_backup_${new Date().toISOString().slice(0, 10)}.lf.enc`);
+    const chosen = await saveDialog({
+      title: 'Save LagosFile Backup',
+      defaultPath,
+      filters: [{ name: 'LagosFile Backup', extensions: ['lf.enc', 'enc'] }],
+    });
+    if (!chosen) return;
+    this.backingUp.set(true);
+    try {
+      await this.auth.backupDb(chosen);
+      this.toast.success('Backup saved successfully.', {
+        label: 'OK',
+        fn: () => {},
+      });
+    } catch (err: unknown) {
+      this.toast.error('Backup failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.backingUp.set(false);
+    }
+  }
+
+  async restoreDb(): Promise<void> {
+    const chosen = await openDialog({
+      title: 'Select LagosFile Backup',
+      multiple: false,
+      filters: [{ name: 'LagosFile Backup', extensions: ['lf.enc', 'enc', '*'] }],
+    });
+    if (!chosen) return;
+    const src = typeof chosen === 'string' ? chosen : chosen[0];
+    if (!src) return;
+    this.restoring.set(true);
+    try {
+      await this.auth.restoreDb(src);
+      this.toast.success('Backup restored. Your data has been replaced.');
+    } catch (err: unknown) {
+      this.toast.error('Restore failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.restoring.set(false);
     }
   }
 

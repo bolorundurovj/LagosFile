@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir, join } from '@tauri-apps/api/path';
 import { FilingService } from '../../core/services/filing.service';
+import { ToastService } from '../../core/services/toast.service';
 import { Filing } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LucideAngularModule, ClipboardList, Trash2, Lock, Check } from 'lucide-angular';
@@ -106,7 +107,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
                     <div class="action-group">
                       <a [routerLink]="['/filing', f.id]" class="btn btn--ghost btn--sm">View</a>
                       @if (f.status === 'Confirmed' || f.status === 'Submitted') {
-                        <button class="btn btn--secondary btn--sm" (click)="openExport(f)">Export</button>
+                        <button class="btn btn--secondary btn--sm" (click)="openPreview(f)">Export</button>
                         <button class="btn btn--ghost btn--sm" (click)="duplicate(f.id)">Duplicate</button>
                         <button class="btn btn--ghost btn--sm" (click)="amend(f.id)">Amend</button>
                       }
@@ -164,6 +165,96 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
         </div>
       </div>
     }
+
+    <!-- Preview modal -->
+    @if (previewFiling()) {
+      <div class="modal-overlay" (click)="closePreview()">
+        <div class="modal modal--preview" (click)="$event.stopPropagation()">
+          <div class="preview-header">
+            <div>
+              <div class="title-md">YOA {{ previewFiling()!.yearOfAssessment }} Filing</div>
+              <div class="body-sm text-muted" style="margin-top:2px">
+                {{ previewFiling()!.filingReference ?? 'No reference' }}
+                &nbsp;·&nbsp;<span class="badge badge--{{ previewFiling()!.status | lowercase }}">{{ previewFiling()!.status }}</span>
+              </div>
+            </div>
+            <button class="btn btn--ghost btn--sm" (click)="closePreview()">✕</button>
+          </div>
+
+          <!-- Tax breakdown -->
+          <div class="preview-section">
+            <div class="preview-section__title">Tax Computation Summary</div>
+            <div class="breakdown-table">
+              <div class="breakdown-row">
+                <span>Total Gross Income</span>
+                <span class="financial-value">{{ previewFiling()!.totalIncomeNgn | naira }}</span>
+              </div>
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: Chargeable Deductions</span>
+                <span class="financial-value">{{ ((previewFiling()!.totalIncomeNgn ?? 0) - (previewFiling()!.chargeableIncome ?? 0)) | naira }}</span>
+              </div>
+              <div class="breakdown-row breakdown-row--subtotal">
+                <span>Chargeable Income</span>
+                <span class="financial-value">{{ previewFiling()!.chargeableIncome | naira }}</span>
+              </div>
+              <div class="breakdown-row">
+                <span>Graduated Tax</span>
+                <span class="financial-value">{{ previewFiling()!.taxPayable | naira }}</span>
+              </div>
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: WHT Credits</span>
+                <span class="financial-value">{{ previewFiling()!.whtCredit | naira }}</span>
+              </div>
+              <div class="breakdown-row breakdown-row--subtotal">
+                <span>Net Tax Payable</span>
+                <span class="financial-value">{{ previewFiling()!.netTaxPayable | naira }}</span>
+              </div>
+              @if ((previewFiling()!.minimumTax ?? 0) > (previewFiling()!.netTaxPayable ?? 0)) {
+                <div class="breakdown-row breakdown-row--deduct">
+                  <span>Minimum Tax (1% of Gross)</span>
+                  <span class="financial-value">{{ previewFiling()!.minimumTax | naira }}</span>
+                </div>
+              }
+            </div>
+            <div class="preview-total">
+              <span>Final Tax Payable</span>
+              <span class="financial-value">{{ previewFiling()!.finalTaxPayable | naira }}</span>
+            </div>
+          </div>
+
+          <!-- Entry counts -->
+          <div class="preview-section">
+            <div class="preview-section__title">Contents</div>
+            <div class="preview-counts">
+              <div class="preview-count-chip">
+                <span class="preview-count-chip__value">{{ previewCounts().income }}</span>
+                <span>Income entries</span>
+              </div>
+              <div class="preview-count-chip">
+                <span class="preview-count-chip__value">{{ previewCounts().allowances }}</span>
+                <span>Capital allowances</span>
+              </div>
+              <div class="preview-count-chip">
+                <span class="preview-count-chip__value">{{ previewCounts().reliefs }}</span>
+                <span>Relief entries</span>
+              </div>
+              <div class="preview-count-chip">
+                <span class="preview-count-chip__value">{{ previewCounts().documents }}</span>
+                <span>Attached documents</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex gap-3" style="margin-top:var(--space-5)">
+            <button class="btn btn--ghost flex-1" (click)="closePreview()">Close</button>
+            <button class="btn btn--primary flex-1" (click)="proceedToExport()">
+              Download Export →
+            </button>
+          </div>
+        </div>
+      </div>
+    }
+
 
     <!-- Export modal -->
     @if (exportFiling()) {
@@ -243,11 +334,47 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
     .security-badges { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
     .modal--sm { max-width: 420px; text-align: center; }
+    .modal--preview { max-width: 580px; }
+    .preview-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-5); }
+    .preview-section { margin-bottom: var(--space-4); }
+    .preview-section__title {
+      font-size: var(--text-label-md); font-weight: var(--font-weight-semibold);
+      color: var(--color-on-surface-variant); text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: var(--space-3);
+    }
+    .breakdown-table { display: flex; flex-direction: column; gap: var(--space-1); }
+    .breakdown-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+      font-size: var(--text-body-sm);
+    }
+    .breakdown-row--deduct { color: var(--color-error); }
+    .breakdown-row--subtotal { background: var(--color-surface-container-low); font-weight: var(--font-weight-medium); }
+    .preview-total {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: var(--space-3); padding: var(--space-3) var(--space-4);
+      background: var(--color-primary-container); color: var(--color-on-primary-container);
+      border-radius: var(--radius-lg); font-weight: var(--font-weight-bold);
+      font-size: var(--text-body-md);
+    }
+    .preview-counts { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+    .preview-count-chip {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-surface-container-low); border-radius: var(--radius-lg);
+      font-size: var(--text-label-sm); color: var(--color-on-surface-variant);
+      flex: 1; min-width: 80px; text-align: center;
+    }
+    .preview-count-chip__value {
+      font-size: var(--text-title-md); font-weight: var(--font-weight-bold);
+      color: var(--color-on-surface);
+    }
     .delete-modal__icon { font-size: 2rem; margin-bottom: var(--space-3); }
   `],
 })
 export class FilingHistoryComponent implements OnInit {
   private filingService = inject(FilingService);
+  private toast = inject(ToastService);
 
   allFilings = signal<Filing[]>([]);
   filtered = signal<Filing[]>([]);
@@ -256,6 +383,8 @@ export class FilingHistoryComponent implements OnInit {
   exporting = signal(false);
   deletingFiling = signal<Filing | null>(null);
   deleting = signal(false);
+  previewFiling = signal<Filing | null>(null);
+  previewCounts = signal({ income: 0, allowances: 0, reliefs: 0, documents: 0 });
 
   searchQuery = '';
   statusFilter = '';
@@ -314,6 +443,29 @@ export class FilingHistoryComponent implements OnInit {
   openExport(f: Filing): void { this.exportFiling.set(f); }
   closeExport(): void { this.exportFiling.set(null); }
 
+  async openPreview(f: Filing): Promise<void> {
+    this.previewFiling.set(f);
+    // Load entry counts in background for the preview
+    try {
+      const [income, allowances, reliefs] = await Promise.all([
+        this.filingService.listIncomeEntries(f.id),
+        this.filingService.listAllowances(f.id),
+        this.filingService.listReliefEntries(f.id),
+      ]);
+      const documents = [
+        ...income.flatMap(e => e.documents),
+        ...allowances.flatMap(e => e.documents),
+        ...reliefs.flatMap(e => e.documents),
+      ].length;
+      this.previewCounts.set({ income: income.length, allowances: allowances.length, reliefs: reliefs.length, documents });
+    } catch { /* counts stay at 0 */ }
+  }
+  closePreview(): void { this.previewFiling.set(null); }
+  proceedToExport(): void {
+    const f = this.previewFiling();
+    if (f) { this.closePreview(); this.openExport(f); }
+  }
+
   openDelete(f: Filing): void { this.deletingFiling.set(f); }
   closeDelete(): void { this.deletingFiling.set(null); }
 
@@ -333,24 +485,39 @@ export class FilingHistoryComponent implements OnInit {
   }
 
   async duplicate(id: string): Promise<void> {
-    await this.filingService.duplicateFiling(id);
-    const all = await this.filingService.listFilings();
-    this.allFilings.set(all);
-    this.applyFilter();
+    try {
+      await this.filingService.duplicateFiling(id);
+      const all = await this.filingService.listFilings();
+      this.allFilings.set(all);
+      this.applyFilter();
+      this.toast.success('Filing duplicated as a new Draft.');
+    } catch (err: unknown) {
+      this.toast.error('Duplicate failed: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   async amend(id: string): Promise<void> {
-    const f = await this.filingService.amendFiling(id);
-    const all = await this.filingService.listFilings();
-    this.allFilings.set(all);
-    this.applyFilter();
+    try {
+      await this.filingService.amendFiling(id);
+      const all = await this.filingService.listFilings();
+      this.allFilings.set(all);
+      this.applyFilter();
+      this.toast.success('Amendment draft created. Open it to continue editing.');
+    } catch (err: unknown) {
+      this.toast.error('Amend failed: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   async markSubmitted(id: string): Promise<void> {
-    await this.filingService.markSubmitted(id);
-    const all = await this.filingService.listFilings();
-    this.allFilings.set(all);
-    this.applyFilter();
+    try {
+      await this.filingService.markSubmitted(id);
+      const all = await this.filingService.listFilings();
+      this.allFilings.set(all);
+      this.applyFilter();
+      this.toast.success('Filing marked as Submitted.');
+    } catch (err: unknown) {
+      this.toast.error('Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   async doExport(): Promise<void> {
@@ -359,7 +526,7 @@ export class FilingHistoryComponent implements OnInit {
     this.exporting.set(true);
     try {
       const ref = f.filingReference ?? `YOA${f.yearOfAssessment}`;
-      const ext  = this.exportFormat === 'pdf' ? 'pdf' : this.exportFormat === 'csv' ? 'csv' : 'json';
+      const ext = this.exportFormat === 'pdf' ? 'pdf' : this.exportFormat === 'csv' ? 'csv' : 'json';
       const home = await homeDir();
       const defaultPath = await join(home, 'LagosFile', 'exports', `LagosFile_${ref}.${ext}`);
 
@@ -380,8 +547,9 @@ export class FilingHistoryComponent implements OnInit {
 
       await invoke('open_file', { path: savedPath });
       this.closeExport();
+      this.toast.success('Export saved successfully.');
     } catch (err) {
-      alert(`Export failed: ${err}`);
+      this.toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       this.exporting.set(false);
     }

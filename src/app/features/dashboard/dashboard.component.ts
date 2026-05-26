@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { LowerCasePipe } from '@angular/common';
 import { FilingService } from '../../core/services/filing.service';
@@ -137,6 +137,38 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
         }
       </div>
 
+      <!-- Year-over-year chart -->
+      @if (chartData().length > 1) {
+        <div class="card" style="margin-top:var(--space-4)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-5)">
+            <h2 class="title-md">Year-over-Year<lf-help text="Compares Gross Income and Final Tax Payable across all confirmed filings. Useful for spotting trends in your tax profile over time."></lf-help></h2>
+            <div class="chart-legend">
+              <span class="chart-legend__item chart-legend__item--income">Gross Income</span>
+              <span class="chart-legend__item chart-legend__item--tax">Tax Payable</span>
+            </div>
+          </div>
+          <div class="yoy-chart">
+            @for (item of chartData(); track item.year) {
+              <div class="yoy-col">
+                <div class="yoy-bars">
+                  <div class="yoy-bar yoy-bar--income"
+                    [style.height.%]="item.incomePct"
+                    [title]="'Gross Income: ₦' + item.income.toLocaleString()">
+                  </div>
+                  <div class="yoy-bar yoy-bar--tax"
+                    [style.height.%]="item.taxPct"
+                    [title]="'Tax Payable: ₦' + item.tax.toLocaleString()">
+                  </div>
+                </div>
+                <div class="yoy-label">{{ item.year }}</div>
+                <div class="yoy-value">{{ item.tax | naira }}</div>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+
       <!-- Lifetime total footer -->
       <div class="dashboard__footer">
         <span class="text-muted label-md">Lifetime Total Tax Filed<lf-help text="Sum of Final Tax Payable across all confirmed filings on this device."></lf-help></span>
@@ -196,6 +228,29 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
       flex: 1;
     }
 
+    .chart-legend { display: flex; gap: var(--space-4); }
+    .chart-legend__item { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); display: flex; align-items: center; gap: var(--space-2); }
+    .chart-legend__item::before { content: ''; width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+    .chart-legend__item--income::before { background: var(--color-secondary-container); border: 2px solid var(--color-secondary); }
+    .chart-legend__item--tax::before { background: var(--color-primary-container); border: 2px solid var(--color-primary); }
+
+    .yoy-chart {
+      display: flex; align-items: flex-end; gap: var(--space-4);
+      height: 180px; padding: 0 var(--space-2);
+    }
+    .yoy-col { display: flex; flex-direction: column; align-items: center; flex: 1; gap: var(--space-2); }
+    .yoy-bars { display: flex; align-items: flex-end; gap: var(--space-1); height: 140px; width: 100%; justify-content: center; }
+    .yoy-bar {
+      flex: 1; border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+      min-height: 4px; transition: height var(--transition-slow);
+      cursor: default; max-width: 28px;
+    }
+    .yoy-bar--income { background: var(--color-secondary-container); border: 1.5px solid var(--color-secondary); }
+    .yoy-bar--tax { background: var(--color-primary-container); border: 1.5px solid var(--color-primary); }
+    .yoy-bar:hover { filter: brightness(0.92); }
+    .yoy-label { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); font-weight: var(--font-weight-medium); }
+    .yoy-value { font-size: var(--text-label-sm); color: var(--color-on-surface); font-weight: var(--font-weight-semibold); }
+
     .dashboard__footer {
       display: flex;
       align-items: center;
@@ -226,6 +281,22 @@ export class DashboardComponent implements OnInit {
   missingPreviousYear = signal(false);
   confirmedCount = signal(0);
   lifetimeTotal = signal(0);
+
+  chartData = computed(() => {
+    const confirmed = this.filings().filter(f => f.status === 'Confirmed' || f.status === 'Submitted');
+    if (confirmed.length < 2) return [];
+    const sorted = [...confirmed].sort((a, b) => a.yearOfAssessment - b.yearOfAssessment);
+    const maxIncome = Math.max(...sorted.map(f => f.totalIncomeNgn ?? 0), 1);
+    const maxTax = Math.max(...sorted.map(f => f.finalTaxPayable ?? 0), 1);
+    const maxVal = Math.max(maxIncome, maxTax, 1);
+    return sorted.map(f => ({
+      year: f.yearOfAssessment,
+      income: f.totalIncomeNgn ?? 0,
+      tax: f.finalTaxPayable ?? 0,
+      incomePct: Math.round(((f.totalIncomeNgn ?? 0) / maxVal) * 100),
+      taxPct: Math.round(((f.finalTaxPayable ?? 0) / maxVal) * 100),
+    }));
+  });
 
   async ngOnInit(): Promise<void> {
     try {

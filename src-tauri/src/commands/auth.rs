@@ -243,6 +243,51 @@ pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<()
     Ok(())
 }
 
+// ── Backup / Restore ──────────────────────────────────────────
+
+/// Copy the encrypted DB file to a user-chosen destination path.
+#[tauri::command]
+pub async fn backup_db(dest_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Ensure the DB is currently unlocked (user is authenticated)
+    {
+        let guard = state.db.lock().unwrap();
+        guard.as_ref().ok_or("Database not unlocked")?;
+    }
+    // The on-disk file is always the encrypted blob — just copy it
+    db::ensure_dirs().map_err(|e| e.to_string())?;
+    std::fs::copy(db::db_path(), &dest_path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Restore from a backup file: decrypt to verify validity, then replace the
+/// live DB file and swap the in-memory connection.
+#[tauri::command]
+pub async fn restore_db(src_path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let encrypted = std::fs::read(&src_path).map_err(|e| e.to_string())?;
+
+    // Decrypt with the current session key to verify it belongs to this vault
+    let bytes = {
+        let key_guard = state.key.lock().unwrap();
+        let key = key_guard.as_ref().ok_or("Database not unlocked")?;
+        security::decrypt(&encrypted, key)
+            .map_err(|_| "Invalid backup — it may have been created with a different PIN or is corrupt.".to_string())?
+    };
+
+    // Load into a fresh in-memory DB to verify schema integrity
+    let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    new_db.load_from_bytes(&bytes).map_err(|e| e.to_string())?;
+
+    // Atomically replace the on-disk file
+    let tmp = db::db_path().with_extension("enc.tmp");
+    std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
+
+    // Swap the live in-memory connection
+    *state.db.lock().unwrap() = Some(new_db);
+
+    Ok(())
+}
+
 // ── Internal helpers ──────────────────────────────────────────
 
 /// Persist the in-memory DB to disk (encrypted). Called after every mutating operation.
