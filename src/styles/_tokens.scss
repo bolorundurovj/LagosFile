@@ -28,23 +28,23 @@
   --color-on-error: #ffffff;
   --color-on-error-container: #410e0b;
 
-  // --- Surface hierarchy (tonal layering — no hard borders) ---
-  --color-background: #f7f9fb;        // Base layer — app background
+  // --- Surface hierarchy ---
+  --color-background: #f7f9fb;
   --color-surface: #f7f9fb;
-  --color-surface-container-lowest: #ffffff;   // Top layer — lifted cards
-  --color-surface-container-low: #f2f4f6;      // Mid layer — secondary areas
-  --color-surface-container: #eef0f3;          // Table alternating rows
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f2f4f6;
+  --color-surface-container: #eef0f3;
   --color-surface-container-high: #e8ecf0;
-  --color-surface-container-highest: #e2e6eb;  // Input backgrounds
+  --color-surface-container-highest: #e2e6eb;
 
   // --- Text ---
-  --color-on-surface: #191c1e;        // Body text — deep blue-black, never pure black
-  --color-on-surface-variant: #43474f; // Label-SM, metadata, secondary text
+  --color-on-surface: #191c1e;
+  --color-on-surface-variant: #43474f;
   --color-on-background: #191c1e;
 
   // --- Outline ---
   --color-outline: #73777f;
-  --color-outline-variant: #c3c7cf;   // Ghost borders at 20% opacity
+  --color-outline-variant: #c3c7cf;
 
   // --- Sidebar ---
   --color-sidebar-bg: #001e40;
@@ -61,26 +61,24 @@
   --color-info: #0277bd;
   --color-info-container: #e1f5fe;
 
-  // --------------------------------------------------------
-  // Typography scale
-  // --------------------------------------------------------
+  // --- Typography scale ---
   --font-display: 'Manrope', system-ui, sans-serif;
   --font-body: 'Inter', system-ui, sans-serif;
 
-  --text-display-lg: 3.5rem;      // Total Tax Payable headline
+  --text-display-lg: 3.5rem;
   --text-display-md: 2.25rem;
   --text-headline-lg: 2rem;
   --text-headline-md: 1.75rem;
-  --text-headline-sm: 1.5rem;     // Large numeric values
+  --text-headline-sm: 1.5rem;
   --text-title-lg: 1.375rem;
-  --text-title-md: 1.125rem;      // Card titles, section headers
+  --text-title-md: 1.125rem;
   --text-title-sm: 1rem;
   --text-body-lg: 1rem;
   --text-body-md: 0.875rem;
   --text-body-sm: 0.75rem;
   --text-label-lg: 0.875rem;
   --text-label-md: 0.75rem;
-  --text-label-sm: 0.6875rem;     // Table headers, metadata
+  --text-label-sm: 0.6875rem;
 
   --font-weight-regular: 400;
   --font-weight-medium: 500;
@@ -88,9 +86,7 @@
   --font-weight-bold: 700;
   --font-weight-extrabold: 800;
 
-  // --------------------------------------------------------
-  // Spacing scale (rem)
-  // --------------------------------------------------------
+  // --- Spacing scale ---
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -103,47 +99,35 @@
   --space-12: 3rem;
   --space-16: 4rem;
 
-  // --------------------------------------------------------
-  // Border radius
-  // --------------------------------------------------------
+  // --- Border radius ---
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;   // cards
-  --radius-xl: 1rem;      // primary cards
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
   --radius-2xl: 1.25rem;
   --radius-full: 9999px;
 
-  // --------------------------------------------------------
-  // Elevation / Shadow — atmospheric, not drop shadow
-  // --------------------------------------------------------
+  // --- Elevation / Shadow ---
   --shadow-float: 0 12px 40px rgba(25, 28, 30, 0.04);
   --shadow-card: 0 2px 8px rgba(25, 28, 30, 0.06);
   --shadow-modal: 0 12px 40px rgba(25, 28, 30, 0.12);
   --shadow-dropdown: 0 4px 16px rgba(25, 28, 30, 0.08);
 
-  // --------------------------------------------------------
-  // Layout
-  // --------------------------------------------------------
+  // --- Layout ---
   --sidebar-width: 240px;
   --topbar-height: 64px;
   --content-max-width: 1100px;
 
-  // --------------------------------------------------------
-  // Transitions
-  // --------------------------------------------------------
+  // --- Transitions ---
   --transition-fast: 120ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 320ms ease;
 
-  // --------------------------------------------------------
-  // Glassmorphism (dropdowns, tooltips)
-  // --------------------------------------------------------
+  // --- Glassmorphism ---
   --glass-bg: rgba(255, 255, 255, 0.80);
   --glass-blur: 16px;
 
-  // --------------------------------------------------------
-  // CTA gradient (primary buttons)
-  // --------------------------------------------------------
+  // --- CTA gradient ---
   --gradient-cta: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-container) 100%);
 }
 

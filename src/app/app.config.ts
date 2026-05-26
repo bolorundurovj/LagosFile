@@ -15,8 +15,7 @@ import {
 function initApp(auth: AuthService, config: ConfigService, theme: ThemeService) {
   return async () => {
     await auth.init();
-    // ThemeService self-initialises via its constructor (signal + effect)
-    void theme;
+    void theme; // ThemeService self-initialises via its constructor
   };
 }
 
