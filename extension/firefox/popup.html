@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LagosFile for LIRS</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <header class="popup-header">
+    <div class="popup-logo">LagosFile</div>
+    <div class="popup-subtitle">LIRS e-Tax Assistant</div>
+  </header>
+
+  <!-- ── State: Loading ── -->
+  <div id="state-loading" class="state">
+    <div class="spinner"></div>
+    <p class="state-title">Connecting to LagosFile…</p>
+    <p class="state-desc">Make sure LagosFile is open and you have clicked <strong>File with LIRS</strong>.</p>
+  </div>
+
+  <!-- ── State: Pick a filing ── -->
+  <div id="state-pick" class="state hidden">
+    <p class="section-label">Select a filing to fill</p>
+    <div id="filing-list"></div>
+    <div class="footer-actions">
+      <button type="button" id="pick-refresh-btn" class="btn btn--ghost">&#x21BB; Refresh</button>
+      <button type="button" id="pick-manual-btn" class="btn btn--ghost">Load JSON…</button>
+    </div>
+  </div>
+
+  <!-- ── State: Fill ── -->
+  <div id="state-fill" class="state hidden">
+
+    <div class="selected-filing" id="selected-summary"></div>
+
+    <p class="section-label">Auto-Fill by Tab</p>
+    <div class="steps-grid">
+      <button type="button" id="fill-income-btn"      class="btn btn--primary btn--full">Fill Income</button>
+      <button type="button" id="fill-deductions-btn"  class="btn btn--secondary btn--full">Fill Deductions</button>
+      <button type="button" id="fill-reliefs-btn"     class="btn btn--secondary btn--full">Fill Reliefs</button>
+      <button type="button" id="fill-wht-btn"         class="btn btn--secondary btn--full">Fill Withheld Taxes</button>
+      <button type="button" id="fill-adjustments-btn" class="btn btn--secondary btn--full">Fill Adjustments</button>
+      <button type="button" id="fill-all-btn"         class="btn btn--accent btn--full">Auto-Fill All Tabs</button>
+    </div>
+
+    <details class="copy-section">
+      <summary class="copy-toggle">Quick Copy &#x25BE;</summary>
+      <div id="copy-fields"></div>
+    </details>
+
+    <div class="footer-actions">
+      <button type="button" id="back-btn"         class="btn btn--ghost">&#x2190; Choose different</button>
+      <button type="button" id="fill-refresh-btn" class="btn btn--ghost">&#x21BB;</button>
+    </div>
+  </div>
+
+  <!-- ── State: Offline / manual load ── -->
+  <div id="state-offline" class="state hidden">
+    <div class="state-icon">&#x26A0;</div>
+    <p class="state-title">LagosFile Not Detected</p>
+    <p class="state-desc">
+      Open LagosFile, then click <strong>File with LIRS</strong> on any confirmed filing.
+      Then click Refresh below.
+    </p>
+    <p class="state-desc state-desc--alt">Or load <code>pending_filing.json</code> manually:</p>
+    <div class="input-group">
+      <textarea id="json-input" placeholder='Paste JSON or click "Open File"…' rows="5"></textarea>
+    </div>
+    <div id="parse-error" class="error-text hidden"></div>
+    <div class="button-row">
+      <button type="button" id="load-file-btn"  class="btn btn--secondary">Open File</button>
+      <button type="button" id="parse-json-btn" class="btn btn--primary">Load Data</button>
+    </div>
+    <button type="button" id="offline-refresh-btn" class="btn btn--ghost btn--full" style="margin-top:6px">&#x21BB; Try Again</button>
+  </div>
+
+  <footer class="popup-footer">
+    <span>v1.1.0</span>
+    <span id="status-text">Connecting…</span>
+  </footer>
+
+  <input type="file" id="file-input" accept=".json" class="hidden">
+  <script src="popup.js"></script>
+</body>
+</html>
