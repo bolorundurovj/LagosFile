@@ -723,4 +723,3 @@ pub async fn open_file(path: String) -> Result<(), String> {
     }
     Ok(())
 }
- 
