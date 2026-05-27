@@ -213,13 +213,17 @@ export class PinRecoveryComponent implements OnInit {
   }
 
   async goBack(): Promise<void> {
-    // recoverWithAnswers() unlocks the session optimistically.
-    // If the user goes back before completing the PIN reset, lock first
-    // so publicGuard doesn't redirect them to /dashboard.
-    if (this.auth.isUnlocked()) {
-      await this.auth.lock();
+    // recoverWithAnswers() unlocks the session optimistically before the PIN
+    // is actually reset. If the user bails out we must lock first -- otherwise
+    // publicGuard sees them as unlocked and redirects to /dashboard.
+    // `finally` guarantees the navigation fires even if lock() throws.
+    try {
+      if (this.auth.isUnlocked()) {
+        await this.auth.lock();
+      }
+    } finally {
+      this.router.navigate(['/unlock']);
     }
-    this.router.navigate(['/unlock']);
   }
 
   goToDashboard(): void {
