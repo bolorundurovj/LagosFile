@@ -62,7 +62,9 @@ pub async fn get_profile(state: State<'_, AppState>) -> Result<Option<Taxpayer>,
                     email: row.get(5)?,
                     filing_agent: row.get(6)?,
                     created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap())
+                        .unwrap_or_else(|_| {
+                            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+                        })
                         .with_timezone(&chrono::Utc),
                 })
             },

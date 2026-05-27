@@ -89,7 +89,10 @@ impl FxService {
             date.format("%Y-%m-%d"),
             base.to_lowercase()
         );
-        let resp = reqwest::get(&url).await?.json::<serde_json::Value>().await?;
+        let resp = reqwest::get(&url)
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
         let rate = resp[base.to_lowercase()][quote.to_lowercase()]
             .as_f64()
             .ok_or_else(|| anyhow::anyhow!("Rate not found in fawazahmed0 response"))?;
@@ -104,7 +107,10 @@ impl FxService {
 
     async fn try_exchangerate_api(base: &str, quote: &str) -> Result<FxResult> {
         let url = format!("https://open.er-api.com/v6/latest/{}", base);
-        let resp = reqwest::get(&url).await?.json::<serde_json::Value>().await?;
+        let resp = reqwest::get(&url)
+            .await?
+            .json::<serde_json::Value>()
+            .await?;
         let rate = resp["rates"][quote]
             .as_f64()
             .ok_or_else(|| anyhow::anyhow!("Rate not found in exchangerate-api response"))?;

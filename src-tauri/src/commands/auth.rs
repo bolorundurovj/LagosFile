@@ -44,18 +44,17 @@ fn load_taxpayer(db: &AppDb) -> Option<Taxpayer> {
         [],
         |row| {
             Ok(Taxpayer {
-                id: uuid::Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                id: uuid::Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                 full_name: row.get(1)?,
                 tin: row.get(2)?,
                 address: row.get(3)?,
                 phone: row.get(4)?,
                 email: row.get(5)?,
                 filing_agent: row.get(6)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(
-                    &row.get::<_, String>(7)?,
-                )
-                .unwrap()
-                .with_timezone(&chrono::Utc),
+                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
             })
         },
     )
@@ -69,7 +68,11 @@ pub async fn check_app_status() -> Result<AppStatus, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let has_db = db::db_path().exists();
     let has_recovery = recovery_path().exists();
-    Ok(AppStatus { has_db, has_profile: false, has_recovery })
+    Ok(AppStatus {
+        has_db,
+        has_profile: false,
+        has_recovery,
+    })
 }
 
 #[tauri::command]
@@ -95,8 +98,7 @@ pub async fn unlock_db(
     state: State<'_, AppState>,
 ) -> Result<Option<Taxpayer>, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    let salt = std::fs::read(db::salt_path())
-        .map_err(|_| "Salt file not found".to_string())?;
+    let salt = std::fs::read(db::salt_path()).map_err(|_| "Salt file not found".to_string())?;
     let key = security::derive_key(&pin, &salt);
 
     let encrypted = std::fs::read(db::db_path()).map_err(|e| e.to_string())?;
@@ -166,8 +168,7 @@ pub async fn check_recovery_setup() -> Result<bool, String> {
 pub async fn get_recovery_questions() -> Result<Vec<String>, String> {
     let json = std::fs::read_to_string(recovery_path())
         .map_err(|_| "No recovery data found. Have you set up security questions?".to_string())?;
-    let data: RecoveryData =
-        serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let data: RecoveryData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(vec![data.question_1, data.question_2, data.question_3])
 }
 
@@ -182,8 +183,7 @@ pub async fn recover_with_answers(
 ) -> Result<Option<Taxpayer>, String> {
     let json = std::fs::read_to_string(recovery_path())
         .map_err(|_| "No recovery data found.".to_string())?;
-    let data: RecoveryData =
-        serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let data: RecoveryData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
 
     let salt = hex::decode(&data.answer_salt).map_err(|e| e.to_string())?;
     let blob = hex::decode(&data.recovery_blob).map_err(|e| e.to_string())?;
@@ -318,8 +318,10 @@ pub async fn restore_db(src_path: String, state: State<'_, AppState>) -> Result<
     let bytes = {
         let key_guard = state.key.lock().unwrap();
         let key = key_guard.as_ref().ok_or("Database not unlocked")?;
-        security::decrypt(&encrypted, key)
-            .map_err(|_| "Invalid backup — it may have been created with a different PIN or is corrupt.".to_string())?
+        security::decrypt(&encrypted, key).map_err(|_| {
+            "Invalid backup — it may have been created with a different PIN or is corrupt."
+                .to_string()
+        })?
     };
 
     // Load into a fresh in-memory DB to verify schema integrity

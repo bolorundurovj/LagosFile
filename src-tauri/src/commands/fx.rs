@@ -53,19 +53,17 @@ pub async fn list_fx_cache(state: State<'_, AppState>) -> Result<Vec<FxCacheEntr
     let entries = stmt
         .query_map([], |row| {
             Ok(FxCacheEntry {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .unwrap_or_else(|_| Uuid::new_v4()),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
                 base_currency: row.get(1)?,
                 quote_currency: row.get(2)?,
                 rate: row.get(3)?,
-                rate_date: chrono::NaiveDate::parse_from_str(
-                    &row.get::<_, String>(4)?,
-                    "%Y-%m-%d",
-                )
-                .unwrap_or_default(),
+                rate_date: chrono::NaiveDate::parse_from_str(&row.get::<_, String>(4)?, "%Y-%m-%d")
+                    .unwrap_or_default(),
                 source: row.get(5)?,
                 fetched_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap())
+                    .unwrap_or_else(|_| {
+                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+                    })
                     .with_timezone(&Utc),
             })
         })
@@ -80,6 +78,7 @@ pub async fn clear_fx_cache(state: State<'_, AppState>) -> Result<(), String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM fx_cache", []).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM fx_cache", [])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

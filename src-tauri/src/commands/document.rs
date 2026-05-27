@@ -39,7 +39,7 @@ fn copy_to_store(
 pub async fn attach_document(
     parent_entry_id: String,
     parent_entry_type: String,
-    file_path: String,       // original path selected by the user
+    file_path: String, // original path selected by the user
     file_name: String,
     file_type: String,
     file_size_bytes: i64,
@@ -97,19 +97,22 @@ pub async fn list_documents(
         "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
          FROM document WHERE parent_entry_id=?1"
     ).map_err(|e| e.to_string())?;
-    let docs = stmt.query_map(params![parent_entry_id], |row| {
-        Ok(serde_json::json!({
-            "id": row.get::<_,String>(0)?,
-            "parentEntryId": row.get::<_,String>(1)?,
-            "parentEntryType": row.get::<_,String>(2)?,
-            "filePath": row.get::<_,String>(3)?,
-            "fileName": row.get::<_,String>(4)?,
-            "fileType": row.get::<_,String>(5)?,
-            "fileSizeBytes": row.get::<_,i64>(6)?,
-            "uploadedAt": row.get::<_,String>(7)?,
-        }))
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok()).collect();
+    let docs = stmt
+        .query_map(params![parent_entry_id], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_,String>(0)?,
+                "parentEntryId": row.get::<_,String>(1)?,
+                "parentEntryType": row.get::<_,String>(2)?,
+                "filePath": row.get::<_,String>(3)?,
+                "fileName": row.get::<_,String>(4)?,
+                "fileType": row.get::<_,String>(5)?,
+                "fileSizeBytes": row.get::<_,i64>(6)?,
+                "uploadedAt": row.get::<_,String>(7)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
     Ok(docs)
 }
 
@@ -124,7 +127,8 @@ pub async fn delete_document(id: String, state: State<'_, AppState>) -> Result<(
             "SELECT file_path FROM document WHERE id=?1",
             params![id],
             |r| r.get(0),
-        ).ok()
+        )
+        .ok()
     };
 
     {

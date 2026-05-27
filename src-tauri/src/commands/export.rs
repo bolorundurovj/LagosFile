@@ -35,19 +35,19 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
         params![filing_id],
         |row| {
             Ok(FilingSummary {
-                filing_reference:   row.get(0)?,
+                filing_reference: row.get(0)?,
                 year_of_assessment: row.get(1)?,
-                total_income_ngn:   row.get(2)?,
-                chargeable_income:  row.get(3)?,
-                tax_payable:        row.get(4)?,
-                wht_credit:         row.get(5)?,
-                net_tax_payable:    row.get(6)?,
-                minimum_tax:        row.get(7)?,
-                final_tax_payable:  row.get(8)?,
+                total_income_ngn: row.get(2)?,
+                chargeable_income: row.get(3)?,
+                tax_payable: row.get(4)?,
+                wht_credit: row.get(5)?,
+                net_tax_payable: row.get(6)?,
+                minimum_tax: row.get(7)?,
+                final_tax_payable: row.get(8)?,
                 tax_config_version: row.get(9)?,
-                confirmed_at:       row.get(10)?,
-                full_name:          row.get(11)?,
-                tin:                row.get(12)?,
+                confirmed_at: row.get(10)?,
+                full_name: row.get(11)?,
+                tin: row.get(12)?,
             })
         },
     )
@@ -58,7 +58,7 @@ fn format_with_commas(n: f64) -> String {
     let negative = n < 0.0;
     let abs = n.abs();
     let integer = abs.floor() as u64;
-    let cents   = (abs.fract() * 100.0).round() as u32;
+    let cents = (abs.fract() * 100.0).round() as u32;
 
     // Insert commas every 3 digits from the right
     let int_str: Vec<char> = integer.to_string().chars().collect();
@@ -72,13 +72,17 @@ fn format_with_commas(n: f64) -> String {
     }
 
     let formatted = format!("{}.{:02}", with_commas, cents);
-    if negative { format!("-{}", formatted) } else { formatted }
+    if negative {
+        format!("-{}", formatted)
+    } else {
+        formatted
+    }
 }
 
 fn naira(v: Option<f64>) -> String {
     match v {
         Some(n) => format!("NGN {}", format_with_commas(n)),
-        None    => "—".to_string(),
+        None => "—".to_string(),
     }
 }
 
@@ -120,9 +124,9 @@ fn load_filing_documents(
     let docs: Vec<DocRecord> = stmt
         .query_map(params![filing_id], |row| {
             Ok(DocRecord {
-                file_path:         row.get(0)?,
-                file_name:         row.get(1)?,
-                file_type:         row.get(2)?,
+                file_path: row.get(0)?,
+                file_name: row.get(1)?,
+                file_type: row.get(2)?,
                 parent_entry_type: row.get(3)?,
             })
         })
@@ -135,8 +139,13 @@ fn load_filing_documents(
 fn is_image_attachment(file_type: &str, file_name: &str) -> bool {
     let t = file_type.to_lowercase();
     let n = file_name.to_lowercase();
-    t.contains("image") || t.contains("jpeg") || t.contains("jpg") || t.contains("png")
-        || n.ends_with(".jpg") || n.ends_with(".jpeg") || n.ends_with(".png")
+    t.contains("image")
+        || t.contains("jpeg")
+        || t.contains("jpg")
+        || t.contains("png")
+        || n.ends_with(".jpg")
+        || n.ends_with(".jpeg")
+        || n.ends_with(".png")
 }
 
 fn is_pdf_attachment(file_type: &str, file_name: &str) -> bool {
@@ -170,14 +179,18 @@ fn append_pdf_attachments(main_path: &str, att_paths: &[String]) -> Result<(), S
 
         // Locate main doc's Pages root — extract ID before any mutable borrow
         let pages_root_id: lopdf::ObjectId = {
-            let root_id = main.trailer
+            let root_id = main
+                .trailer
                 .get(b"Root")
                 .and_then(|o| o.as_reference())
                 .map_err(|e| e.to_string())?;
-            let catalog_obj = main.objects.get(&root_id)
+            let catalog_obj = main
+                .objects
+                .get(&root_id)
                 .ok_or("Catalog object not found")?;
             if let lopdf::Object::Dictionary(ref catalog) = catalog_obj {
-                catalog.get(b"Pages")
+                catalog
+                    .get(b"Pages")
                     .and_then(|p| p.as_reference())
                     .map_err(|e| e.to_string())?
             } else {
@@ -230,10 +243,14 @@ fn add_attachments_appendix(
 ) -> Result<(), String> {
     let (pg, ly) = doc.add_page(Mm(210.0), Mm(297.0), "Supporting Documents");
     let layer = doc.get_page(pg).get_layer(ly);
-    let font_b = doc.add_builtin_font(BuiltinFont::HelveticaBold).map_err(|e| e.to_string())?;
-    let font   = doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| e.to_string())?;
+    let font_b = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| e.to_string())?;
+    let font = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| e.to_string())?;
 
-    let left  = Mm(20.0);
+    let left = Mm(20.0);
     let right = Mm(190.0);
     let mut y = Mm(275.0);
 
@@ -241,17 +258,25 @@ fn add_attachments_appendix(
     y -= Mm(4.0);
     layer.add_shape(Line {
         points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
-        is_closed: false, has_fill: false, has_stroke: true, is_clipping_path: false,
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
     });
     y -= Mm(7.0);
     layer.use_text(
         format!("{} document(s) submitted with this filing.", records.len()),
-        9.0, left, y, &font,
+        9.0,
+        left,
+        y,
+        &font,
     );
     y -= Mm(8.0);
 
     for (i, rec) in records.iter().enumerate() {
-        if y < Mm(30.0) { break; }
+        if y < Mm(30.0) {
+            break;
+        }
         let note = if is_image_attachment(&rec.file_type, &rec.file_name) {
             " [embedded — see following page(s)]"
         } else {
@@ -259,12 +284,21 @@ fn add_attachments_appendix(
         };
         layer.use_text(
             format!("{}. {}{}", i + 1, rec.file_name, note),
-            9.0, left, y, &font_b,
+            9.0,
+            left,
+            y,
+            &font_b,
         );
         y -= Mm(5.5);
         layer.use_text(
-            format!("   Type: {}   |   Entry type: {}", rec.file_type, rec.parent_entry_type),
-            7.5, left, y, &font,
+            format!(
+                "   Type: {}   |   Entry type: {}",
+                rec.file_type, rec.parent_entry_type
+            ),
+            7.5,
+            left,
+            y,
+            &font,
         );
         y -= Mm(7.5);
     }
@@ -272,8 +306,14 @@ fn add_attachments_appendix(
     if let Some(folder) = non_image_folder {
         y -= Mm(4.0);
         layer.use_text(
-            format!("Non-image files were saved alongside this PDF in: {}", folder),
-            7.5, left, y, &font,
+            format!(
+                "Non-image files were saved alongside this PDF in: {}",
+                folder
+            ),
+            7.5,
+            left,
+            y,
+            &font,
         );
     }
 
@@ -287,20 +327,20 @@ fn embed_image_page(
 ) -> Result<(), String> {
     use ::image::GenericImageView;
 
-    let img = ::image::open(file_path)
-        .map_err(|e| format!("Cannot open '{}': {}", file_name, e))?;
+    let img =
+        ::image::open(file_path).map_err(|e| format!("Cannot open '{}': {}", file_name, e))?;
     let (w_px, h_px) = img.dimensions();
     let rgb = img.to_rgb8();
 
     let image_xobj = ImageXObject {
-        width:              Px(w_px as usize),
-        height:             Px(h_px as usize),
-        color_space:        ColorSpace::Rgb,
+        width: Px(w_px as usize),
+        height: Px(h_px as usize),
+        color_space: ColorSpace::Rgb,
         bits_per_component: ColorBits::Bit8,
-        interpolate:        true,
-        image_data:         rgb.into_raw(),
-        image_filter:       None,
-        clipping_bbox:      None,
+        interpolate: true,
+        image_data: rgb.into_raw(),
+        image_filter: None,
+        clipping_bbox: None,
     };
     let pdf_image = Image::from(image_xobj);
 
@@ -373,11 +413,11 @@ pub async fn export_filing_pdf(
         .add_builtin_font(BuiltinFont::Helvetica)
         .map_err(|e| e.to_string())?;
 
-    let left   = Mm(20.0);
-    let right  = Mm(190.0);
-    let mut y  = Mm(275.0);
+    let left = Mm(20.0);
+    let right = Mm(190.0);
+    let mut y = Mm(275.0);
     let line_h = Mm(7.0);
-    let gap    = Mm(5.0);
+    let gap = Mm(5.0);
 
     // ── Header ────────────────────────────────────────────────
     layer.use_text("LAGOS STATE DIRECT ASSESSMENT", 9.0, left, y, &font);
@@ -388,10 +428,7 @@ pub async fn export_filing_pdf(
     y -= Mm(3.0);
 
     layer.add_shape(Line {
-        points: vec![
-            (Point::new(left, y), false),
-            (Point::new(right, y), false),
-        ],
+        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
         is_closed: false,
         has_fill: false,
         has_stroke: true,
@@ -401,12 +438,26 @@ pub async fn export_filing_pdf(
 
     // ── Taxpayer details ──────────────────────────────────────
     let details: &[(&str, String)] = &[
-        ("Taxpayer",         summary.full_name.clone()),
-        ("TIN",              summary.tin.clone()),
+        ("Taxpayer", summary.full_name.clone()),
+        ("TIN", summary.tin.clone()),
         ("Year of Assessment", summary.year_of_assessment.to_string()),
-        ("Filing Reference", summary.filing_reference.clone().unwrap_or_else(|| "—".to_string())),
-        ("Confirmed At",     summary.confirmed_at.as_deref().map(|s| &s[..10]).unwrap_or("—").to_string()),
-        ("Tax Config",       summary.tax_config_version.clone()),
+        (
+            "Filing Reference",
+            summary
+                .filing_reference
+                .clone()
+                .unwrap_or_else(|| "—".to_string()),
+        ),
+        (
+            "Confirmed At",
+            summary
+                .confirmed_at
+                .as_deref()
+                .map(|s| &s[..10])
+                .unwrap_or("—")
+                .to_string(),
+        ),
+        ("Tax Config", summary.tax_config_version.clone()),
     ];
     for (label, value) in details {
         layer.use_text(*label, 8.0, left, y, &font_bold);
@@ -416,10 +467,7 @@ pub async fn export_filing_pdf(
 
     y -= Mm(2.0);
     layer.add_shape(Line {
-        points: vec![
-            (Point::new(left, y), false),
-            (Point::new(right, y), false),
-        ],
+        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
         is_closed: false,
         has_fill: false,
         has_stroke: true,
@@ -432,12 +480,12 @@ pub async fn export_filing_pdf(
     y -= line_h;
 
     let rows: &[(&str, String)] = &[
-        ("Total Gross Income",    naira(summary.total_income_ngn)),
-        ("Chargeable Income",     naira(summary.chargeable_income)),
-        ("Gross Tax (PITA bands)",naira(summary.tax_payable)),
-        ("WHT Credits",           naira(summary.wht_credit.map(|v| -v))),
-        ("Net Tax Payable",       naira(summary.net_tax_payable)),
-        ("Minimum Tax (1%)",      naira(summary.minimum_tax)),
+        ("Total Gross Income", naira(summary.total_income_ngn)),
+        ("Chargeable Income", naira(summary.chargeable_income)),
+        ("Gross Tax (PITA bands)", naira(summary.tax_payable)),
+        ("WHT Credits", naira(summary.wht_credit.map(|v| -v))),
+        ("Net Tax Payable", naira(summary.net_tax_payable)),
+        ("Minimum Tax (1%)", naira(summary.minimum_tax)),
     ];
     for (label, value) in rows {
         layer.use_text(*label, 9.0, left, y, &font);
@@ -458,15 +506,18 @@ pub async fn export_filing_pdf(
     });
     y -= Mm(4.0);
     layer.use_text("FINAL TAX PAYABLE", 11.0, left, y, &font_bold);
-    layer.use_text(naira(summary.final_tax_payable), 11.0, Mm(118.0), y, &font_bold);
+    layer.use_text(
+        naira(summary.final_tax_payable),
+        11.0,
+        Mm(118.0),
+        y,
+        &font_bold,
+    );
     y -= Mm(14.0);
 
     // ── Footer ────────────────────────────────────────────────
     layer.add_shape(Line {
-        points: vec![
-            (Point::new(left, y), false),
-            (Point::new(right, y), false),
-        ],
+        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
         is_closed: false,
         has_fill: false,
         has_stroke: true,
@@ -475,12 +526,21 @@ pub async fn export_filing_pdf(
     y -= gap;
     layer.use_text(
         "Generated by LagosFile v2.0 (Angular + Tauri). Governed by NTA 2025 — LIRS.",
-        8.0, left, y, &font,
+        8.0,
+        left,
+        y,
+        &font,
     );
     y -= Mm(5.0);
     layer.use_text(
-        format!("Exported: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")),
-        8.0, left, y, &font,
+        format!(
+            "Exported: {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
+        ),
+        8.0,
+        left,
+        y,
+        &font,
     );
 
     // ── Attachments (phase 1 — before printpdf save) ─────────
@@ -488,9 +548,9 @@ pub async fn export_filing_pdf(
 
     if include_attachments && !documents.is_empty() {
         // Sort docs into three buckets
-        let mut images: Vec<&DocRecord>  = Vec::new();
-        let mut pdfs:   Vec<&DocRecord>  = Vec::new();
-        let mut others: Vec<&DocRecord>  = Vec::new();
+        let mut images: Vec<&DocRecord> = Vec::new();
+        let mut pdfs: Vec<&DocRecord> = Vec::new();
+        let mut others: Vec<&DocRecord> = Vec::new();
 
         for rec in &documents {
             if is_image_attachment(&rec.file_type, &rec.file_name) {
@@ -507,11 +567,14 @@ pub async fn export_filing_pdf(
         // itself; copy them to the folder as a backup alongside other files.
         let needs_folder = !pdfs.is_empty() || !others.is_empty();
         let attach_folder: Option<std::path::PathBuf> = if needs_folder {
-            let base   = std::path::Path::new(&save_path);
-            let stem   = base.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+            let base = std::path::Path::new(&save_path);
+            let stem = base
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("export");
             let parent = base.parent().unwrap_or(std::path::Path::new("."));
-            let dir    = parent.join(format!("{}_attachments", stem));
-            let _      = std::fs::create_dir_all(&dir);
+            let dir = parent.join(format!("{}_attachments", stem));
+            let _ = std::fs::create_dir_all(&dir);
             for rec in pdfs.iter().chain(others.iter()) {
                 let _ = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
             }
@@ -531,12 +594,15 @@ pub async fn export_filing_pdf(
         for rec in &images {
             if embed_image_page(&doc, &rec.file_path, &rec.file_name).is_err() {
                 // Fallback: copy to _attachments/ folder
-                let base   = std::path::Path::new(&save_path);
-                let stem   = base.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+                let base = std::path::Path::new(&save_path);
+                let stem = base
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("export");
                 let parent = base.parent().unwrap_or(std::path::Path::new("."));
-                let dir    = parent.join(format!("{}_attachments", stem));
-                let _      = std::fs::create_dir_all(&dir);
-                let _      = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
+                let dir = parent.join(format!("{}_attachments", stem));
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
             }
         }
     }
@@ -607,9 +673,11 @@ pub async fn export_filing_csv(
             format_with_commas(row.get::<_, f64>(2)?),
             row.get::<_, i32>(3)?,
             row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            row.get::<_, Option<f64>>(5)?.map_or(String::new(), |v| format!("{:.2}", v)),
+            row.get::<_, Option<f64>>(5)?
+                .map_or(String::new(), |v| format!("{:.2}", v)),
             row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-            row.get::<_, Option<f64>>(7)?.map_or(String::new(), |v| v.to_string()),
+            row.get::<_, Option<f64>>(7)?
+                .map_or(String::new(), |v| v.to_string()),
             row.get::<_, Option<String>>(8)?.unwrap_or_default(),
         ))
     })

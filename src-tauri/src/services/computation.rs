@@ -63,12 +63,12 @@ impl ComputationEngine {
         for r in relief_entries {
             let amount = r.approved_amount;
             match r.relief_type.as_str() {
-                "pension"        => pension        += amount,
-                "nhis"           => nhis           += amount,
-                "nhf"            => nhf            += amount,
+                "pension" => pension += amount,
+                "nhis" => nhis += amount,
+                "nhf" => nhf += amount,
                 "life_assurance" => life_assurance += amount,
-                "rent"           => annual_rent    += amount,
-                "wht"            => wht_credits    += amount,
+                "rent" => annual_rent += amount,
+                "wht" => wht_credits += amount,
                 "other_approved" => other_approved += amount,
                 _ => {}
             }
@@ -77,8 +77,7 @@ impl ComputationEngine {
         let rent_relief = (annual_rent * config.relief_caps.rent_relief_rate)
             .min(config.relief_caps.rent_relief_cap);
 
-        let total_deductions =
-            pension + nhis + nhf + life_assurance + rent_relief + other_approved;
+        let total_deductions = pension + nhis + nhf + life_assurance + rent_relief + other_approved;
 
         let chargeable_income = (total_gross - prorated_ca - total_deductions).max(0.0);
 

@@ -7,7 +7,7 @@ use db::AppDb;
 use std::sync::Mutex;
 
 pub struct AppState {
-    pub db:  Mutex<Option<AppDb>>,
+    pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
 }
 
@@ -20,7 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState {
-            db:  Mutex::new(None),
+            db: Mutex::new(None),
             key: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![

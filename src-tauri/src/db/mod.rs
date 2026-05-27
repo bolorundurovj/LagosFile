@@ -17,7 +17,9 @@ unsafe impl Sync for AppDb {}
 impl AppDb {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let db = AppDb { conn: Mutex::new(conn) };
+        let db = AppDb {
+            conn: Mutex::new(conn),
+        };
         db.create_schema()?;
         Ok(db)
     }
@@ -61,12 +63,8 @@ impl AppDb {
         let conn = self.conn.lock().unwrap();
         let mut size: i64 = 0;
         unsafe {
-            let ptr = rusqlite::ffi::sqlite3_serialize(
-                conn.handle(),
-                c"main".as_ptr(),
-                &mut size,
-                0,
-            );
+            let ptr =
+                rusqlite::ffi::sqlite3_serialize(conn.handle(), c"main".as_ptr(), &mut size, 0);
             if ptr.is_null() || size == 0 {
                 return Err(anyhow::anyhow!("sqlite3_serialize returned null or empty"));
             }

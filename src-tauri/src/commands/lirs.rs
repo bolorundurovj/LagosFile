@@ -1,8 +1,4 @@
-use crate::{
-    models::*,
-    services::computation::ComputationEngine,
-    AppState,
-};
+use crate::{models::*, services::computation::ComputationEngine, AppState};
 use chrono::Utc;
 use rusqlite::params;
 use std::{
@@ -46,13 +42,11 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
                 allowance_rates: serde_json::from_str(&rates_json).unwrap_or_default(),
                 minimum_tax_rate: row.get(7)?,
                 is_active: row.get::<_, i32>(8)? == 1,
-                last_modified: chrono::DateTime::parse_from_rfc3339(
-                    &row.get::<_, String>(9)?,
-                )
-                .unwrap_or_else(|_| {
-                    chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
-                })
-                .with_timezone(&Utc),
+                last_modified: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
+                    .unwrap_or_else(|_| {
+                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+                    })
+                    .with_timezone(&Utc),
                 modified_by: row.get(10)?,
             })
         },
@@ -76,10 +70,7 @@ fn lirs_data_dir() -> std::path::PathBuf {
 // Builds a PendingFiling from a filing ID using an open DB connection.
 // Returns Err if the filing doesn't exist or isn't Confirmed.
 
-fn build_pending_filing(
-    conn: &rusqlite::Connection,
-    id: &str,
-) -> Result<PendingFiling, String> {
+fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
     let filing = conn
         .query_row(
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
@@ -100,13 +91,11 @@ fn build_pending_filing(
                     year_of_assessment: row.get(3)?,
                     status: row.get(4)?,
                     filing_reference: row.get(5)?,
-                    created_at: chrono::DateTime::parse_from_rfc3339(
-                        &row.get::<_, String>(6)?,
-                    )
-                    .unwrap_or_else(|_| {
-                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
-                    })
-                    .with_timezone(&Utc),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                        .unwrap_or_else(|_| {
+                            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+                        })
+                        .with_timezone(&Utc),
                     confirmed_at: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -255,8 +244,7 @@ fn build_pending_filing(
     let income_entries: Vec<IncomeEntry> = ie_full_stmt
         .query_map(params![id], |row| {
             Ok(IncomeEntry {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .unwrap_or_else(|_| Uuid::new_v4()),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
                 filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .unwrap_or_else(|_| Uuid::new_v4()),
                 income_type: row.get(2)?,
@@ -294,8 +282,7 @@ fn build_pending_filing(
     let allowances: Vec<CapitalAllowance> = ca_stmt
         .query_map(params![id], |row| {
             Ok(CapitalAllowance {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .unwrap_or_else(|_| Uuid::new_v4()),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
                 filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .unwrap_or_else(|_| Uuid::new_v4()),
                 asset_description: row.get(2)?,
@@ -327,8 +314,7 @@ fn build_pending_filing(
     let reliefs: Vec<ReliefEntry> = re_full_stmt
         .query_map(params![id], |row| {
             Ok(ReliefEntry {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?)
-                    .unwrap_or_else(|_| Uuid::new_v4()),
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
                 filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
                     .unwrap_or_else(|_| Uuid::new_v4()),
                 relief_type: row.get(2)?,
@@ -454,7 +440,10 @@ fn start_bridge_server(filings_array_json: String, primary_json: String) {
             Ok(l) => l,
             Err(e) => {
                 // Port already in use — another bridge instance is likely running.
-                eprintln!("[LagosFile] LIRS bridge port {} already in use: {}", LIRS_BRIDGE_PORT, e);
+                eprintln!(
+                    "[LagosFile] LIRS bridge port {} already in use: {}",
+                    LIRS_BRIDGE_PORT, e
+                );
                 return;
             }
         };
@@ -560,8 +549,7 @@ pub async fn open_lirs_portal(
     let file_json = serde_json::to_string_pretty(&primary).map_err(|e| e.to_string())?;
     std::fs::write(&path, &file_json).map_err(|e| e.to_string())?;
 
-    let filings_json =
-        serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
+    let filings_json = serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
 
     start_bridge_server(filings_json, primary_json);
 
@@ -626,10 +614,7 @@ pub async fn open_lirs_portal_all(
     Ok(LIRSAutomationResult {
         success: true,
         fallback_active: false,
-        message: format!(
-            "{} confirmed filing(s) ready in the LIRS extension.",
-            count
-        ),
+        message: format!("{} confirmed filing(s) ready in the LIRS extension.", count),
         pending_filing_path: None,
         filing_id: String::new(),
     })

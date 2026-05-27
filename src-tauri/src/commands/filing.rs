@@ -1,8 +1,5 @@
 use crate::{
-    commands::auth::persist_db,
-    models::*,
-    services::computation::ComputationEngine,
-    AppState,
+    commands::auth::persist_db, models::*, services::computation::ComputationEngine, AppState,
 };
 use chrono::Utc;
 use rusqlite::params;
@@ -47,14 +44,21 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
     Ok(Filing {
         id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
         taxpayer_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-        parent_filing_id: row.get::<_, Option<String>>(2)?.and_then(|s| Uuid::parse_str(&s).ok()),
+        parent_filing_id: row
+            .get::<_, Option<String>>(2)?
+            .and_then(|s| Uuid::parse_str(&s).ok()),
         year_of_assessment: row.get(3)?,
         status: row.get(4)?,
         filing_reference: row.get(5)?,
         created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-            .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap())
+            .unwrap_or_else(|_| {
+                chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+            })
             .with_timezone(&Utc),
-        confirmed_at: row.get::<_, Option<String>>(7)?.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()).map(|d| d.with_timezone(&Utc)),
+        confirmed_at: row
+            .get::<_, Option<String>>(7)?
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&Utc)),
         total_income_ngn: row.get(8)?,
         chargeable_income: row.get(9)?,
         tax_payable: row.get(10)?,
@@ -83,13 +87,21 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
                 version_label: row.get(1)?,
                 governed_by: row.get(2)?,
                 bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or(ReliefCaps { rent_relief_cap: 500_000.0, rent_relief_rate: 0.20 }),
-                cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds { proceeds_threshold: 150_000_000.0, gain_threshold: 10_000_000.0 }),
+                relief_caps: serde_json::from_str(&caps_json).unwrap_or(ReliefCaps {
+                    rent_relief_cap: 500_000.0,
+                    rent_relief_rate: 0.20,
+                }),
+                cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
+                    proceeds_threshold: 150_000_000.0,
+                    gain_threshold: 10_000_000.0,
+                }),
                 allowance_rates: serde_json::from_str(&rates_json).unwrap_or_default(),
                 minimum_tax_rate: row.get(7)?,
                 is_active: row.get::<_, i32>(8)? == 1,
                 last_modified: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap_or_else(|_| chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap())
+                    .unwrap_or_else(|_| {
+                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
+                    })
                     .with_timezone(&Utc),
                 modified_by: row.get(10)?,
             })
@@ -179,10 +191,18 @@ pub async fn confirm_filing(
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let yoa: i32 = conn
-            .query_row("SELECT year_of_assessment FROM filing WHERE id=?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT year_of_assessment FROM filing WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
             .map_err(|e| e.to_string())?;
         let count: i32 = conn
-            .query_row("SELECT COUNT(*) FROM filing WHERE status IN ('Confirmed','Submitted')", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM filing WHERE status IN ('Confirmed','Submitted')",
+                [],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         let filing_ref = format!("LIRS/REF/{}/{:05}", yoa, count + 1);
         conn.execute(
@@ -191,10 +211,15 @@ pub async fn confirm_filing(
              minimum_tax=?6,final_tax_payable=?7,wht_credit=?8
              WHERE id=?9",
             params![
-                now.to_rfc3339(), filing_ref,
-                result.total_gross_income, result.chargeable_income,
-                result.net_tax_payable, result.minimum_tax, result.final_tax_payable,
-                result.wht_credits, id,
+                now.to_rfc3339(),
+                filing_ref,
+                result.total_gross_income,
+                result.chargeable_income,
+                result.net_tax_payable,
+                result.minimum_tax,
+                result.final_tax_payable,
+                result.wht_credits,
+                id,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -204,13 +229,19 @@ pub async fn confirm_filing(
 }
 
 #[tauri::command]
-pub async fn mark_filing_submitted(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
+pub async fn mark_filing_submitted(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Filing, String> {
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("UPDATE filing SET status='Submitted' WHERE id=?1", params![id])
-            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE filing SET status='Submitted' WHERE id=?1",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await?;
     get_filing(id, state).await
@@ -227,7 +258,9 @@ pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(),
 
         // Guard: only drafts can be deleted
         let status: String = conn
-            .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| r.get(0))
+            .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
+                r.get(0)
+            })
             .map_err(|_| format!("Filing '{}' not found.", id))?;
         if status != "Draft" {
             return Err(format!(
@@ -252,9 +285,11 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let (taxpayer_id, yoa, config_ver): (String, i32, String) = conn
-            .query_row("SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1", params![id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+            .query_row(
+                "SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version)
@@ -287,9 +322,11 @@ pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Fili
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let (taxpayer_id, yoa, config_ver): (String, i32, String) = conn
-            .query_row("SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1", params![id], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+            .query_row(
+                "SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version)
@@ -305,40 +342,51 @@ pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Fili
 // ── Income entries ────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn list_income_entries(filing_id: String, state: State<'_, AppState>) -> Result<Vec<IncomeEntry>, String> {
+pub async fn list_income_entries(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<IncomeEntry>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+    let mut stmt = conn
+        .prepare(
+            "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                 foreign_currency,foreign_amount,income_date,fx_rate_fetched,
                 fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
                 is_cgt_exempt,cgt_proceeds,cgt_gain
          FROM income_entry WHERE filing_id=?1",
-    ).map_err(|e| e.to_string())?;
-    let mut entries: Vec<IncomeEntry> = stmt.query_map(params![filing_id], |row| {
-        Ok(IncomeEntry {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            income_type: row.get(2)?,
-            description: row.get(3)?,
-            gross_amount_ngn: row.get(4)?,
-            is_foreign: row.get::<_, i32>(5)? == 1,
-            foreign_currency: row.get(6)?,
-            foreign_amount: row.get(7)?,
-            income_date: row.get::<_, Option<String>>(8)?.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-            fx_rate_fetched: row.get(9)?,
-            fx_rate_cbn_override: row.get(10)?,
-            fx_rate_used: row.get(11)?,
-            fx_rate_source: row.get(12)?,
-            foreign_tax_paid_ngn: row.get(13)?,
-            is_cgt_exempt: row.get::<_, i32>(14)? == 1,
-            cgt_proceeds: row.get(15)?,
-            cgt_gain: row.get(16)?,
-            documents: vec![],
+        )
+        .map_err(|e| e.to_string())?;
+    let mut entries: Vec<IncomeEntry> = stmt
+        .query_map(params![filing_id], |row| {
+            Ok(IncomeEntry {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                income_type: row.get(2)?,
+                description: row.get(3)?,
+                gross_amount_ngn: row.get(4)?,
+                is_foreign: row.get::<_, i32>(5)? == 1,
+                foreign_currency: row.get(6)?,
+                foreign_amount: row.get(7)?,
+                income_date: row
+                    .get::<_, Option<String>>(8)?
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                fx_rate_fetched: row.get(9)?,
+                fx_rate_cbn_override: row.get(10)?,
+                fx_rate_used: row.get(11)?,
+                fx_rate_source: row.get(12)?,
+                foreign_tax_paid_ngn: row.get(13)?,
+                is_cgt_exempt: row.get::<_, i32>(14)? == 1,
+                cgt_proceeds: row.get(15)?,
+                cgt_gain: row.get(16)?,
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
     }
@@ -346,8 +394,14 @@ pub async fn list_income_entries(filing_id: String, state: State<'_, AppState>) 
 }
 
 #[tauri::command]
-pub async fn upsert_income_entry(entry: serde_json::Value, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let id = entry["id"].as_str().unwrap_or(&Uuid::new_v4().to_string()).to_string();
+pub async fn upsert_income_entry(
+    entry: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -378,7 +432,8 @@ pub async fn upsert_income_entry(entry: serde_json::Value, state: State<'_, AppS
                 entry["cgtProceeds"].as_f64(),
                 entry["cgtGain"].as_f64(),
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await?;
     Ok(serde_json::json!({ "id": id }))
@@ -390,7 +445,8 @@ pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Resu
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM income_entry WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM income_entry WHERE id=?1", params![id])
+            .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await
 }
@@ -398,30 +454,43 @@ pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Resu
 // ── Capital Allowances ────────────────────────────────────────
 
 #[tauri::command]
-pub async fn list_allowances(filing_id: String, state: State<'_, AppState>) -> Result<Vec<CapitalAllowance>, String> {
+pub async fn list_allowances(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CapitalAllowance>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "SELECT id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+    let mut stmt = conn
+        .prepare(
+            "SELECT id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
                 tax_written_down_value,annual_allowance_rate,annual_allowance_amount
-         FROM capital_allowance WHERE filing_id=?1"
-    ).map_err(|e| e.to_string())?;
-    let mut entries: Vec<CapitalAllowance> = stmt.query_map(params![filing_id], |row| {
-        Ok(CapitalAllowance {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            asset_description: row.get(2)?,
-            asset_type: row.get(3)?,
-            asset_cost: row.get(4)?,
-            acquisition_date: chrono::NaiveDate::parse_from_str(&row.get::<_, String>(5)?, "%Y-%m-%d").unwrap_or_default(),
-            tax_written_down_value: row.get(6)?,
-            annual_allowance_rate: row.get(7)?,
-            annual_allowance_amount: row.get(8)?,
-            documents: vec![],
+         FROM capital_allowance WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut entries: Vec<CapitalAllowance> = stmt
+        .query_map(params![filing_id], |row| {
+            Ok(CapitalAllowance {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                asset_description: row.get(2)?,
+                asset_type: row.get(3)?,
+                asset_cost: row.get(4)?,
+                acquisition_date: chrono::NaiveDate::parse_from_str(
+                    &row.get::<_, String>(5)?,
+                    "%Y-%m-%d",
+                )
+                .unwrap_or_default(),
+                tax_written_down_value: row.get(6)?,
+                annual_allowance_rate: row.get(7)?,
+                annual_allowance_amount: row.get(8)?,
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
     }
@@ -429,8 +498,14 @@ pub async fn list_allowances(filing_id: String, state: State<'_, AppState>) -> R
 }
 
 #[tauri::command]
-pub async fn upsert_allowance(entry: serde_json::Value, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let id = entry["id"].as_str().unwrap_or(&Uuid::new_v4().to_string()).to_string();
+pub async fn upsert_allowance(
+    entry: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -441,7 +516,8 @@ pub async fn upsert_allowance(entry: serde_json::Value, state: State<'_, AppStat
               tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
-                id, entry["filingId"].as_str().unwrap_or(""),
+                id,
+                entry["filingId"].as_str().unwrap_or(""),
                 entry["assetDescription"].as_str().unwrap_or(""),
                 entry["assetType"].as_str().unwrap_or("other"),
                 entry["assetCost"].as_f64().unwrap_or(0.0),
@@ -450,7 +526,8 @@ pub async fn upsert_allowance(entry: serde_json::Value, state: State<'_, AppStat
                 entry["annualAllowanceRate"].as_f64().unwrap_or(0.0),
                 entry["annualAllowanceAmount"].as_f64().unwrap_or(0.0),
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await?;
     Ok(serde_json::json!({ "id": id }))
@@ -462,7 +539,8 @@ pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM capital_allowance WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM capital_allowance WHERE id=?1", params![id])
+            .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await
 }
@@ -470,7 +548,10 @@ pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<
 // ── Relief entries ────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn list_relief_entries(filing_id: String, state: State<'_, AppState>) -> Result<Vec<ReliefEntry>, String> {
+pub async fn list_relief_entries(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ReliefEntry>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -478,20 +559,26 @@ pub async fn list_relief_entries(filing_id: String, state: State<'_, AppState>) 
         "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
          FROM relief_entry WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
-    let mut entries: Vec<ReliefEntry> = stmt.query_map(params![filing_id], |row| {
-        Ok(ReliefEntry {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            relief_type: row.get(2)?,
-            claimed_amount: row.get(3)?,
-            approved_amount: row.get(4)?,
-            wht_ref: row.get(5)?,
-            wht_income_type: row.get(6)?,
-            wht_date: row.get::<_, Option<String>>(7)?.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-            documents: vec![],
+    let mut entries: Vec<ReliefEntry> = stmt
+        .query_map(params![filing_id], |row| {
+            Ok(ReliefEntry {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                relief_type: row.get(2)?,
+                claimed_amount: row.get(3)?,
+                approved_amount: row.get(4)?,
+                wht_ref: row.get(5)?,
+                wht_income_type: row.get(6)?,
+                wht_date: row
+                    .get::<_, Option<String>>(7)?
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
     }
@@ -499,8 +586,14 @@ pub async fn list_relief_entries(filing_id: String, state: State<'_, AppState>) 
 }
 
 #[tauri::command]
-pub async fn upsert_relief_entry(entry: serde_json::Value, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let id = entry["id"].as_str().unwrap_or(&Uuid::new_v4().to_string()).to_string();
+pub async fn upsert_relief_entry(
+    entry: serde_json::Value,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -530,7 +623,8 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM relief_entry WHERE id=?1", params![id]).map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM relief_entry WHERE id=?1", params![id])
+            .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await
 }
@@ -538,70 +632,110 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
 // ── Computation ───────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn compute_filing(filing_id: String, state: State<'_, AppState>) -> Result<ComputationResult, String> {
+pub async fn compute_filing(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<ComputationResult, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let config = load_active_config(&conn).map_err(|e| e.to_string())?;
 
-    let mut ie_stmt = conn.prepare(
-        "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+    let mut ie_stmt = conn
+        .prepare(
+            "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                 foreign_currency,foreign_amount,income_date,fx_rate_fetched,
                 fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
                 is_cgt_exempt,cgt_proceeds,cgt_gain
-         FROM income_entry WHERE filing_id=?1"
-    ).map_err(|e| e.to_string())?;
-    let income_entries: Vec<IncomeEntry> = ie_stmt.query_map(params![filing_id], |row| {
-        Ok(IncomeEntry {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            income_type: row.get(2)?, description: row.get(3)?,
-            gross_amount_ngn: row.get(4)?,
-            is_foreign: row.get::<_, i32>(5)? == 1,
-            foreign_currency: row.get(6)?, foreign_amount: row.get(7)?,
-            income_date: row.get::<_, Option<String>>(8)?.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-            fx_rate_fetched: row.get(9)?, fx_rate_cbn_override: row.get(10)?,
-            fx_rate_used: row.get(11)?, fx_rate_source: row.get(12)?,
-            foreign_tax_paid_ngn: row.get(13)?,
-            is_cgt_exempt: row.get::<_, i32>(14)? == 1,
-            cgt_proceeds: row.get(15)?, cgt_gain: row.get(16)?,
-            documents: vec![],
+         FROM income_entry WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let income_entries: Vec<IncomeEntry> = ie_stmt
+        .query_map(params![filing_id], |row| {
+            Ok(IncomeEntry {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                income_type: row.get(2)?,
+                description: row.get(3)?,
+                gross_amount_ngn: row.get(4)?,
+                is_foreign: row.get::<_, i32>(5)? == 1,
+                foreign_currency: row.get(6)?,
+                foreign_amount: row.get(7)?,
+                income_date: row
+                    .get::<_, Option<String>>(8)?
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                fx_rate_fetched: row.get(9)?,
+                fx_rate_cbn_override: row.get(10)?,
+                fx_rate_used: row.get(11)?,
+                fx_rate_source: row.get(12)?,
+                foreign_tax_paid_ngn: row.get(13)?,
+                is_cgt_exempt: row.get::<_, i32>(14)? == 1,
+                cgt_proceeds: row.get(15)?,
+                cgt_gain: row.get(16)?,
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    let mut ca_stmt = conn.prepare(
-        "SELECT id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+    let mut ca_stmt = conn
+        .prepare(
+            "SELECT id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
                 tax_written_down_value,annual_allowance_rate,annual_allowance_amount
-         FROM capital_allowance WHERE filing_id=?1"
-    ).map_err(|e| e.to_string())?;
-    let allowances: Vec<CapitalAllowance> = ca_stmt.query_map(params![filing_id], |row| {
-        Ok(CapitalAllowance {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            asset_description: row.get(2)?, asset_type: row.get(3)?,
-            asset_cost: row.get(4)?,
-            acquisition_date: chrono::NaiveDate::parse_from_str(&row.get::<_, String>(5)?, "%Y-%m-%d").unwrap_or_default(),
-            tax_written_down_value: row.get(6)?, annual_allowance_rate: row.get(7)?,
-            annual_allowance_amount: row.get(8)?, documents: vec![],
+         FROM capital_allowance WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let allowances: Vec<CapitalAllowance> = ca_stmt
+        .query_map(params![filing_id], |row| {
+            Ok(CapitalAllowance {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                asset_description: row.get(2)?,
+                asset_type: row.get(3)?,
+                asset_cost: row.get(4)?,
+                acquisition_date: chrono::NaiveDate::parse_from_str(
+                    &row.get::<_, String>(5)?,
+                    "%Y-%m-%d",
+                )
+                .unwrap_or_default(),
+                tax_written_down_value: row.get(6)?,
+                annual_allowance_rate: row.get(7)?,
+                annual_allowance_amount: row.get(8)?,
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     let mut re_stmt = conn.prepare(
         "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
          FROM relief_entry WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
-    let reliefs: Vec<ReliefEntry> = re_stmt.query_map(params![filing_id], |row| {
-        Ok(ReliefEntry {
-            id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-            filing_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_else(|_| Uuid::new_v4()),
-            relief_type: row.get(2)?, claimed_amount: row.get(3)?,
-            approved_amount: row.get(4)?, wht_ref: row.get(5)?,
-            wht_income_type: row.get(6)?,
-            wht_date: row.get::<_, Option<String>>(7)?.and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-            documents: vec![],
+    let reliefs: Vec<ReliefEntry> = re_stmt
+        .query_map(params![filing_id], |row| {
+            Ok(ReliefEntry {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                relief_type: row.get(2)?,
+                claimed_amount: row.get(3)?,
+                approved_amount: row.get(4)?,
+                wht_ref: row.get(5)?,
+                wht_income_type: row.get(6)?,
+                wht_date: row
+                    .get::<_, Option<String>>(7)?
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                documents: vec![],
+            })
         })
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
 
     ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())
