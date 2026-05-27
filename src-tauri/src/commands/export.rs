@@ -458,7 +458,7 @@ pub async fn export_filing_pdf(
     });
     y -= Mm(4.0);
     layer.use_text("FINAL TAX PAYABLE", 11.0, left, y, &font_bold);
-    layer.use_text(&naira(summary.final_tax_payable), 11.0, Mm(118.0), y, &font_bold);
+    layer.use_text(naira(summary.final_tax_payable), 11.0, Mm(118.0), y, &font_bold);
     y -= Mm(14.0);
 
     // ── Footer ────────────────────────────────────────────────
@@ -723,3 +723,4 @@ pub async fn open_file(path: String) -> Result<(), String> {
     }
     Ok(())
 }
+ 
