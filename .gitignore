@@ -52,3 +52,7 @@ supporting_files/
 # Scratch
 code.html
 screen.png
+
+.opencode
+extension/lirs_screenshots
+dist-ext/

@@ -11,7 +11,10 @@
     "test": "ng test",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "pack:ext:chrome": "node scripts/pack-extensions.mjs chrome",
+    "pack:ext:firefox": "node scripts/pack-extensions.mjs firefox",
+    "pack:ext": "node scripts/pack-extensions.mjs"
   },
   "dependencies": {
     "@angular/animations": "^19.0.0",
