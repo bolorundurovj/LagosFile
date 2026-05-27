@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Detect VERSION.ini change (master only) ───────────────────
+  check-version:
+    name: Check VERSION.ini
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if VERSION.ini changed
+        id: diff
+        run: |
+          if git diff HEAD^ HEAD -- VERSION.ini | grep -qE '^\+[^+]'; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          node-version: 20
+
+      - name: Assemble version from VERSION.ini
+        id: read
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          VERSION=$(node -e "
+            const fs = require('fs');
+            const src = fs.readFileSync('VERSION.ini', 'utf8');
+            const fields = {};
+            for (const line of src.split('\n')) {
+              const t = line.trim();
+              if (!t || t.startsWith('#')) continue;
+              const eq = t.indexOf('=');
+              if (eq === -1) continue;
+              fields[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+            }
+            const { MAJOR, MINOR, PATCH, PRE_RELEASE } = fields;
+            const base = MAJOR + '.' + MINOR + '.' + PATCH;
+            console.log(PRE_RELEASE ? base + '-' + PRE_RELEASE : base);
+          ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  # ── Sync all version files and cut tag ────────────────────────
+  cut-release:
+    name: Sync versions and cut tag
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sync version across all files
+        run: node scripts/sync-version.mjs
+        # no argument - reads and assembles version from VERSION.ini
+
+      - name: Commit synced version files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore(release): sync version files to ${{ needs.check-version.outputs.version }} [skip ci]'
+          file_pattern: |
+            VERSION.ini
+            package.json
+            src-tauri/tauri.conf.json
+            src-tauri/Cargo.toml
+            extension/chrome/manifest.json
+            extension/firefox/manifest.json
+          skip_dirty_check: false
+
+      - name: Create and push git tag
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ needs.check-version.outputs.version }}"
+          git push origin "v${{ needs.check-version.outputs.version }}"
+
+  # ── Angular build check ────────────────────────────────────────
+  angular:
+    name: Angular build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Angular
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm test -- --watch=false --browsers=ChromeHeadless
+
+  # ── Rust / Tauri check ─────────────────────────────────────────
+  rust:
+    name: Rust check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy -- -D warnings
+
+      - name: Cargo fmt check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+  # ── Extension pack check ───────────────────────────────────────
+  extension:
+    name: Extension pack check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pack extensions
+        run: npm run pack:ext

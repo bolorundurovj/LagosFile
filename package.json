@@ -1,7 +1,7 @@
 {
   "name": "lagosfile-v2",
-  "version": "2.0.0",
-  "description": "LagosFile — Lagos State Direct Assessment Tax Filing Desktop App",
+  "version": "1.0.0",
+  "description": "LagosFile - Lagos State Direct Assessment Tax Filing Desktop App",
   "private": true,
   "scripts": {
     "ng": "ng",
@@ -14,7 +14,8 @@
     "tauri:build": "tauri build",
     "pack:ext:chrome": "node scripts/pack-extensions.mjs chrome",
     "pack:ext:firefox": "node scripts/pack-extensions.mjs firefox",
-    "pack:ext": "node scripts/pack-extensions.mjs"
+    "pack:ext": "node scripts/pack-extensions.mjs",
+    "sync:version": "node scripts/sync-version.mjs"
   },
   "dependencies": {
     "@angular/animations": "^19.0.0",

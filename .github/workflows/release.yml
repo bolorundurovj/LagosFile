@@ -1,0 +1,221 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # pre-release tags e.g. v1.1.0-beta.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to release (e.g. v1.2.0). Tag must already exist on master.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+
+jobs:
+  # ── 1. Generate changelog ──────────────────────────────────────
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.cliff.outputs.content }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes with git-cliff
+        id: cliff
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG_RELEASE.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: CHANGELOG_RELEASE.md
+
+      - name: Update full CHANGELOG.md
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: cliff.toml
+          args: --output CHANGELOG.md
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Commit updated CHANGELOG.md
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore(release): update CHANGELOG.md for ${{ env.VERSION }} [skip ci]'
+          file_pattern: CHANGELOG.md
+          skip_dirty_check: false
+
+  # ── 2. Build browser extensions ───────────────────────────────
+  build-extensions:
+    name: Build browser extensions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Pack Chrome extension
+        run: npm run pack:ext:chrome
+
+      - name: Pack Firefox extension
+        run: npm run pack:ext:firefox
+
+      - name: Upload Chrome extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: ext-chrome
+          path: dist-ext/chrome-lagosfile-lirs.zip
+
+      - name: Upload Firefox extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: ext-firefox
+          path: dist-ext/firefox-lagosfile-lirs.xpi
+
+  # ── 3. Build Tauri app (matrix: all platforms) ─────────────────
+  build-tauri:
+    name: Build Tauri (${{ matrix.name }})
+    needs: changelog
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: '--target x86_64-pc-windows-msvc'
+
+          - name: macOS (Intel)
+            os: macos-13
+            args: '--target x86_64-apple-darwin'
+
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            args: '--target aarch64-apple-darwin'
+
+          - name: Linux
+            os: ubuntu-22.04
+            args: ''
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ contains(matrix.args, 'aarch64-apple-darwin') && 'aarch64-apple-darwin' || contains(matrix.args, 'x86_64-apple-darwin') && 'x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.os }}
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (optional - set these secrets to enable)
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows code signing (optional)
+          # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ env.VERSION }}
+          releaseName: LagosFile ${{ env.VERSION }}
+          releaseBody: ''
+          releaseDraft: true
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          args: ${{ matrix.args }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.os }}
+          path: |
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*.exe
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.deb
+            src-tauri/target/**/release/bundle/**/*.AppImage
+          if-no-files-found: warn
+
+  # ── 4. Publish GitHub Release ──────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [changelog, build-tauri, build-extensions]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Read release notes
+        id: notes
+        run: echo "body<<EOF" >> $GITHUB_OUTPUT && cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT && echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: LagosFile ${{ env.VERSION }}
+          body: ${{ steps.notes.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(env.VERSION, '-') }}
+          files: |
+            artifacts/tauri-*/**/*.msi
+            artifacts/tauri-*/**/*.exe
+            artifacts/tauri-*/**/*.dmg
+            artifacts/tauri-*/**/*.deb
+            artifacts/tauri-*/**/*.AppImage
+            artifacts/ext-chrome/chrome-lagosfile-lirs.zip
+            artifacts/ext-firefox/firefox-lagosfile-lirs.xpi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
