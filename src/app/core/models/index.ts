@@ -219,3 +219,24 @@ export interface AppStatus {
   hasProfile: boolean;
   hasRecovery: boolean;
 }
+
+// LIRS Portal Integration
+export interface LIRSAutomationResult {
+  success: boolean;
+  fallbackActive: boolean;
+  message: string;
+  pendingFilingPath?: string;
+  filingId: string;
+}
+
+export interface LIRSFieldItem {
+  label: string;
+  value: string | number;
+  copyText: string;
+  description?: string;
+}
+
+export interface LIRSFieldGroup {
+  section: string;
+  fields: LIRSFieldItem[];
+}

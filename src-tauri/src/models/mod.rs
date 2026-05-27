@@ -250,3 +250,116 @@ pub struct AppStatus {
     pub has_profile: bool,
     pub has_recovery: bool,
 }
+
+// ── LIRS Pending Filing (shared JSON schema) ──────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingTaxpayer {
+    pub full_name: String,
+    pub tin: String,
+    pub payer_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingForeignIncome {
+    pub total_usd: f64,
+    pub currency: String,
+    pub fx_rate_used: f64,
+    pub fx_rate_source: String,
+    pub naira_equivalent: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingIncome {
+    pub employment: f64,
+    pub business: f64,
+    pub rental: f64,
+    pub dividend: f64,
+    pub interest: f64,
+    #[serde(rename = "capitalGain")]
+    pub capital_gain: f64,
+    #[serde(rename = "digitalAsset")]
+    pub digital_asset: f64,
+    pub royalty: f64,
+    pub prize: f64,
+    pub other: f64,
+    pub foreign_income: PendingFilingForeignIncome,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingAccommodation {
+    #[serde(rename = "type")]
+    pub acc_type: String,
+    pub ownership: String,
+    pub rent_paid: f64,
+    pub rent_paid_by_employer: f64,
+    pub date_started: String,
+    pub date_end: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingDeductions {
+    pub pension: f64,
+    pub nhf: f64,
+    pub nhis: f64,
+    #[serde(rename = "lifeAssurance")]
+    pub life_assurance: f64,
+    #[serde(rename = "rentReliefApplied")]
+    pub rent_relief_applied: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingComputation {
+    #[serde(rename = "totalGrossIncome")]
+    pub total_gross_income: f64,
+    #[serde(rename = "totalCapitalAllowances")]
+    pub total_capital_allowances: f64,
+    #[serde(rename = "chargeableIncome")]
+    pub chargeable_income: f64,
+    #[serde(rename = "graduatedTax")]
+    pub graduated_tax: f64,
+    #[serde(rename = "whtCredits")]
+    pub wht_credits: f64,
+    #[serde(rename = "netTaxPayable")]
+    pub net_tax_payable: f64,
+    #[serde(rename = "minimumTax")]
+    pub minimum_tax: f64,
+    #[serde(rename = "finalTaxPayable")]
+    pub final_tax_payable: f64,
+    #[serde(rename = "configVersion")]
+    pub config_version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFiling {
+    #[serde(rename = "filingId")]
+    pub filing_id: String,
+    pub taxpayer: PendingFilingTaxpayer,
+    #[serde(rename = "yearOfAssessment")]
+    pub year_of_assessment: i32,
+    #[serde(rename = "filingReference")]
+    pub filing_reference: Option<String>,
+    pub income: PendingFilingIncome,
+    pub accommodation: PendingFilingAccommodation,
+    pub deductions: PendingFilingDeductions,
+    pub computation: PendingFilingComputation,
+    #[serde(rename = "generatedAt")]
+    pub generated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LIRSAutomationResult {
+    pub success: bool,
+    pub fallback_active: bool,
+    pub message: String,
+    pub pending_filing_path: Option<String>,
+    pub filing_id: String,
+}
