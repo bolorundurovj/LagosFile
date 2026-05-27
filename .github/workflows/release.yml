@@ -30,14 +30,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate release notes with git-cliff
-        id: cliff
-        uses: orhun/git-cliff-action@v3
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
         with:
-          config: cliff.toml
-          args: --latest --strip header
+          tool: git-cliff
+
+      - name: Generate release notes
+        id: cliff
+        run: |
+          git-cliff --config cliff.toml --latest --strip header -o CHANGELOG_RELEASE.md
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          cat CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
         env:
-          OUTPUT: CHANGELOG_RELEASE.md
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Upload release notes artifact
@@ -47,10 +52,7 @@ jobs:
           path: CHANGELOG_RELEASE.md
 
       - name: Update full CHANGELOG.md
-        uses: orhun/git-cliff-action@v3
-        with:
-          config: cliff.toml
-          args: --output CHANGELOG.md
+        run: git-cliff --config cliff.toml -o CHANGELOG.md
         env:
           GITHUB_REPO: ${{ github.repository }}
 

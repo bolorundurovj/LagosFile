@@ -148,6 +148,7 @@ fn build_pending_filing(
         )
         .map_err(|e| e.to_string())?;
 
+    #[allow(clippy::type_complexity)]
     let income_rows: Vec<(
         String,
         f64,

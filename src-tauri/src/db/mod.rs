@@ -41,7 +41,7 @@ impl AppDb {
         unsafe {
             let rc = rusqlite::ffi::sqlite3_deserialize(
                 conn.handle(),
-                b"main\0".as_ptr() as *const i8,
+                c"main".as_ptr(),
                 copy,
                 len as i64,
                 len as i64,
@@ -63,7 +63,7 @@ impl AppDb {
         unsafe {
             let ptr = rusqlite::ffi::sqlite3_serialize(
                 conn.handle(),
-                b"main\0".as_ptr() as *const i8,
+                c"main".as_ptr(),
                 &mut size,
                 0,
             );
