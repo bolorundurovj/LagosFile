@@ -6,10 +6,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir, join } from '@tauri-apps/api/path';
 import { FilingService } from '../../core/services/filing.service';
+import { LIRSService } from '../../core/services/lirs.service';
 import { ToastService } from '../../core/services/toast.service';
-import { Filing } from '../../core/models';
+import {
+  Filing, LIRSFieldGroup,
+} from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
-import { LucideAngularModule, ClipboardList, Trash2, Lock, Check } from 'lucide-angular';
+import { LIRSReferencePanelComponent } from '../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
+import { LucideAngularModule, ClipboardList, Trash2, Lock, Check, Send } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
 
@@ -17,7 +21,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
   selector: 'lf-filing-history',
   standalone: true,
   imports: [FormsModule, RouterLink, NairaPipe, DatePipe, LowerCasePipe,
-    LucideAngularModule],
+    LucideAngularModule, LIRSReferencePanelComponent],
   template: `
     <div class="history-page">
       <div class="history-page__header">
@@ -112,6 +116,10 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
                         <button class="btn btn--ghost btn--sm" (click)="amend(f.id)">Amend</button>
                       }
                       @if (f.status === 'Confirmed') {
+                        <button class="btn btn--primary btn--sm" (click)="fileWithLirs(f)">
+                          <lucide-icon name="send" [size]="12" [strokeWidth]="2" style="vertical-align:middle;margin-right:2px"></lucide-icon>
+                          File with LIRS
+                        </button>
                         <button class="btn btn--ghost btn--sm" (click)="markSubmitted(f.id)">Mark Submitted</button>
                       }
                       @if (f.status === 'Draft') {
@@ -297,6 +305,16 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
         </div>
       </div>
     }
+
+    <!-- Reference Panel -->
+    <lf-lirs-reference-panel
+      [visible]="showReferencePanel()"
+      [fieldGroups]="referenceFields()"
+      [statusMessage]="referenceStatus()"
+      [showMarkSubmitted]="!!activeLirsFiling()"
+      (close)="closeReferencePanel()"
+      (markSubmitted)="onReferenceMarkSubmitted()"
+    />
   `,
   styles: [`
     .history-page { max-width: var(--content-max-width); margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
@@ -374,6 +392,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
 })
 export class FilingHistoryComponent implements OnInit {
   private filingService = inject(FilingService);
+  private lirsService = inject(LIRSService);
   private toast = inject(ToastService);
 
   allFilings = signal<Filing[]>([]);
@@ -394,6 +413,12 @@ export class FilingHistoryComponent implements OnInit {
 
   page = signal(1);
   readonly pageSize = 10;
+
+  showReferencePanel = signal(false);
+  referenceFields = signal<LIRSFieldGroup[]>([]);
+  referenceStatus = signal('');
+  activeLirsFiling = signal<Filing | null>(null);
+  lirsActionLoading = signal(false);
 
   readonly formats = [
     { value: 'pdf' as ExportFormat, label: 'PDF' },
@@ -445,7 +470,6 @@ export class FilingHistoryComponent implements OnInit {
 
   async openPreview(f: Filing): Promise<void> {
     this.previewFiling.set(f);
-    // Load entry counts in background for the preview
     try {
       const [income, allowances, reliefs] = await Promise.all([
         this.filingService.listIncomeEntries(f.id),
@@ -514,6 +538,68 @@ export class FilingHistoryComponent implements OnInit {
       const all = await this.filingService.listFilings();
       this.allFilings.set(all);
       this.applyFilter();
+      this.toast.success('Filing marked as Submitted.');
+    } catch (err: unknown) {
+      this.toast.error('Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  async fileWithLirs(f: Filing): Promise<void> {
+    this.lirsActionLoading.set(true);
+    this.activeLirsFiling.set(f);
+    try {
+      const res = await this.lirsService.fileWithLirs(f.id);
+      if (res.fallbackActive) {
+        this.toast.warning(res.message);
+        this.openReferencePanelForFiling(f);
+      } else {
+        this.toast.success(res.message);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.toast.error('Failed to open LIRS portal: ' + msg);
+      this.openReferencePanelForFiling(f);
+      this.referenceStatus.set('Could not open LIRS portal. Use the values below to fill Form A manually.');
+    } finally {
+      this.lirsActionLoading.set(false);
+    }
+  }
+
+  private async openReferencePanelForFiling(f: Filing): Promise<void> {
+    this.activeLirsFiling.set(f);
+    try {
+      const result = await this.filingService.compute(f.id);
+      const [incomeEntries, allowances, reliefs] = await Promise.all([
+        this.filingService.listIncomeEntries(f.id),
+        this.filingService.listAllowances(f.id),
+        this.filingService.listReliefEntries(f.id),
+      ]);
+      const groups = this.lirsService.buildReferenceFields(
+        f, incomeEntries, allowances, reliefs, result,
+      );
+      this.referenceFields.set(groups);
+      this.showReferencePanel.set(true);
+    } catch {
+      this.referenceFields.set([]);
+      this.showReferencePanel.set(true);
+    }
+  }
+
+  closeReferencePanel(): void {
+    this.showReferencePanel.set(false);
+    this.activeLirsFiling.set(null);
+  }
+
+  async onReferenceMarkSubmitted(): Promise<void> {
+    const f = this.activeLirsFiling();
+    if (!f) return;
+    try {
+      await this.filingService.markSubmitted(f.id);
+      const all = await this.filingService.listFilings();
+      this.allFilings.set(all);
+      this.applyFilter();
+      this.showReferencePanel.set(false);
+      this.activeLirsFiling.set(null);
       this.toast.success('Filing marked as Submitted.');
     } catch (err: unknown) {
       this.toast.error('Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err)));
