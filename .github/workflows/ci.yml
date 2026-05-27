@@ -68,9 +68,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Use RELEASE_TOKEN (PAT) so the tag push triggers release.yml.
+      # GITHUB_TOKEN pushes are intentionally blocked from triggering
+      # downstream workflows by GitHub to prevent infinite loops.
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -93,11 +96,16 @@ jobs:
             extension/chrome/manifest.json
             extension/firefox/manifest.json
           skip_dirty_check: false
+          # Use PAT so this commit is not treated as a bot commit
+          push_options: '--force-with-lease'
 
       - name: Create and push git tag
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Set remote URL with PAT so the push is authenticated as a
+          # real user event, which allows it to trigger release.yml
+          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}
           git tag "v${{ needs.check-version.outputs.version }}"
           git push origin "v${{ needs.check-version.outputs.version }}"
 
