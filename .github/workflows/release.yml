@@ -44,6 +44,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
         env:
           GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload release notes artifact
         uses: actions/upload-artifact@v4
@@ -55,6 +56,7 @@ jobs:
         run: git-cliff --config cliff.toml -o CHANGELOG.md
         env:
           GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit updated CHANGELOG.md
         uses: stefanzweifel/git-auto-commit-action@v5

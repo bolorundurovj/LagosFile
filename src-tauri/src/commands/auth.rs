@@ -76,7 +76,7 @@ pub async fn check_app_status() -> Result<AppStatus, String> {
 pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let salt = security::generate_salt();
-    std::fs::write(db::salt_path(), &salt).map_err(|e| e.to_string())?;
+    std::fs::write(db::salt_path(), salt).map_err(|e| e.to_string())?;
 
     let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     let bytes = new_db.serialize().map_err(|e| e.to_string())?;
@@ -148,7 +148,7 @@ pub async fn setup_recovery(
         question_1,
         question_2,
         question_3,
-        answer_salt: hex::encode(&salt),
+        answer_salt: hex::encode(salt),
         recovery_blob: hex::encode(&blob),
     };
     let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
@@ -220,7 +220,7 @@ pub async fn recover_with_answers(
 #[tauri::command]
 pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<(), String> {
     let new_salt = security::generate_salt();
-    std::fs::write(db::salt_path(), &new_salt).map_err(|e| e.to_string())?;
+    std::fs::write(db::salt_path(), new_salt).map_err(|e| e.to_string())?;
 
     let new_key = security::derive_key(&new_pin, &new_salt);
 
@@ -281,7 +281,7 @@ pub async fn change_pin(
     }
 
     // 4. Persist the new salt
-    std::fs::write(db::salt_path(), &new_salt).map_err(|e| e.to_string())?;
+    std::fs::write(db::salt_path(), new_salt).map_err(|e| e.to_string())?;
 
     // 5. Update the session key
     *state.key.lock().unwrap() = Some(new_key);

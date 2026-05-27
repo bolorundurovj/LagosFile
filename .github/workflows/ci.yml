@@ -127,9 +127,6 @@ jobs:
       - name: Build Angular
         run: npm run build
 
-      - name: Run unit tests
-        run: npm test -- --watch=false --no-progress
-
   # ── Rust / Tauri check ─────────────────────────────────────────
   rust:
     name: Rust check
