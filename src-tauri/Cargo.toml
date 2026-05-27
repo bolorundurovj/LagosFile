@@ -66,6 +66,9 @@ log = "0.4"
 # Home directory
 dirs = "5"
 
+# Open URLs/files in system default application
+open = "5"
+
 # PDF generation
 printpdf = "0.5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

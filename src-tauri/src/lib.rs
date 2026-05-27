@@ -80,6 +80,9 @@ pub fn run() {
             commands::document::attach_document,
             commands::document::list_documents,
             commands::document::delete_document,
+            // LIRS Portal
+            commands::lirs::open_lirs_portal,
+            commands::lirs::open_lirs_portal_all,
             // Export
             commands::export::export_filing_pdf,
             commands::export::export_filing_csv,

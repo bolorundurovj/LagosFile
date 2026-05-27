@@ -4,4 +4,5 @@ pub mod document;
 pub mod export;
 pub mod filing;
 pub mod fx;
+pub mod lirs;
 pub mod profile;

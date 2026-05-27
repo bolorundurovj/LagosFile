@@ -2070,6 +2070,7 @@ dependencies = [
  "image",
  "log",
  "lopdf 0.34.0",
+ "open",
  "pbkdf2",
  "printpdf",
  "rand 0.8.6",
