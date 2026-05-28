@@ -24,6 +24,12 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 
 
+### Miscellaneous
+
+- **ci:** Disable macOS (Intel) build configuration ([`dfd3352`](https://github.com/bolorundurovj/LagosFile/commit/dfd33520d07cd6fc73b88c48627ca79a9516dfcf))
+
+
+
 ## [1.0.0] - 2026-05-27
 
 ### Bug Fixes
