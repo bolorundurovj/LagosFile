@@ -1,6 +1,5 @@
-import { Component, inject, OnInit, signal, computed } from '@angular/core';
-import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ChangeDetectorRef, Component, HostListener, inject, OnInit, signal } from '@angular/core';
+import { Router, RouterLink } from '@angular/router';
 import { DatePipe, LowerCasePipe } from '@angular/common';
 import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -13,14 +12,23 @@ import {
 } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LIRSReferencePanelComponent } from '../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
-import { LucideAngularModule, ClipboardList, Trash2, Lock, Check, Send } from 'lucide-angular';
+import { LucideAngularModule, ClipboardList, Trash2, Lock, Check, Send, MoreVertical } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
+type FilingActionId = 'export' | 'duplicate' | 'amend' | 'fileWithLirs' | 'markSubmitted' | 'delete';
+type FilingActionVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+
+interface FilingRowAction {
+  id: FilingActionId;
+  label: string;
+  variant: FilingActionVariant;
+  icon?: 'send' | 'check';
+}
 
 @Component({
   selector: 'lf-filing-history',
   standalone: true,
-  imports: [FormsModule, RouterLink, NairaPipe, DatePipe, LowerCasePipe,
+  imports: [RouterLink, NairaPipe, DatePipe, LowerCasePipe,
     LucideAngularModule, LIRSReferencePanelComponent],
   template: `
     <div class="history-page">
@@ -32,19 +40,19 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
       <!-- Metric cards -->
       <div class="metric-grid">
         <div class="metric-card">
-          <div class="metric-card__value headline-sm">{{ totalFilings() }}</div>
+          <div class="metric-card__value headline-sm">{{ totalFilings }}</div>
           <div class="metric-card__label">Total Filings</div>
         </div>
         <div class="metric-card metric-card--submitted">
-          <div class="metric-card__value headline-sm">{{ submittedCount() }}</div>
+          <div class="metric-card__value headline-sm">{{ submittedCount }}</div>
           <div class="metric-card__label">Submitted</div>
         </div>
         <div class="metric-card metric-card--confirmed">
-          <div class="metric-card__value headline-sm">{{ confirmedCount() }}</div>
+          <div class="metric-card__value headline-sm">{{ confirmedCount }}</div>
           <div class="metric-card__label">Confirmed</div>
         </div>
         <div class="metric-card metric-card--draft">
-          <div class="metric-card__value headline-sm">{{ draftCount() }}</div>
+          <div class="metric-card__value headline-sm">{{ draftCount }}</div>
           <div class="metric-card__label">Drafts</div>
         </div>
       </div>
@@ -53,12 +61,12 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
       <div class="history-filters card">
         <div class="form-group" style="flex:1;min-width:200px">
           <label class="form-label">Search</label>
-          <input type="text" class="form-input" [(ngModel)]="searchQuery"
-            placeholder="Reference, year…" (input)="applyFilter()" />
+          <input type="text" class="form-input" [value]="searchQuery"
+            (input)="onSearchChange($any($event.target).value)" placeholder="Reference, year…" />
         </div>
         <div class="form-group" style="width:160px">
           <label class="form-label">Status</label>
-          <select class="form-input" [(ngModel)]="statusFilter" (change)="applyFilter()">
+          <select class="form-input" [value]="statusFilter" (change)="onStatusChange($any($event.target).value)">
             <option value="">All</option>
             <option value="Draft">Draft</option>
             <option value="Confirmed">Confirmed</option>
@@ -67,77 +75,122 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
         </div>
         <div class="form-group" style="width:120px">
           <label class="form-label">Year</label>
-          <input type="number" class="form-input" [(ngModel)]="yearFilter"
-            placeholder="All" (change)="applyFilter()" />
+          <input type="number" class="form-input" [value]="yearFilter"
+            (change)="onYearChange($any($event.target).value)" placeholder="All" />
         </div>
       </div>
 
-      <!-- Table -->
-      <div class="card" style="overflow:hidden;padding:0">
+      <!-- Filings list -->
+      <div class="card history-card">
         @if (loading()) {
           <div class="skeleton" style="height:200px;border-radius:0"></div>
-        } @else if (filtered().length === 0) {
+        } @else if (displayedFilings().length === 0) {
           <div style="text-align:center;padding:var(--space-12);color:var(--color-on-surface-variant)">
             <div style="margin-bottom:var(--space-3);color:var(--color-on-surface-variant)"><lucide-icon name="clipboard-list" [size]="40" [strokeWidth]="1.25"></lucide-icon></div>
             <div class="title-sm">No filings found</div>
             <div class="body-sm text-muted mt-2">
-              @if (allFilings().length === 0) { Start a new filing to see it here. }
+              @if (allFilings.length === 0) { Start a new filing to see it here. }
               @else { Try adjusting the filters. }
             </div>
           </div>
         } @else {
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Year</th>
-                <th>Reference</th>
-                <th>Status</th>
-                <th>Filed</th>
-                <th class="align-right">Tax Payable</th>
-                <th class="align-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              @for (f of paginated(); track f.id) {
+          <div class="history-table-wrap">
+            <table class="data-table data-table--history">
+              <colgroup>
+                <col class="col-year" />
+                <col class="col-reference" />
+                <col class="col-status" />
+                <col class="col-filed" />
+                <col class="col-tax" />
+                <col class="col-actions" />
+              </colgroup>
+              <thead>
                 <tr>
-                  <td><strong>YOA {{ f.yearOfAssessment }}</strong></td>
-                  <td class="text-muted" style="font-size:var(--text-label-sm)">{{ f.filingReference ?? '—' }}</td>
-                  <td><span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span></td>
-                  <td class="text-muted" style="font-size:var(--text-label-sm)">
-                    {{ f.confirmedAt ? (f.confirmedAt | date) : (f.createdAt | date) }}
-                  </td>
-                  <td class="align-right financial-value"><strong>{{ f.finalTaxPayable | naira }}</strong></td>
-                  <td>
-                    <div class="action-group">
-                      <a [routerLink]="['/filing', f.id]" class="btn btn--ghost btn--sm">View</a>
-                      @if (f.status === 'Confirmed' || f.status === 'Submitted') {
-                        <button class="btn btn--secondary btn--sm" (click)="openPreview(f)">Export</button>
-                        <button class="btn btn--ghost btn--sm" (click)="duplicate(f.id)">Duplicate</button>
-                        <button class="btn btn--ghost btn--sm" (click)="amend(f.id)">Amend</button>
-                      }
-                      @if (f.status === 'Confirmed') {
-                        <button class="btn btn--primary btn--sm" (click)="fileWithLirs(f)">
-                          <lucide-icon name="send" [size]="12" [strokeWidth]="2" style="vertical-align:middle;margin-right:2px"></lucide-icon>
-                          File with LIRS
-                        </button>
-                        <button class="btn btn--ghost btn--sm" (click)="markSubmitted(f.id)">Mark Submitted</button>
-                      }
-                      @if (f.status === 'Draft') {
-                        <button class="btn btn--danger btn--sm" (click)="openDelete(f)">Delete</button>
-                      }
-                    </div>
-                  </td>
+                  <th>Year</th>
+                  <th>Reference</th>
+                  <th>Status</th>
+                  <th>Filed</th>
+                  <th>Tax Payable</th>
+                  <th class="align-right">Actions</th>
                 </tr>
-              }
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                @for (f of displayedFilings(); track f.id) {
+                  <tr
+                    class="history-row"
+                    tabindex="0"
+                    (click)="viewFiling(f.id)"
+                    (keydown.enter)="viewFiling(f.id)"
+                    (keydown.space)="viewFiling(f.id); $event.preventDefault()"
+                  >
+                    <td><strong>YOA {{ f.yearOfAssessment }}</strong></td>
+                    <td class="text-muted cell-truncate">{{ f.filingReference ?? '—' }}</td>
+                    <td><span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span></td>
+                    <td class="text-muted cell-truncate">
+                      {{ f.confirmedAt ? (f.confirmedAt | date) : (f.createdAt | date) }}
+                    </td>
+                    <td class="financial-value">
+                      <strong>{{ f.finalTaxPayable | naira }}</strong>
+                    </td>
+                    <td class="history-row__actions" (click)="$event.stopPropagation()">
+                      <div class="action-toolbar">
+                        @for (action of getPrimaryActions(f); track action.id) {
+                          <button
+                            type="button"
+                            class="btn btn--{{ action.variant }} btn--sm"
+                            (click)="runAction(action.id, f)"
+                          >
+                            @if (action.icon === 'send') {
+                              <lucide-icon name="send" [size]="12" [strokeWidth]="2"></lucide-icon>
+                            }
+                            @if (action.icon === 'check') {
+                              <lucide-icon name="check" [size]="12" [strokeWidth]="2"></lucide-icon>
+                            }
+                            {{ action.label }}
+                          </button>
+                        }
+                        @if (getMenuActions(f).length > 0) {
+                          <div class="action-menu">
+                            <button
+                              type="button"
+                              class="btn btn--ghost btn--icon btn--sm"
+                              aria-label="More actions"
+                              [attr.aria-expanded]="openMenuId() === f.id"
+                              (click)="toggleMenu(f.id, $event)"
+                            >
+                              <lucide-icon name="more-vertical" [size]="16" [strokeWidth]="2"></lucide-icon>
+                            </button>
+                            @if (openMenuId() === f.id) {
+                              <div class="action-menu__popover" role="menu" (click)="$event.stopPropagation()">
+                                @for (action of getMenuActions(f); track action.id) {
+                                  <button
+                                    type="button"
+                                    class="action-menu__item"
+                                    role="menuitem"
+                                    [class.action-menu__item--danger]="action.variant === 'danger'"
+                                    (click)="runAction(action.id, f)"
+                                  >
+                                    {{ action.label }}
+                                  </button>
+                                }
+                              </div>
+                            }
+                          </div>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
 
           <!-- Pagination -->
-          @if (totalPages() > 1) {
+          @if (totalPages > 1) {
             <div class="pagination">
-              <button class="btn btn--ghost btn--sm" (click)="page.set(page() - 1)" [disabled]="page() === 1">← Prev</button>
-              <span class="label-md">Page {{ page() }} of {{ totalPages() }}</span>
-              <button class="btn btn--ghost btn--sm" (click)="page.set(page() + 1)" [disabled]="page() === totalPages()">Next →</button>
+              <button class="btn btn--ghost btn--sm" (click)="prevPage()" [disabled]="currentPage === 1">← Prev</button>
+              <span class="label-md">Page {{ currentPage }} of {{ totalPages }}</span>
+              <button class="btn btn--ghost btn--sm" (click)="nextPage()" [disabled]="currentPage === totalPages">Next →</button>
             </div>
           }
         }
@@ -287,7 +340,7 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
           </div>
 
           <div class="toggle-label" style="margin-bottom:var(--space-5)">
-            <input type="checkbox" [(ngModel)]="includeAttachments" />
+            <input type="checkbox" [checked]="includeAttachments" (change)="includeAttachments = $any($event.target).checked" />
             <span>Include attachments <span class="text-muted" style="font-size:var(--text-label-sm)">(images embedded · PDFs appended)</span></span>
           </div>
 
@@ -333,7 +386,92 @@ type ExportFormat = 'pdf' | 'csv' | 'json';
 
     .history-filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
 
-    .action-group { display: flex; justify-content: flex-end; gap: var(--space-1); flex-wrap: wrap; }
+    .history-card { padding: 0; }
+    .history-table-wrap { overflow-x: auto; }
+    .data-table--history {
+      table-layout: fixed;
+      width: 100%;
+      min-width: 880px;
+      .col-year { width: 8%; }
+      .col-reference { width: 22%; }
+      .col-status { width: 11%; }
+      .col-filed { width: 14%; }
+      .col-tax { width: 18%; }
+      .col-actions { width: 27%; }
+      .financial-value { text-align: left; }
+    }
+    .history-row {
+      cursor: pointer;
+      transition: background var(--transition-fast);
+      &:focus-visible {
+        outline: 2px solid var(--color-primary);
+        outline-offset: -2px;
+      }
+    }
+    .cell-truncate {
+      font-size: var(--text-label-sm);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-row__actions {
+      vertical-align: middle;
+      text-align: right;
+    }
+    .action-toolbar {
+      display: inline-flex;
+      flex-wrap: nowrap;
+      justify-content: flex-end;
+      align-items: center;
+      gap: var(--space-1);
+      max-width: 100%;
+      vertical-align: middle;
+    }
+    .action-toolbar .btn {
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .btn--icon {
+      padding: var(--space-2);
+      min-width: 32px;
+    }
+    .action-menu {
+      position: relative;
+      flex-shrink: 0;
+    }
+    .action-menu__popover {
+      position: absolute;
+      top: calc(100% + var(--space-1));
+      right: 0;
+      z-index: 30;
+      min-width: 160px;
+      background: var(--color-surface-container-lowest);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-dropdown);
+      padding: var(--space-2);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .action-menu__item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: var(--space-2) var(--space-3);
+      border: none;
+      border-radius: var(--radius-md);
+      background: transparent;
+      font-size: var(--text-body-sm);
+      font-family: var(--font-body);
+      color: var(--color-on-surface);
+      cursor: pointer;
+      transition: background var(--transition-fast);
+      &:hover { background: var(--color-surface-container-low); }
+    }
+    .action-menu__item.action-menu__item--danger {
+      color: var(--color-error);
+      &:hover { background: var(--color-error-container); }
+    }
 
     .pagination {
       display: flex; align-items: center; justify-content: center; gap: var(--space-4);
@@ -394,10 +532,14 @@ export class FilingHistoryComponent implements OnInit {
   private filingService = inject(FilingService);
   private lirsService = inject(LIRSService);
   private toast = inject(ToastService);
+  private cdr = inject(ChangeDetectorRef);
+  private router = inject(Router);
 
-  allFilings = signal<Filing[]>([]);
-  filtered = signal<Filing[]>([]);
+  openMenuId = signal<string | null>(null);
+
+  allFilings: Filing[] = [];
   loading = signal(true);
+  displayedFilings = signal<Filing[]>([]);
   exportFiling = signal<Filing | null>(null);
   exporting = signal(false);
   deletingFiling = signal<Filing | null>(null);
@@ -411,8 +553,9 @@ export class FilingHistoryComponent implements OnInit {
   exportFormat: ExportFormat = 'pdf';
   includeAttachments = false;
 
-  page = signal(1);
+  currentPage = 1;
   readonly pageSize = 10;
+  totalPages = 1;
 
   showReferencePanel = signal(false);
   referenceFields = signal<LIRSFieldGroup[]>([]);
@@ -426,31 +569,91 @@ export class FilingHistoryComponent implements OnInit {
     { value: 'json' as ExportFormat, label: 'JSON' },
   ];
 
-  totalFilings  = computed(() => this.allFilings().length);
-  submittedCount = computed(() => this.allFilings().filter(f => f.status === 'Submitted').length);
-  confirmedCount = computed(() => this.allFilings().filter(f => f.status === 'Confirmed').length);
-  draftCount     = computed(() => this.allFilings().filter(f => f.status === 'Draft').length);
-  totalPages     = computed(() => Math.max(1, Math.ceil(this.filtered().length / this.pageSize)));
-  paginated      = computed(() => {
-    const start = (this.page() - 1) * this.pageSize;
-    return this.filtered().slice(start, start + this.pageSize);
-  });
+  get totalFilings(): number { return this.allFilings.length; }
+  get submittedCount(): number { return this.allFilings.filter(f => f.status === 'Submitted').length; }
+  get confirmedCount(): number { return this.allFilings.filter(f => f.status === 'Confirmed').length; }
+  get draftCount(): number { return this.allFilings.filter(f => f.status === 'Draft').length; }
 
-  async ngOnInit(): Promise<void> {
-    try {
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.filtered.set(all);
-    } finally {
-      this.loading.set(false);
+  @HostListener('document:click')
+  closeMenu(): void {
+    this.openMenuId.set(null);
+  }
+
+  viewFiling(id: string): void {
+    void this.router.navigate(['/filing', id]);
+  }
+
+  toggleMenu(filingId: string, event: Event): void {
+    event.stopPropagation();
+    this.openMenuId.update(current => (current === filingId ? null : filingId));
+  }
+
+  getPrimaryActions(f: Filing): FilingRowAction[] {
+    return this.partitionActions(f).primary;
+  }
+
+  getMenuActions(f: Filing): FilingRowAction[] {
+    return this.partitionActions(f).menu;
+  }
+
+  private partitionActions(f: Filing): { primary: FilingRowAction[]; menu: FilingRowAction[] } {
+    const all = this.allActionsForStatus(f.status);
+    return { primary: all.slice(0, 2), menu: all.slice(2) };
+  }
+
+  private allActionsForStatus(status: Filing['status']): FilingRowAction[] {
+    switch (status) {
+      case 'Confirmed':
+        return [
+          { id: 'fileWithLirs', label: 'File with LIRS', variant: 'primary', icon: 'send' },
+          { id: 'markSubmitted', label: 'Mark Submitted', variant: 'ghost', icon: 'check' },
+          { id: 'export', label: 'Export', variant: 'secondary' },
+          { id: 'duplicate', label: 'Duplicate', variant: 'ghost' },
+          { id: 'amend', label: 'Amend', variant: 'ghost' },
+        ];
+      case 'Submitted':
+        return [
+          { id: 'export', label: 'Export', variant: 'secondary' },
+          { id: 'amend', label: 'Amend', variant: 'ghost' },
+          { id: 'duplicate', label: 'Duplicate', variant: 'ghost' },
+        ];
+      case 'Draft':
+        return [
+          { id: 'delete', label: 'Delete', variant: 'danger' },
+          { id: 'duplicate', label: 'Duplicate', variant: 'ghost' },
+        ];
+      default:
+        return [];
     }
   }
 
-  applyFilter(): void {
-    this.page.set(1);
-    let result = this.allFilings();
-    if (this.searchQuery.trim()) {
-      const q = this.searchQuery.toLowerCase();
+  runAction(id: FilingActionId, f: Filing): void {
+    this.openMenuId.set(null);
+    switch (id) {
+      case 'export': this.openPreview(f); break;
+      case 'duplicate': void this.duplicate(f.id); break;
+      case 'amend': void this.amend(f.id); break;
+      case 'fileWithLirs': void this.fileWithLirs(f); break;
+      case 'markSubmitted': void this.markSubmitted(f.id); break;
+      case 'delete': this.openDelete(f); break;
+    }
+  }
+
+  async ngOnInit(): Promise<void> {
+    try {
+      this.allFilings = await this.filingService.listFilings();
+      this.applyFilter();
+    } finally {
+      this.loading.set(false);
+      this.cdr.detectChanges();
+    }
+  }
+
+  private applyFilter(): void {
+    this.currentPage = 1;
+    let result = this.allFilings;
+    const q = this.searchQuery.toLowerCase().trim();
+    if (q) {
       result = result.filter(f =>
         (f.filingReference ?? '').toLowerCase().includes(q) ||
         String(f.yearOfAssessment).includes(q)
@@ -460,10 +663,22 @@ export class FilingHistoryComponent implements OnInit {
       result = result.filter(f => f.status === this.statusFilter);
     }
     if (this.yearFilter) {
-      result = result.filter(f => f.yearOfAssessment === +this.yearFilter!);
+      result = result.filter(f => f.yearOfAssessment === this.yearFilter!);
     }
-    this.filtered.set(result);
+    this.totalPages = Math.max(1, Math.ceil(result.length / this.pageSize));
+    const start = (this.currentPage - 1) * this.pageSize;
+    this.displayedFilings.set(result.slice(start, start + this.pageSize));
   }
+
+  private refreshData(): void {
+    this.applyFilter();
+  }
+
+  onSearchChange(value: string): void { this.searchQuery = value; this.refreshData(); }
+  onStatusChange(value: string): void { this.statusFilter = value; this.refreshData(); }
+  onYearChange(value: string): void { this.yearFilter = value ? Number(value) : null; this.refreshData(); }
+  prevPage(): void { if (this.currentPage > 1) { this.currentPage--; this.refreshData(); } }
+  nextPage(): void { if (this.currentPage < this.totalPages) { this.currentPage++; this.refreshData(); } }
 
   openExport(f: Filing): void { this.exportFiling.set(f); }
   closeExport(): void { this.exportFiling.set(null); }
@@ -493,15 +708,18 @@ export class FilingHistoryComponent implements OnInit {
   openDelete(f: Filing): void { this.deletingFiling.set(f); }
   closeDelete(): void { this.deletingFiling.set(null); }
 
+  private async refreshAll(): Promise<void> {
+    this.allFilings = await this.filingService.listFilings();
+    this.refreshData();
+  }
+
   async confirmDelete(): Promise<void> {
     const f = this.deletingFiling();
     if (!f) return;
     this.deleting.set(true);
     try {
       await this.filingService.deleteFiling(f.id);
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.applyFilter();
+      await this.refreshAll();
       this.closeDelete();
     } finally {
       this.deleting.set(false);
@@ -511,9 +729,7 @@ export class FilingHistoryComponent implements OnInit {
   async duplicate(id: string): Promise<void> {
     try {
       await this.filingService.duplicateFiling(id);
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.applyFilter();
+      await this.refreshAll();
       this.toast.success('Filing duplicated as a new Draft.');
     } catch (err: unknown) {
       this.toast.error('Duplicate failed: ' + (err instanceof Error ? err.message : String(err)));
@@ -523,9 +739,7 @@ export class FilingHistoryComponent implements OnInit {
   async amend(id: string): Promise<void> {
     try {
       await this.filingService.amendFiling(id);
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.applyFilter();
+      await this.refreshAll();
       this.toast.success('Amendment draft created. Open it to continue editing.');
     } catch (err: unknown) {
       this.toast.error('Amend failed: ' + (err instanceof Error ? err.message : String(err)));
@@ -535,9 +749,7 @@ export class FilingHistoryComponent implements OnInit {
   async markSubmitted(id: string): Promise<void> {
     try {
       await this.filingService.markSubmitted(id);
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.applyFilter();
+      await this.refreshAll();
       this.toast.success('Filing marked as Submitted.');
     } catch (err: unknown) {
       this.toast.error('Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err)));
@@ -595,9 +807,7 @@ export class FilingHistoryComponent implements OnInit {
     if (!f) return;
     try {
       await this.filingService.markSubmitted(f.id);
-      const all = await this.filingService.listFilings();
-      this.allFilings.set(all);
-      this.applyFilter();
+      await this.refreshAll();
       this.showReferencePanel.set(false);
       this.activeLirsFiling.set(null);
       this.toast.success('Filing marked as Submitted.');
