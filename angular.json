@@ -30,6 +30,11 @@
                 "glob": "**/*",
                 "input": "src/assets",
                 "output": "assets"
+              },
+              {
+                "glob": "CHANGELOG.md",
+                "input": ".",
+                "output": "/assets"
               }
             ],
             "styles": [

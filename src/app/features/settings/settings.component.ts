@@ -9,6 +9,13 @@ import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir, join } from '@tauri-apps/api/path';
+import pkg from '../../../../package.json';
+
+interface ChangelogEntry {
+  version: string;
+  date: string;
+  items: string[];
+}
 
 @Component({
   selector: 'lf-settings',
@@ -218,7 +225,7 @@ import { homeDir, join } from '@tauri-apps/api/path';
       <!-- About -->
       <div class="card">
         <h2 class="title-md" style="margin-bottom:var(--space-3)">About LagosFile</h2>
-        <div class="about-row"><span>Version</span><span>2.0.0</span></div>
+        <div class="about-row"><span>Version</span><span>{{ pkg.version }}</span></div>
         <div class="about-row"><span>Technology</span><span>Angular 19 + Tauri 2 (Rust)</span></div>
         <div class="about-row"><span>Legislation</span><span>Nigeria Tax Act (NTA) 2025</span></div>
         <div class="about-row"><span>Tax Authority</span><span>Lagos Internal Revenue Service (LIRS)</span></div>
@@ -226,8 +233,49 @@ import { homeDir, join } from '@tauri-apps/api/path';
           <span>LIRS e-Tax Portal</span>
           <a href="https://etax.lirs.net" target="_blank" class="btn btn--ghost btn--sm">Open Portal</a>
         </div>
+        <div class="about-actions">
+          <button class="btn btn--ghost btn--sm" (click)="openChangelog()">
+            <lucide-icon name="book-open" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>
+            Changelog
+          </button>
+          <button class="btn btn--ghost btn--sm" (click)="checkForUpdates()">
+            <lucide-icon name="refresh-cw" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>
+            Check for Updates
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Changelog modal -->
+    @if (showChangelog) {
+      <div class="modal-overlay" (click)="showChangelog = false">
+        <div class="modal changelog-modal" (click)="$event.stopPropagation()">
+          <div class="changelog-header">
+            <h3 class="title-md">Changelog</h3>
+            <button class="btn btn--ghost btn--sm" (click)="showChangelog = false">✕</button>
+          </div>
+          <div class="changelog-body">
+            @if (changelogLoading()) {
+              <div class="skeleton" style="height:200px;border-radius:var(--radius-lg)"></div>
+            } @else if (changelogError()) {
+              <div class="text-muted body-sm">{{ changelogError() }}</div>
+            } @else {
+              @for (entry of changelogEntries(); track entry.version) {
+                <div class="changelog-entry">
+                  <div class="changelog-entry__version">{{ entry.version }}</div>
+                  @if (entry.date) { <div class="changelog-entry__date">{{ entry.date }}</div> }
+                  <ul class="changelog-entry__list">
+                    @for (item of entry.items; track item) {
+                      <li>{{ item }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+            }
+          </div>
+        </div>
+      </div>
+    }
   `,
   styles: [`
     .settings-page { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
@@ -281,9 +329,18 @@ import { homeDir, join } from '@tauri-apps/api/path';
       font-size: var(--text-body-sm);
     }
     .about-row:last-child { border-bottom: none; }
+    .about-actions { display: flex; gap: var(--space-3); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+    .changelog-modal { max-width: 560px; max-height: 70vh; display: flex; flex-direction: column; }
+    .changelog-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-surface-container); margin-bottom: var(--space-4); }
+    .changelog-body { overflow-y: auto; flex: 1; }
+    .changelog-entry { margin-bottom: var(--space-5); }
+    .changelog-entry__version { font-size: var(--text-title-sm); font-weight: var(--font-weight-bold); }
+    .changelog-entry__date { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-bottom: var(--space-2); }
+    .changelog-entry__list { margin: 0; padding-left: var(--space-5); font-size: var(--text-body-sm); display: flex; flex-direction: column; gap: var(--space-1); }
   `],
 })
 export class SettingsComponent {
+  readonly pkg = pkg;
   auth = inject(AuthService);
   themeService = inject(ThemeService);
   private profileService = inject(ProfileService);
@@ -295,6 +352,51 @@ export class SettingsComponent {
   restoring = signal(false);
   changingPin = signal(false);
   pinError = signal('');
+  showChangelog = false;
+  changelogEntries = signal<ChangelogEntry[]>([]);
+  changelogLoading = signal(false);
+  changelogError = signal('');
+
+  async openChangelog(): Promise<void> {
+    this.showChangelog = true;
+    if (this.changelogEntries().length > 0) return;
+    this.changelogLoading.set(true);
+    this.changelogError.set('');
+    try {
+      const res = await fetch('/assets/CHANGELOG.md');
+      const text = await res.text();
+      this.changelogEntries.set(this.parseChangelog(text));
+    } catch {
+      this.changelogError.set('Could not load changelog.');
+    } finally {
+      this.changelogLoading.set(false);
+    }
+  }
+
+  private parseChangelog(md: string): ChangelogEntry[] {
+    const entries: ChangelogEntry[] = [];
+    let current: ChangelogEntry | null = null;
+    const lines = md.split('\n');
+    for (const line of lines) {
+      const versionMatch = line.match(/^##\s*\[([^\]]+)\]\s*-?\s*(.*)/);
+      if (versionMatch) {
+        if (versionMatch[1] === 'Unreleased') continue;
+        current = { version: versionMatch[1], date: versionMatch[2].trim(), items: [] };
+        entries.push(current);
+        continue;
+      }
+      const itemMatch = line.match(/^\s*-\s+(.+)/);
+      if (itemMatch && current) {
+        const item = itemMatch[1].replace(/\(\[`[^`]+`\].*?\)$/, '').trim();
+        if (item) current.items.push(item);
+      }
+    }
+    return entries;
+  }
+
+  checkForUpdates(): void {
+    this.toast.info('Check for updates is work in progress and will be available in a future release.');
+  }
 
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
   pinForm = { current: '', next: '', confirm: '' };
