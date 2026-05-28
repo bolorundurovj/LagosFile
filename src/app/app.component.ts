@@ -1,18 +1,20 @@
 import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { ToastComponent } from './shared/components/toast/toast.component';
 
 @Component({
   selector: 'lf-root',
   standalone: true,
-  imports: [RouterOutlet],
-  template: `<router-outlet />`,
+  imports: [RouterOutlet, ToastComponent],
+  template: `
+    <router-outlet />
+    <lf-toast-outlet />
+  `,
   styles: [`
     :host {
-      display: flex;
-      flex-direction: column;
+      display: block;
       height: 100vh;
       width: 100vw;
-      overflow: hidden;
     }
   `],
 })
