@@ -4,34 +4,36 @@
 
 body {
   width: 360px;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 13px;
-  color: #1a1a2e;
-  background: #f8f9fb;
+  color: #001E40;
+  background: #F7F9FB;
 }
 
 /* ── Header ──────────────────────────────────────────────── */
 
 .popup-header {
-  background: #001e40;
+  background: #001E40;
   color: white;
-  padding: 12px 16px;
+  padding: 10px 14px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
 }
-.popup-logo { font-size: 16px; font-weight: 700; }
-.popup-subtitle { font-size: 11px; opacity: 0.65; }
+.popup-mark { flex-shrink: 0; }
+.popup-wordmark { display: flex; align-items: baseline; gap: 8px; }
+.popup-logo     { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; }
+.popup-subtitle { font-size: 10px; opacity: 0.60; }
 
 /* ── States ─────────────────────────────────────────────── */
 
 .state { padding: 14px 16px; }
 .hidden { display: none !important; }
 
-.state-icon { font-size: 28px; text-align: center; margin-bottom: 6px; }
+.state-icon  { font-size: 28px; text-align: center; margin-bottom: 6px; }
 .state-title { font-size: 14px; font-weight: 600; text-align: center; margin-bottom: 4px; }
 .state-desc {
-  font-size: 12px; color: #64748b; text-align: center;
+  font-size: 12px; color: #6B7280; text-align: center;
   margin-bottom: 10px; line-height: 1.5;
 }
 .state-desc code { background: #e2e8f0; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
@@ -42,7 +44,7 @@ body {
 .spinner {
   width: 26px; height: 26px;
   border: 3px solid #e2e8f0;
-  border-top-color: #001e40;
+  border-top-color: #004A99;
   border-radius: 50%;
   margin: 14px auto 10px;
   animation: spin 0.7s linear infinite;
@@ -82,34 +84,34 @@ body {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .filing-card:hover {
-  border-color: #001e40;
-  box-shadow: 0 0 0 2px rgba(0,30,64,0.08);
+  border-color: #004A99;
+  box-shadow: 0 0 0 2px rgba(0,74,153,0.10);
 }
 .filing-card-body { flex: 1; min-width: 0; }
 .filing-name {
-  font-size: 12px; font-weight: 600; color: #1a1a2e;
+  font-size: 12px; font-weight: 600; color: #001E40;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.filing-meta { font-size: 11px; color: #64748b; margin-top: 1px; }
+.filing-meta { font-size: 11px; color: #6B7280; margin-top: 1px; }
 .filing-tax {
-  font-size: 12px; font-weight: 700; color: #001e40;
+  font-size: 12px; font-weight: 700; color: #001E40;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .filing-select-btn {
   flex-shrink: 0;
-  background: #001e40; color: white;
+  background: #001E40; color: white;
   border: none; border-radius: 5px;
   padding: 5px 10px; font-size: 11px; font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }
-.filing-select-btn:hover { background: #003366; }
+.filing-select-btn:hover { background: #004A99; }
 
 /* ── Selected filing summary (fill state) ───────────────── */
 
 .selected-filing {
-  background: #001e40;
+  background: #001E40;
   color: white;
   border-radius: 8px;
   padding: 10px 12px;
@@ -159,13 +161,13 @@ body {
   gap: 6px;
 }
 .copy-field-label { font-size: 11px; color: #334155; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.copy-field-value { font-size: 11px; font-weight: 600; color: #001e40; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.copy-field-value { font-size: 11px; font-weight: 600; color: #001E40; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .copy-btn {
   background: none; border: 1px solid #cbd5e1; border-radius: 3px;
   cursor: pointer; font-size: 9px; padding: 1px 5px;
-  color: #64748b; font-weight: 700; text-transform: uppercase; flex-shrink: 0;
+  color: #6B7280; font-weight: 700; text-transform: uppercase; flex-shrink: 0;
 }
-.copy-btn:hover { background: #001e40; color: white; border-color: #001e40; }
+.copy-btn:hover { background: #001E40; color: white; border-color: #001E40; }
 
 /* ── Buttons ────────────────────────────────────────────── */
 
@@ -175,13 +177,13 @@ body {
   font-weight: 500; cursor: pointer; border: none;
   transition: all 0.15s ease;
 }
-.btn--primary   { background: #001e40; color: white; }
-.btn--primary:hover { background: #003366; }
+.btn--primary   { background: #001E40; color: white; }
+.btn--primary:hover   { background: #004A99; }
 .btn--secondary { background: #e2e8f0; color: #334155; }
 .btn--secondary:hover { background: #cbd5e1; }
-.btn--accent    { background: #0d6efd; color: white; margin-top: 2px; }
-.btn--accent:hover { background: #0b5ed7; }
-.btn--ghost     { background: transparent; color: #64748b; font-size: 11px; padding: 6px 8px; }
+.btn--accent    { background: #004A99; color: white; margin-top: 2px; }
+.btn--accent:hover    { background: #003d80; }
+.btn--ghost     { background: transparent; color: #6B7280; font-size: 11px; padding: 6px 8px; }
 .btn--ghost:hover { background: #f1f5f9; }
 .btn--full  { width: 100%; }
 
@@ -193,7 +195,7 @@ textarea {
   padding: 8px 10px; font: 11px 'SF Mono', Consolas, monospace;
   resize: vertical; background: white;
 }
-textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+textarea:focus { outline: none; border-color: #004A99; box-shadow: 0 0 0 2px rgba(0,74,153,0.15); }
 
 /* ── Footer ─────────────────────────────────────────────── */
 
@@ -209,5 +211,4 @@ textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgb
   font-size: 10px; color: #94a3b8;
 }
 
-/* ── Helpers ─────────────────────────────────────────────── */
-.error-text { color: #dc2626; font-size: 11px; margin-top: 4px; }
+/* ── Helpers ───────────────────────�

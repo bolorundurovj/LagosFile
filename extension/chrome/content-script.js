@@ -41,17 +41,15 @@
   /* ── Toggle button ── */
   #toggle {
     width: 44px; height: 44px;
-    background: #001e40; color: #fff;
+    background: #001E40; color: #fff;
     border: none; border-radius: 50%;
-    font: 700 12px/1 system-ui, sans-serif;
     cursor: pointer;
     box-shadow: 0 2px 12px rgba(0,0,0,0.30);
     display: flex; align-items: center; justify-content: center;
     transition: background 0.15s, transform 0.15s;
-    letter-spacing: -0.5px;
   }
-  #toggle:hover { background: #003366; transform: scale(1.08); }
-  #toggle.active { background: #0d6efd; }
+  #toggle:hover { background: #004A99; transform: scale(1.08); }
+  #toggle.active { background: #004A99; }
 
   /* ── Panel ── */
   #panel {
@@ -62,8 +60,8 @@
     border: 1px solid #d1d8e0;
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-    font: 13px/1.45 system-ui, -apple-system, sans-serif;
-    color: #1a1a2e;
+    font: 13px/1.45 'Geist', system-ui, -apple-system, sans-serif;
+    color: #001E40;
     overflow: hidden;
     transition: opacity 0.15s, transform 0.15s;
   }
@@ -77,8 +75,8 @@
     padding: 10px 14px;
     display: flex; align-items: center; justify-content: space-between;
   }
-  .ph-logo { font-size: 15px; font-weight: 700; }
-  .ph-sub  { font-size: 10px; opacity: 0.65; margin-left: 6px; }
+  .ph-logo { font-size: 14px; font-weight: 700; letter-spacing: -0.03em; }
+  .ph-sub  { font-size: 10px; opacity: 0.60; }
   .ph-close {
     background: none; border: none; color: rgba(255,255,255,0.7);
     font-size: 18px; cursor: pointer; line-height: 1; padding: 0 2px;
@@ -91,7 +89,7 @@
   /* ── Loading ── */
   .spinner {
     width: 22px; height: 22px;
-    border: 3px solid #e2e8f0; border-top-color: #001e40;
+    border: 3px solid #e2e8f0; border-top-color: #004A99;
     border-radius: 50%; margin: 16px auto 8px;
     animation: spin 0.7s linear infinite;
   }
@@ -147,8 +145,8 @@
   .btn-primary:hover   { background: #003366; }
   .btn-secondary { background: #e2e8f0; color: #334155; }
   .btn-secondary:hover { background: #cbd5e1; }
-  .btn-accent    { background: #0d6efd; color: #fff; margin-top: 2px; }
-  .btn-accent:hover    { background: #0b5ed7; }
+  .btn-accent    { background: #004A99; color: #fff; margin-top: 2px; }
+  .btn-accent:hover    { background: #003d80; }
   .btn-ghost     {
     background: transparent; color: #64748b; font-size: 11px;
     padding: 5px 8px; width: auto; display: inline-block;
@@ -177,11 +175,24 @@
   #toast.hidden  { opacity: 0; }
 </style>
 
-<button id="toggle" title="LagosFile LIRS Assistant">LF</button>
+<button id="toggle" title="LagosFile LIRS Assistant">
+  <!-- Single-span mark, white on navy -->
+  <svg width="26" height="10" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M30 46 Q100 -12 170 46 Q100 22 30 46 Z" fill="#4D90CC"/>
+    <rect x="0" y="48" width="200" height="5" rx="2.5" fill="rgba(255,255,255,0.45)"/>
+  </svg>
+</button>
 
 <div id="panel" class="hidden">
   <div class="ph">
-    <div style="display:flex;align-items:baseline;gap:6px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <!-- AltFills mark, tinted for dark bg -->
+      <svg width="36" height="11" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M10 46 Q40 -6 70 46 Q40 26 10 46 Z" fill="#4D90CC"/>
+        <path d="M65 46 Q100 -12 135 46 Q100 22 65 46 Z" fill="rgba(255,255,255,0.50)"/>
+        <path d="M130 46 Q160 2 190 46 Q160 28 130 46 Z" fill="#4D90CC"/>
+        <rect x="0" y="48" width="200" height="5" rx="2.5" fill="rgba(255,255,255,0.35)"/>
+      </svg>
       <span class="ph-logo">LagosFile</span>
       <span class="ph-sub">LIRS Assistant</span>
     </div>
