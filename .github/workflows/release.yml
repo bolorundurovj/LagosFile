@@ -111,9 +111,9 @@ jobs:
             os: windows-latest
             args: '--target x86_64-pc-windows-msvc'
 
-          - name: macOS (Intel)
-            os: macos-13
-            args: '--target x86_64-apple-darwin'
+#          - name: macOS (Intel)
+#            os: macos-13
+#            args: '--target x86_64-apple-darwin'
 
           - name: macOS (Apple Silicon)
             os: macos-latest
