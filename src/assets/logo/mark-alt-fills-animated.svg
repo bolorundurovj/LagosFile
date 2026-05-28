@@ -1,0 +1,24 @@
+<svg width="200" height="60" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg"
+  role="img" aria-label="LagosFile mark">
+  <style>
+    @keyframes lf-arch-pulse {
+      0%, 100% { transform: translateY(7px) scale(0.85); opacity: 0.45; }
+      50%       { transform: translateY(0)   scale(1);    opacity: 1; }
+    }
+    .arch { transform-origin: center bottom; }
+    .arch-1 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0s; }
+    .arch-2 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0.18s; }
+    .arch-3 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0.36s; }
+  </style>
+
+  <g class="arch arch-1">
+    <path d="M10 46 Q40 -6 70 46 Q40 26 10 46 Z" fill="#004A99"/>
+  </g>
+  <g class="arch arch-2">
+    <path d="M65 46 Q100 -12 135 46 Q100 22 65 46 Z" fill="#001E40"/>
+  </g>
+  <g class="arch arch-3">
+    <path d="M130 46 Q160 2 190 46 Q160 28 130 46 Z" fill="#004A99"/>
+  </g>
+  <rect x="0" y="48" width="200" height="5" rx="2.5" fill="#001E40"/>
+</svg>
