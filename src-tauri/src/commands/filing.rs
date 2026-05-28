@@ -1,7 +1,7 @@
 use crate::{
     commands::auth::persist_db, models::*, services::computation::ComputationEngine, AppState,
 };
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use rusqlite::params;
 use tauri::State;
 use uuid::Uuid;
@@ -155,6 +155,12 @@ pub async fn create_draft_filing(
     year_of_assessment: i32,
     state: State<'_, AppState>,
 ) -> Result<Filing, String> {
+    let current_year = Utc::now().year();
+    if year_of_assessment >= current_year {
+        return Err(format!(
+            "Filings can only be created for past years of assessment, not {current_year} or later.",
+        ));
+    }
     let id = Uuid::new_v4();
     let now = Utc::now();
     let _config_version = {
@@ -164,6 +170,20 @@ pub async fn create_draft_filing(
         let taxpayer_id: String = conn
             .query_row("SELECT id FROM taxpayer LIMIT 1", [], |r| r.get(0))
             .map_err(|_| "No profile found. Please create your taxpayer profile first.")?;
+
+        let existing: bool = conn
+            .query_row(
+                "SELECT COUNT(1) FROM filing WHERE year_of_assessment=?1 AND taxpayer_id=?2",
+                params![year_of_assessment, taxpayer_id],
+                |r| r.get::<_, i32>(0),
+            )
+            .map_err(|e| e.to_string())?
+            > 0;
+        if existing {
+            return Err(format!(
+                "A filing for {year_of_assessment} already exists. Duplicate or amend the existing filing instead.",
+            ));
+        }
 
         let config = load_active_config(&conn).map_err(|e| e.to_string())?;
         conn.execute(

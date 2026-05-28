@@ -2,6 +2,7 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../core/services/filing.service';
+import { ToastService } from '../../core/services/toast.service';
 import { StepIncomeComponent } from './steps/step-income/step-income.component';
 import { StepAllowancesComponent } from './steps/step-allowances/step-allowances.component';
 import { StepDeductionsComponent } from './steps/step-deductions/step-deductions.component';
@@ -319,6 +320,7 @@ export class FilingWizardComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private filingService = inject(FilingService);
+  private toast = inject(ToastService);
 
   mode = signal<WizardMode>('active');
   filingId = signal<string | undefined>(undefined);
@@ -327,11 +329,13 @@ export class FilingWizardComponent implements OnInit {
   loading = signal(true);
   starting = signal(false);
 
-  selectedYear = new Date().getFullYear();
+  readonly currentYear = new Date().getFullYear();
+
+  selectedYear = this.currentYear - 1;
 
   readonly availableYears: number[] = Array.from(
-    { length: 5 },
-    (_, i) => new Date().getFullYear() - i
+    { length: 10 },
+    (_, i) => this.currentYear - 1 - i,
   );
 
   readonly steps = STEPS;
@@ -352,6 +356,10 @@ export class FilingWizardComponent implements OnInit {
   }
 
   async beginFiling(): Promise<void> {
+    if (this.selectedYear >= this.currentYear) {
+      this.toast.error('Filings can only be created for past years of assessment, not the current or future years.');
+      return;
+    }
     this.starting.set(true);
     try {
       const draft = await this.filingService.createDraft(this.selectedYear);
