@@ -218,6 +218,8 @@ export interface AppStatus {
   hasDb: boolean;
   hasProfile: boolean;
   hasRecovery: boolean;
+  biometricAvailable: boolean;
+  biometricEnabled: boolean;
 }
 
 // LIRS Portal Integration

@@ -45,9 +45,16 @@ import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.c
             }
           </div>
 
-          <button type="submit" class="btn btn--primary btn--lg w-full" [disabled]="loading">
-            @if (loading) { Unlocking… } @else { Unlock }
-          </button>
+          <div class="auth-card__actions">
+            <button type="submit" class="btn btn--primary btn--lg auth-submit-btn" [disabled]="loading">
+              @if (loading) { Unlocking… } @else { Unlock }
+            </button>
+            @if (auth.biometricEnabled()) {
+              <button type="button" class="btn btn--secondary btn--lg btn--biometric" (click)="unlockWithBiometric()" [disabled]="loading" title="Unlock with Biometric">
+                <lucide-icon name="fingerprint" [size]="28" [strokeWidth]="1.5"></lucide-icon>
+              </button>
+            }
+          </div>
         </form>
 
         <div class="auth-card__footer">
@@ -65,6 +72,25 @@ import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.c
   `,
   styleUrls: ['./auth.styles.scss'],
   styles: [`
+    .auth-card__actions { display: flex; gap: var(--space-3); width: 100%; }
+    .auth-submit-btn { flex: 1; height: 56px; }
+    .btn--biometric {
+      width: 56px;
+      height: 56px;
+      padding: 0;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--color-surface-container-high);
+      border: 1px solid var(--color-outline-variant);
+      color: var(--color-primary);
+    }
+    .btn--biometric:hover:not(:disabled) {
+      background: var(--color-surface-container-highest);
+      border-color: var(--color-primary);
+      transform: translateY(-1px);
+    }
     .auth-card__footer { margin-top: var(--space-4); text-align: center; }
     .forgot-link {
       font-size: var(--text-body-sm);
@@ -93,6 +119,21 @@ export class PinEntryComponent {
         this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
       } else {
         this.errorMsg = result.error ?? 'Incorrect PIN. Please try again.';
+      }
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async unlockWithBiometric(): Promise<void> {
+    this.loading = true;
+    this.errorMsg = '';
+    try {
+      const result = await this.auth.unlockWithBiometric();
+      if (result.success) {
+        this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
+      } else {
+        this.errorMsg = result.error ?? 'Biometric authentication failed.';
       }
     } finally {
       this.loading = false;

@@ -2,6 +2,7 @@ import { Component, computed, inject, input } from '@angular/core';
 import { Taxpayer } from '../../../core/models';
 import { AuthService } from '../../../core/services/auth.service';
 import { ThemeService } from '../../../core/services/theme.service';
+import { ToastService } from '../../../core/services/toast.service';
 import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 
@@ -150,6 +151,7 @@ export class TopbarComponent {
 
   private auth = inject(AuthService);
   private router = inject(Router);
+  private toast = inject(ToastService);
   readonly themeService = inject(ThemeService);
 
   private readonly themeCycle: Theme[] = ['light', 'dark', 'system'];
@@ -170,7 +172,11 @@ export class TopbarComponent {
 
   async lock(): Promise<void> {
     this.showMenu = false;
-    await this.auth.lock();
-    this.router.navigate(['/unlock']);
+    try {
+      await this.auth.lock();
+      this.router.navigate(['/unlock']);
+    } catch (err: unknown) {
+      this.toast.error('Failed to lock app: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 }

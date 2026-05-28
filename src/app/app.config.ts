@@ -9,7 +9,7 @@ import {
   AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
   FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
   LayoutDashboard, History, Settings2, SlidersHorizontal,
-  Paperclip, Trash2, Sun, Moon, Monitor, Send, MoreVertical,
+  Paperclip, Trash2, Sun, Moon, Monitor, Send, MoreVertical, Fingerprint,
 } from 'lucide-angular';
 
 const SPLASH_MIN_MS = 1800; // minimum visible duration for the splash screen
@@ -44,7 +44,7 @@ export const appConfig: ApplicationConfig = {
         AlertTriangle, Check, CheckCircle, Clock, Info, Lock, Key, Folder,
         FileText, FilePlus2, Calculator, BookOpen, ClipboardList,
         LayoutDashboard, History, Settings2, SlidersHorizontal,
-        Paperclip, Trash2, Sun, Moon, Monitor, Send, MoreVertical,
+        Paperclip, Trash2, Sun, Moon, Monitor, Send, MoreVertical, Fingerprint,
       }),
     },
   ],
