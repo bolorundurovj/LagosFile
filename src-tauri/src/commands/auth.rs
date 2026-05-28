@@ -4,8 +4,81 @@ use crate::{
     services::security,
     AppState,
 };
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+
+#[cfg(windows)]
+use windows::Foundation::IAsyncOperation;
+#[cfg(windows)]
+use windows::Security::Credentials::UI::{
+    UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
+};
+#[cfg(windows)]
+use windows::Win32::Foundation::HWND;
+#[cfg(windows)]
+use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
+
+const KEYRING_SERVICE: &str = "LagosFile";
+const KEYRING_USER: &str = "db_key";
+
+// ── Biometric helpers ─────────────────────────────────────────
+
+async fn check_biometric_available_internal() -> bool {
+    #[cfg(windows)]
+    {
+        match tokio::task::spawn_blocking(|| {
+            UserConsentVerifier::CheckAvailabilityAsync().and_then(|op| op.get())
+        })
+        .await
+        {
+            Ok(Ok(availability)) => availability == UserConsentVerifierAvailability::Available,
+            _ => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+async fn verify_biometric_internal(window: tauri::Window) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let hwnd_raw = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+
+        match tokio::task::spawn_blocking(move || {
+            let interop: IUserConsentVerifierInterop =
+                windows::core::factory::<UserConsentVerifier, IUserConsentVerifierInterop>()?;
+            let op: IAsyncOperation<UserConsentVerificationResult> = unsafe {
+                interop.RequestVerificationForWindowAsync(
+                    HWND(hwnd_raw as _),
+                    windows::core::h!("Please verify your identity to unlock LagosFile"),
+                )?
+            };
+            op.get()
+        })
+        .await
+        {
+            Ok(Ok(result)) => {
+                if result == UserConsentVerificationResult::Verified {
+                    Ok(())
+                } else if result == UserConsentVerificationResult::Canceled {
+                    Err("Biometric verification canceled".to_string())
+                } else {
+                    Err(format!("Biometric verification failed: {:?}", result))
+                }
+            }
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Err("Biometric authentication is not supported on this platform".to_string())
+    }
+}
 
 // ── Recovery file helpers ─────────────────────────────────────
 
@@ -68,11 +141,86 @@ pub async fn check_app_status() -> Result<AppStatus, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let has_db = db::db_path().exists();
     let has_recovery = recovery_path().exists();
+
+    let biometric_available = check_biometric_available_internal().await;
+    let biometric_enabled = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map(|e| e.get_password().is_ok())
+        .unwrap_or(false);
+
     Ok(AppStatus {
         has_db,
         has_profile: false,
         has_recovery,
+        biometric_available,
+        biometric_enabled,
     })
+}
+
+#[tauri::command]
+pub async fn is_biometric_available() -> Result<bool, String> {
+    Ok(check_biometric_available_internal().await)
+}
+
+#[tauri::command]
+pub async fn enable_biometric(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let key = {
+        let key_guard = state.key.lock().unwrap();
+        key_guard.as_ref().ok_or("Database not unlocked")?.clone()
+    };
+
+    // Verify biometric before enabling
+    verify_biometric_internal(window).await?;
+
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
+    entry
+        .set_password(&hex::encode(key))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn disable_biometric() -> Result<(), String> {
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
+    let _ = entry.delete_password();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unlock_with_biometric(
+    window: tauri::Window,
+    state: State<'_, AppState>,
+) -> Result<Option<Taxpayer>, String> {
+    // 1. Check if enabled
+    let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
+    let password = entry
+        .get_password()
+        .map_err(|_| "Biometric login not enabled".to_string())?;
+    let key_bytes = hex::decode(&password).map_err(|_| "Corrupt biometric data".to_string())?;
+
+    if key_bytes.len() != 32 {
+        return Err("Corrupt biometric data".to_string());
+    }
+    let mut db_key = [0u8; 32];
+    db_key.copy_from_slice(&key_bytes);
+
+    // 2. Verify biometric
+    verify_biometric_internal(window).await?;
+
+    // 3. Unlock DB
+    let encrypted = std::fs::read(db::db_path()).map_err(|e| e.to_string())?;
+    let plaintext = security::decrypt(&encrypted, &db_key)
+        .map_err(|_| "Biometric unlock failed: could not decrypt database.".to_string())?;
+
+    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    db.load_from_bytes(&plaintext).map_err(|e| e.to_string())?;
+
+    let taxpayer = load_taxpayer(&db);
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(db_key);
+    Ok(taxpayer)
 }
 
 #[tauri::command]

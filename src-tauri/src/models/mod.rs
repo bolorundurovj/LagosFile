@@ -249,6 +249,8 @@ pub struct AppStatus {
     pub has_db: bool,
     pub has_profile: bool,
     pub has_recovery: bool,
+    pub biometric_available: bool,
+    pub biometric_enabled: bool,
 }
 
 // ── LIRS Pending Filing (shared JSON schema) ──────────────────
