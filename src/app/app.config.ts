@@ -12,10 +12,18 @@ import {
   Paperclip, Trash2, Sun, Moon, Monitor,
 } from 'lucide-angular';
 
+const SPLASH_MIN_MS = 1800; // minimum visible duration for the splash screen
+
 function initApp(auth: AuthService, config: ConfigService, theme: ThemeService) {
   return async () => {
-    await auth.init();
     void theme; // ThemeService self-initialises via its constructor
+    void config;
+    // Run auth init and the minimum splash timer in parallel so the splash
+    // is always visible for at least SPLASH_MIN_MS, even on a fast machine.
+    await Promise.all([
+      auth.init(),
+      new Promise<void>(resolve => setTimeout(resolve, SPLASH_MIN_MS)),
+    ]);
   };
 }
 

@@ -5,7 +5,6 @@ mod services;
 
 use db::AppDb;
 use std::sync::Mutex;
-
 pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,

@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "LagosFile",
         "width": 1440,
         "height": 900,
@@ -20,7 +21,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
-        "center": true
+        "center": true,
+        "visible": true
       }
     ],
     "security": {

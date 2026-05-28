@@ -8,9 +8,105 @@
   <link rel="icon" type="image/x-icon" href="favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* Shown only while Angular bootstraps + APP_INITIALIZER runs.
+       Angular replaces <lf-root> inner content on first render. */
+    #lf-splash {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #F7F9FB;
+      font-family: 'Geist', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      #lf-splash { background: #001E40; }
+      #lf-splash .wordmark { color: #F7F9FB; }
+      #lf-splash .tagline  { color: #94a3b8; }
+      #lf-splash .progress-track { background: #1e3a5f; }
+      #lf-splash .arch-mid  { fill: rgba(247,249,251,0.45); }
+      #lf-splash .baseline  { fill: rgba(247,249,251,0.30); }
+    }
+
+    #lf-splash .brand {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 20px;
+    }
+
+    #lf-splash .wordmark {
+      font-size: 40px; font-weight: 600;
+      letter-spacing: -0.035em;
+      color: #001E40; line-height: 1;
+    }
+
+    #lf-splash .footer {
+      position: absolute; bottom: 40px;
+      left: 0; right: 0;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 12px;
+    }
+
+    #lf-splash .tagline {
+      font-family: 'Geist Mono', monospace;
+      font-size: 10px; letter-spacing: 0.18em;
+      text-transform: uppercase; color: #6B7280;
+    }
+
+    #lf-splash .progress-track {
+      width: 200px; height: 3px;
+      background: #C3C7CF; border-radius: 2px; overflow: hidden;
+    }
+
+    #lf-splash .progress-fill {
+      height: 100%; background: #004A99; border-radius: 2px;
+      animation: lf-progress 1.6s ease-in-out infinite;
+    }
+
+    @keyframes lf-progress {
+      0%   { width: 0%;  margin-left: 0; }
+      50%  { width: 60%; margin-left: 20%; }
+      100% { width: 0%;  margin-left: 100%; }
+    }
+
+    @keyframes lf-arch-pulse {
+      0%, 100% { transform: translateY(7px) scale(0.85); opacity: 0.45; }
+      50%       { transform: translateY(0)   scale(1);    opacity: 1; }
+    }
+
+    #lf-splash .arch   { transform-origin: center bottom; }
+    #lf-splash .arch-1 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0s; }
+    #lf-splash .arch-2 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0.18s; }
+    #lf-splash .arch-3 { animation: lf-arch-pulse 1.05s ease-in-out infinite 0.36s; }
+  </style>
 </head>
 <body>
-  <lf-root></lf-root>
+  <lf-root>
+    <!-- Visible while Angular bootstraps and APP_INITIALIZER runs.
+         Automatically replaced when <lf-root> renders. -->
+    <div id="lf-splash">
+      <div class="brand">
+        <svg width="160" height="48" viewBox="0 0 200 60" fill="none"
+             xmlns="http://www.w3.org/2000/svg" aria-label="LagosFile mark">
+          <g class="arch arch-1">
+            <path d="M10 46 Q40 -6 70 46 Q40 26 10 46 Z" fill="#004A99"/>
+          </g>
+          <g class="arch arch-2">
+            <path class="arch-mid" d="M65 46 Q100 -12 135 46 Q100 22 65 46 Z" fill="#001E40"/>
+          </g>
+          <g class="arch arch-3">
+            <path d="M130 46 Q160 2 190 46 Q160 28 130 46 Z" fill="#004A99"/>
+          </g>
+          <rect class="baseline" x="0" y="48" width="200" height="5" rx="2.5" fill="#001E40"/>
+        </svg>
+        <span class="wordmark">LagosFile</span>
+      </div>
+      <div class="footer">
+        <span class="tagline">Direct Assessment &middot; NTA 2025</span>
+        <div class="progress-track"><div class="progress-fill"></div></div>
+      </div>
+    </div>
+  </lf-root>
 </body>
 </html>
