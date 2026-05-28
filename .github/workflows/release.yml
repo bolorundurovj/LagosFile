@@ -196,6 +196,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -204,7 +206,17 @@ jobs:
 
       - name: Read release notes
         id: notes
-        run: echo "body<<EOF" >> $GITHUB_OUTPUT && cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT && echo "EOF" >> $GITHUB_OUTPUT
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION }}^ 2>/dev/null || echo "")
+          
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo -e "\n\n---\n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...${{ env.VERSION }}" >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
