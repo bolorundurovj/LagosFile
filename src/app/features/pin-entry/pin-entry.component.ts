@@ -3,17 +3,24 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { LucideAngularModule, Lock } from 'lucide-angular';
+import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
 
 @Component({
   selector: 'lf-pin-entry',
   standalone: true,
-  imports: [FormsModule, RouterLink, LucideAngularModule],
+  imports: [FormsModule, RouterLink, LucideAngularModule, LogoMarkComponent],
   template: `
     <div class="auth-page">
       <div class="auth-card">
         <div class="auth-card__brand">
-          <div class="brand-mark">LF</div>
+          <lf-logo-mark [size]="120" />
           <h1 class="brand-name">LagosFile</h1>
+          <span class="brand-tagline">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Workspaces are encrypted on your device
+          </span>
         </div>
 
         <h2 class="auth-card__title">Unlock your data</h2>
