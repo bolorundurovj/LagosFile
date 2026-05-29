@@ -12,6 +12,7 @@ import {
 } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LIRSReferencePanelComponent } from '../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
+import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
 import { LucideAngularModule, ClipboardList, Trash2, Lock, Check, Send, MoreVertical } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
@@ -29,7 +30,7 @@ interface FilingRowAction {
   selector: 'lf-filing-history',
   standalone: true,
   imports: [RouterLink, NairaPipe, DatePipe, LowerCasePipe,
-    LucideAngularModule, LIRSReferencePanelComponent],
+    LucideAngularModule, LIRSReferencePanelComponent, LogoMarkComponent],
   template: `
     <div class="history-page">
       <div class="history-page__header">
@@ -339,6 +340,50 @@ interface FilingRowAction {
             </div>
           </div>
 
+          @if (exportFormat === 'pdf') {
+            <div class="form-group" style="margin-bottom:var(--space-4)">
+              <label class="form-label">Cover page letterhead</label>
+              <div class="letterhead-selector">
+                <button
+                  class="letterhead-btn"
+                  [class.active]="letterheadStyle === 'single'"
+                  (click)="letterheadStyle = 'single'"
+                >
+                  <div class="letterhead-preview letterhead-preview--single">
+                    <div class="lh-logo">
+                      <lf-logo-mark variant="single-span" [size]="36" />
+                      <div class="lh-logo__text">
+                        <span class="lh-logo__name">LagosFile</span>
+                        <span class="lh-logo__sub">DIRECT ASSESSMENT · NTA 2025</span>
+                      </div>
+                    </div>
+                    <div class="lh-divider"></div>
+                    <div class="lh-title">Personal Income Tax<br>Computation Worksheet</div>
+                  </div>
+                  <span class="letterhead-btn__label">Letterhead · single</span>
+                </button>
+                <button
+                  class="letterhead-btn"
+                  [class.active]="letterheadStyle === 'alt-fills'"
+                  (click)="letterheadStyle = 'alt-fills'"
+                >
+                  <div class="letterhead-preview letterhead-preview--alt-fills">
+                    <div class="lh-logo">
+                      <lf-logo-mark variant="alt-fills" [size]="36" />
+                      <div class="lh-logo__text">
+                        <span class="lh-logo__name">LagosFile</span>
+                        <span class="lh-logo__sub">DIRECT ASSESSMENT · NTA 2025</span>
+                      </div>
+                    </div>
+                    <div class="lh-divider"></div>
+                    <div class="lh-title">Personal Income Tax<br>Computation Worksheet</div>
+                  </div>
+                  <span class="letterhead-btn__label">Letterhead · alt fills</span>
+                </button>
+              </div>
+            </div>
+          }
+
           <div class="toggle-label" style="margin-bottom:var(--space-5)">
             <input type="checkbox" [checked]="includeAttachments" (change)="includeAttachments = $any($event.target).checked" />
             <span>Include attachments <span class="text-muted" style="font-size:var(--text-label-sm)">(images embedded · PDFs appended)</span></span>
@@ -526,6 +571,37 @@ interface FilingRowAction {
       color: var(--color-on-surface);
     }
     .delete-modal__icon { font-size: 2rem; margin-bottom: var(--space-3); }
+
+    .letterhead-selector {
+      display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3);
+    }
+    .letterhead-btn {
+      display: flex; flex-direction: column; align-items: stretch; gap: var(--space-2);
+      background: none; border: 2px solid var(--color-outline-variant);
+      border-radius: var(--radius-lg); padding: var(--space-3); cursor: pointer;
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+      text-align: left;
+      &:hover { border-color: var(--color-primary); }
+      &.active { border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-container); }
+    }
+    .letterhead-btn__label {
+      font-size: var(--text-label-sm); color: var(--color-on-surface-variant);
+      text-align: center; padding-top: var(--space-1);
+    }
+    .letterhead-preview {
+      background: #f5f4f0; border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-3) var(--space-2);
+      display: flex; flex-direction: column; gap: var(--space-2); min-height: 90px;
+    }
+    .lh-logo {
+      display: flex; align-items: center; gap: var(--space-2);
+    }
+    .lh-logo lf-logo-mark { flex-shrink: 0; }
+    .lh-logo__text { display: flex; flex-direction: column; gap: 1px; }
+    .lh-logo__name { font-size: 10px; font-weight: 700; color: #1a2e5a; line-height: 1; }
+    .lh-logo__sub { font-size: 6px; letter-spacing: 0.04em; color: #1a2e5a; text-transform: uppercase; line-height: 1; }
+    .lh-divider { height: 1px; background: #1a2e5a; opacity: 0.3; }
+    .lh-title { font-size: 9px; font-weight: 700; color: #1a2e5a; line-height: 1.3; }
   `],
 })
 export class FilingHistoryComponent implements OnInit {
@@ -552,6 +628,7 @@ export class FilingHistoryComponent implements OnInit {
   yearFilter: number | null = null;
   exportFormat: ExportFormat = 'pdf';
   includeAttachments = false;
+  letterheadStyle: 'single' | 'alt-fills' = 'single';
 
   currentPage = 1;
   readonly pageSize = 10;
@@ -823,8 +900,11 @@ export class FilingHistoryComponent implements OnInit {
     try {
       const ref = f.filingReference ?? `YOA${f.yearOfAssessment}`;
       const ext = this.exportFormat === 'pdf' ? 'pdf' : this.exportFormat === 'csv' ? 'csv' : 'json';
+      const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const safeRef = ref.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const fileName = `LagosFile_TaxReturn_${f.yearOfAssessment}_${safeRef}_${f.status}_${datePart}.${ext}`;
       const home = await homeDir();
-      const defaultPath = await join(home, 'LagosFile', 'exports', `LagosFile_${ref}.${ext}`);
+      const defaultPath = await join(home, 'LagosFile', 'exports', fileName);
 
       const chosen = await saveDialog({
         defaultPath,
@@ -834,7 +914,7 @@ export class FilingHistoryComponent implements OnInit {
 
       let savedPath: string;
       if (this.exportFormat === 'pdf') {
-        savedPath = await this.filingService.exportPdf(f.id, chosen, this.includeAttachments);
+        savedPath = await this.filingService.exportPdf(f.id, chosen, this.includeAttachments, this.letterheadStyle);
       } else if (this.exportFormat === 'csv') {
         savedPath = await this.filingService.exportCsv(f.id, chosen);
       } else {

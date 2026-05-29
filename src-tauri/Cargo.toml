@@ -75,7 +75,7 @@ keyring = "2"
 windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation", "Win32_System_WinRT", "Win32_Foundation"] }
 
 # PDF generation
-printpdf = "0.5"
+printpdf = { version = "0.5", features = ["svg"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # lopdf for PDF manipulation

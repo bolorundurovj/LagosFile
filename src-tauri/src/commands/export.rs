@@ -380,6 +380,7 @@ pub async fn export_filing_pdf(
     filing_id: String,
     save_path: String,
     include_attachments: bool,
+    letterhead_style: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let (summary, documents) = {
@@ -397,14 +398,16 @@ pub async fn export_filing_pdf(
 
     ensure_parent(&save_path)?;
 
+    let is_alt_fills = letterhead_style.as_deref() == Some("alt-fills");
+
     // ── Build PDF (A4 portrait, 210×297 mm) ───────────────────
     let (doc, page1, layer1) = PdfDocument::new(
         "LagosFile Tax Computation Statement",
         Mm(210.0),
         Mm(297.0),
-        "Layer 1",
+        "Cover",
     );
-    let layer = doc.get_page(page1).get_layer(layer1);
+    let cover = doc.get_page(page1).get_layer(layer1);
 
     let font_bold = doc
         .add_builtin_font(BuiltinFont::HelveticaBold)
@@ -415,17 +418,257 @@ pub async fn export_filing_pdf(
 
     let left = Mm(20.0);
     let right = Mm(190.0);
-    let mut y = Mm(275.0);
+
+    // ── Shared helpers: embed SVG logo, watermark, footer ────
+    // Parse the actual SVG logo files and embed them natively in the PDF.
+    static SVG_SINGLE: &str = include_str!("../../../src/assets/logo/mark-single-span.svg");
+    static SVG_ALT: &str = include_str!("../../../src/assets/logo/mark-alt-fills.svg");
+    let logo_src = if is_alt_fills { SVG_ALT } else { SVG_SINGLE };
+
+    // Logo render width in mm.
+    // The wordmark SVG (280px wide) places the mark at 0–80px and text at x=92px,
+    // so text starts at 92/80 = 1.15× the mark width from the mark's left edge.
+    // We use the same ratio here so the horizontal lockup matches the brand sheet.
+    const LOGO_W_MM: f64 = 20.0;
+
+    // Embed logo on a layer at position (lx, ly); width_mm controls rendered size.
+    // SvgTransform scale: SVG units are in px (96 dpi); we scale to target mm.
+    // scale = target_mm / (svg_width_px * 25.4 / 96)
+    let embed_logo = |layer: &PdfLayerReference, lx: Mm, ly: Mm, width_mm: f64| {
+        if let Ok(svg) = Svg::parse(logo_src) {
+            let svg_w_mm = svg.width.0 as f64 * 25.4 / 96.0;
+            let scale = width_mm / svg_w_mm;
+            svg.add_to_layer(
+                layer,
+                SvgTransform {
+                    translate_x: Some(lx.into()),
+                    translate_y: Some(ly.into()),
+                    scale_x: Some(scale),
+                    scale_y: Some(scale),
+                    ..Default::default()
+                },
+            );
+        }
+    };
+    // Text X = mark left + 1.15× mark width (matches wordmark.svg spacing)
+    let logo_text_x = |lx: Mm| lx + Mm(LOGO_W_MM * 1.15);
+
+    // Watermark: very faint diagonal "LagosFile" text centred on page
+    let draw_watermark = |layer: &PdfLayerReference, font_ref: &IndirectFontRef| {
+        layer.save_graphics_state();
+        layer.set_fill_color(Color::Greyscale(Greyscale::new(0.93, None)));
+        layer.set_text_rendering_mode(TextRenderingMode::Fill);
+        let angle: f64 = std::f64::consts::PI / 4.0;
+        let (s, c) = (angle.sin(), angle.cos());
+        // Centre 30pt text near page centre
+        let tx = Mm(105.0 - 18.0 * c + 6.0 * s);
+        let ty = Mm(148.5 - 18.0 * s - 6.0 * c);
+        layer.begin_text_section();
+        layer.set_font(font_ref, 30.0);
+        layer.set_text_matrix(TextMatrix::TranslateRotate(tx.into(), ty.into(), angle));
+        layer.write_text("LagosFile", font_ref);
+        layer.end_text_section();
+        layer.restore_graphics_state();
+    };
+
+    // Footer: thin rule + "lagosfile" brand + page info at very bottom
+    let draw_footer = |layer: &PdfLayerReference, font_ref: &IndirectFontRef, page_label: &str| {
+        let fy = Mm(10.0);
+        layer.add_shape(Line {
+            points: vec![
+                (Point::new(left, fy + Mm(4.0)), false),
+                (Point::new(right, fy + Mm(4.0)), false),
+            ],
+            is_closed: false,
+            has_fill: false,
+            has_stroke: true,
+            is_clipping_path: false,
+        });
+        layer.save_graphics_state();
+        layer.set_fill_color(Color::Greyscale(Greyscale::new(0.55, None)));
+        layer.use_text("lagosfile", 7.5, left, fy, font_ref);
+        layer.use_text(page_label, 7.5, Mm(155.0), fy, font_ref);
+        layer.restore_graphics_state();
+    };
+
+    // ── Cover page ────────────────────────────────────────────
+    {
+        let logo_x = Mm(20.0);
+        let logo_y = Mm(261.0);
+
+        embed_logo(&cover, logo_x, logo_y, LOGO_W_MM);
+
+        // Wordmark to the right; logo height at 20mm wide = 8.4mm.
+        // "LagosFile" 18pt cap-height ~4.5mm → baseline at mid-logo + half cap-height
+        let cover_text_x = logo_text_x(logo_x);
+        cover.use_text(
+            "LagosFile",
+            18.0,
+            cover_text_x,
+            logo_y + Mm(6.0),
+            &font_bold,
+        );
+        cover.use_text(
+            "DIRECT ASSESSMENT  \u{00B7}  NTA 2025",
+            7.0,
+            cover_text_x,
+            logo_y + Mm(2.0),
+            &font,
+        );
+
+        // Right-side metadata block aligned with logo top
+        let ref_str = summary
+            .filing_reference
+            .clone()
+            .unwrap_or_else(|| format!("YOA{}", summary.year_of_assessment));
+        let issued_str = summary
+            .confirmed_at
+            .as_deref()
+            .and_then(|s| s.get(..10))
+            .unwrap_or("—")
+            .to_uppercase();
+
+        cover.use_text(
+            &format!("REF  \u{00B7}  {}", ref_str),
+            7.0,
+            Mm(140.0),
+            logo_y + Mm(7.5),
+            &font,
+        );
+        cover.use_text(
+            &format!("ISSUED  \u{00B7}  {}", issued_str),
+            7.0,
+            Mm(140.0),
+            logo_y + Mm(4.5),
+            &font,
+        );
+        cover.use_text(
+            "LIRS  \u{00B7}  DRAFT",
+            7.0,
+            Mm(140.0),
+            logo_y + Mm(1.5),
+            &font,
+        );
+
+        // Divider line below header — 1 mm under logo baseline
+        let div_y = logo_y - Mm(1.0);
+        cover.add_shape(Line {
+            points: vec![
+                (Point::new(left, div_y), false),
+                (Point::new(right, div_y), false),
+            ],
+            is_closed: false,
+            has_fill: false,
+            has_stroke: true,
+            is_clipping_path: false,
+        });
+
+        // Cover label
+        cover.use_text(
+            "COVER  \u{00B7}  COMPUTATION SUMMARY",
+            7.0,
+            left,
+            div_y - Mm(8.0),
+            &font,
+        );
+
+        // Main title
+        cover.use_text(
+            &format!("{} Personal Income Tax", summary.year_of_assessment),
+            26.0,
+            left,
+            div_y - Mm(22.0),
+            &font_bold,
+        );
+        cover.use_text(
+            "\u{2014} Computation Worksheet",
+            26.0,
+            left,
+            div_y - Mm(34.0),
+            &font_bold,
+        );
+
+        // Bottom section: taxpayer info (left) and tax payable (right)
+        let bottom_y = Mm(35.0);
+        cover.use_text("PREPARED FOR", 7.0, left, bottom_y + Mm(10.0), &font);
+        cover.use_text(
+            &summary.full_name,
+            12.0,
+            left,
+            bottom_y + Mm(5.5),
+            &font_bold,
+        );
+        cover.use_text(
+            &format!("TIN {}", summary.tin),
+            8.0,
+            left,
+            bottom_y + Mm(1.5),
+            &font,
+        );
+
+        cover.use_text("TAX PAYABLE", 7.0, Mm(130.0), bottom_y + Mm(10.0), &font);
+        cover.use_text(
+            &format!(
+                "\u{20A6} {}",
+                format_with_commas(summary.final_tax_payable.unwrap_or(0.0))
+            ),
+            18.0,
+            Mm(130.0),
+            bottom_y + Mm(3.0),
+            &font_bold,
+        );
+
+        draw_watermark(&cover, &font);
+        draw_footer(
+            &cover,
+            &font,
+            "Cover Page  \u{00B7}  LagosFile Tax Computation",
+        );
+    }
+
+    // ── Computation page ──────────────────────────────────────
+    let (page2, layer2) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+    let layer = doc.get_page(page2).get_layer(layer2);
+
+    let mut y = Mm(277.0);
     let line_h = Mm(7.0);
     let gap = Mm(5.0);
 
-    // ── Header ────────────────────────────────────────────────
-    layer.use_text("LAGOS STATE DIRECT ASSESSMENT", 9.0, left, y, &font);
-    layer.use_text("NIGERIA TAX ACT 2025", 9.0, Mm(145.0), y, &font);
-    y -= Mm(6.0);
+    // ── Header: brand strip (logo + wordmark) ─────────────────
+    // Logo anchored so its baseline sits at y; rendered height ~12 mm.
+    embed_logo(&layer, left, y, LOGO_W_MM);
+    layer.use_text(
+        "LagosFile",
+        16.0,
+        logo_text_x(left),
+        y + Mm(6.0),
+        &font_bold,
+    );
+    layer.use_text(
+        "DIRECT ASSESSMENT  \u{00B7}  NTA 2025",
+        7.0,
+        logo_text_x(left),
+        y + Mm(2.0),
+        &font,
+    );
+    layer.use_text("NIGERIA TAX ACT 2025", 7.0, Mm(148.0), y + Mm(7.5), &font);
 
+    // Thin rule below the brand strip — clear of the logo
+    y -= Mm(2.5);
+    layer.add_shape(Line {
+        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
+        is_closed: false,
+        has_fill: false,
+        has_stroke: true,
+        is_clipping_path: false,
+    });
+    y -= Mm(7.0);
+
+    // ── Document title block (fully below the rule) ────────────
+    layer.use_text("LAGOS STATE DIRECT ASSESSMENT", 9.0, left, y, &font);
+    y -= Mm(7.0);
     layer.use_text("TAX COMPUTATION STATEMENT", 18.0, left, y, &font_bold);
-    y -= Mm(3.0);
+    y -= Mm(4.0);
 
     layer.add_shape(Line {
         points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
@@ -525,7 +768,10 @@ pub async fn export_filing_pdf(
     });
     y -= gap;
     layer.use_text(
-        "Generated by LagosFile v2.0 (Angular + Tauri). Governed by NTA 2025 — LIRS.",
+        &format!(
+            "Generated by LagosFile v{}. Governed by NTA 2025 \u{2014} LIRS.",
+            env!("CARGO_PKG_VERSION")
+        ),
         8.0,
         left,
         y,
@@ -542,6 +788,9 @@ pub async fn export_filing_pdf(
         y,
         &font,
     );
+
+    draw_watermark(&layer, &font);
+    draw_footer(&layer, &font, "Page 1  \u{00B7}  Tax Computation Statement");
 
     // ── Attachments (phase 1 — before printpdf save) ─────────
     let mut pdf_att_paths: Vec<String> = Vec::new();
@@ -734,7 +983,7 @@ pub async fn export_filing_json(
 
     let output = serde_json::json!({
         "export": {
-            "generator":   "LagosFile v2.0",
+            "generator":   concat!("LagosFile v", env!("CARGO_PKG_VERSION")),
             "generatedAt": chrono::Utc::now().to_rfc3339(),
             "legislation": "Nigeria Tax Act (NTA) 2025",
         },

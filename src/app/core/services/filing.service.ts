@@ -119,8 +119,8 @@ export class FilingService {
 
   // ── Export ───────────────────────────────────────────────
 
-  async exportPdf(filingId: string, savePath: string, includeAttachments: boolean): Promise<string> {
-    return this.tauri.invoke<string>('export_filing_pdf', { filingId, savePath, includeAttachments });
+  async exportPdf(filingId: string, savePath: string, includeAttachments: boolean, letterheadStyle: 'single' | 'alt-fills' = 'single'): Promise<string> {
+    return this.tauri.invoke<string>('export_filing_pdf', { filingId, savePath, includeAttachments, letterheadStyle });
   }
 
   async exportCsv(filingId: string, savePath: string): Promise<string> {
