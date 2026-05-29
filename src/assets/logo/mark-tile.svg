@@ -1,7 +1,9 @@
 <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LagosFile app icon">
-  <!-- Tile — rounded square, navy bg, two arches in blue, paper baseline -->
-  <rect width="120" height="120" rx="24" fill="#001E40"/>
-  <path d="M14 78 Q36 42 58 78" stroke="#004A99" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <path d="M62 78 Q84 38 106 78" stroke="#004A99" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <rect x="10" y="85" width="100" height="5" rx="2.5" fill="#F7F9FB"/>
-</svg>
+  <!-- Tile · ink — single arch on navy background -->
+  <rect width="120" height="120" rx="26" fill="#001E40"/>
+  <!-- Single arch: mark-single-span scaled to 90px wide, centered -->
+  <g transform="translate(15, 30) scale(0.45)">
+    <path d="M30 76 Q100 6 170 76 Q100 46 30 76 Z" fill="#004A99"/>
+  </g>
+  <!-- Baseline bar aligned with arch foot -->
+  <rect x="15" y="68" width="90" height="4" rx="2" fill="#F7F9FB"/
