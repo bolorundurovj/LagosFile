@@ -33,6 +33,7 @@ export type LogoMarkVariant = 'alt-fills' | 'single-span';
     }
     img {
       display: block;
+      object-fit: contain;
       /* Preserve crispness at small sizes */
       image-rendering: -webkit-optimize-contrast;
       image-rendering: crisp-edges;
@@ -58,10 +59,6 @@ export class LogoMarkComponent {
       : 'assets/logo/mark-alt-fills.svg';
   });
 
-  /**
-   * SVGs have a 200×100 viewBox but the arches occupy the bottom ~60px of it,
-   * so the rendered height is 30% of the requested width — matching the brand
-   * sheet's sizing formula: height = size * 60 / 200.
-   */
-  protected readonly height = computed(() => Math.round(this.size() * 0.3));
+  /** Mark aspect ratio: 200×84 viewBox (width × height). */
+  protected readonly height = computed(() => Math.round(this.size() * 84 / 200));
 }
