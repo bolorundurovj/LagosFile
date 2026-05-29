@@ -7,8 +7,7 @@ import { StepIncomeComponent } from './steps/step-income/step-income.component';
 import { StepAllowancesComponent } from './steps/step-allowances/step-allowances.component';
 import { StepDeductionsComponent } from './steps/step-deductions/step-deductions.component';
 import { StepReviewComponent } from './steps/step-review/step-review.component';
-import { IncomeEntry, CapitalAllowance, ReliefEntry } from '../../core/models';
-import { LucideAngularModule, FileText, Check } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 type WizardStep = 1 | 2 | 3 | 4;

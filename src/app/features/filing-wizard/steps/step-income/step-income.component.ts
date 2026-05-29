@@ -6,7 +6,7 @@ import { IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
-import { LucideAngularModule, Check, Paperclip, Info } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
@@ -444,7 +444,7 @@ export class StepIncomeComponent implements OnInit {
     try {
       for (const entry of this.entries()) {
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
-        const pending: Array<{ path: string; name: string; type: string; size: number }> =
+        const pending: { path: string; name: string; type: string; size: number }[] =
           (entry as any)._pendingDocs ?? [];
         for (const doc of pending) {
           try {

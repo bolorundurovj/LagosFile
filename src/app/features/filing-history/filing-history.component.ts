@@ -13,7 +13,7 @@ import {
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { LIRSReferencePanelComponent } from '../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
 import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
-import { LucideAngularModule, ClipboardList, Trash2, Lock, Check, Send, MoreVertical } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
 type FilingActionId = 'export' | 'duplicate' | 'amend' | 'fileWithLirs' | 'markSubmitted' | 'delete';
@@ -410,7 +410,7 @@ interface FilingRowAction {
       [fieldGroups]="referenceFields()"
       [statusMessage]="referenceStatus()"
       [showMarkSubmitted]="!!activeLirsFiling()"
-      (close)="closeReferencePanel()"
+      (closePanel)="closeReferencePanel()"
       (markSubmitted)="onReferenceMarkSubmitted()"
     />
   `,

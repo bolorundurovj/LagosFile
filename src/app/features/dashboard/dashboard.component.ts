@@ -6,8 +6,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { Filing } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import {
-  LucideAngularModule, Clock, AlertTriangle, FileText,
-  Calculator, CheckCircle, BookOpen, ClipboardList,
+  LucideAngularModule,
 } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 

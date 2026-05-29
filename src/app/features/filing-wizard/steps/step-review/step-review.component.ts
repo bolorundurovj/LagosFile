@@ -3,13 +3,13 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { LIRSService } from '../../../../core/services/lirs.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import {
-  ComputationResult, LIRSFieldGroup, LIRSAutomationResult,
-  Filing, IncomeEntry, CapitalAllowance, ReliefEntry,
+  ComputationResult, LIRSFieldGroup,
+  Filing,
 } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 import { LIRSReferencePanelComponent } from '../../../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
-import { LucideAngularModule, AlertTriangle, Check, Info, Send } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'lf-step-review',
@@ -210,7 +210,7 @@ import { LucideAngularModule, AlertTriangle, Check, Info, Send } from 'lucide-an
         [fieldGroups]="referenceFields()"
         [statusMessage]="referenceStatus()"
         [showMarkSubmitted]="true"
-        (close)="showReferencePanel.set(false)"
+        (closePanel)="showReferencePanel.set(false)"
         (markSubmitted)="onMarkSubmitted()"
       />
     </div>

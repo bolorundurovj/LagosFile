@@ -168,7 +168,7 @@ pub async fn enable_biometric(
 ) -> Result<(), String> {
     let key = {
         let key_guard = state.key.lock().unwrap();
-        key_guard.as_ref().ok_or("Database not unlocked")?.clone()
+        *key_guard.as_ref().ok_or("Database not unlocked")?
     };
 
     // Verify biometric before enabling

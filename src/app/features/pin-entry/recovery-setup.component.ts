@@ -2,7 +2,7 @@ import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
-import { LucideAngularModule, AlertTriangle } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 const QUESTIONS = [
   'What was the name of your first pet?',

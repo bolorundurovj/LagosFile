@@ -15,7 +15,13 @@
     "pack:ext:chrome": "node scripts/pack-extensions.mjs chrome",
     "pack:ext:firefox": "node scripts/pack-extensions.mjs firefox",
     "pack:ext": "node scripts/pack-extensions.mjs",
-    "sync:version": "node scripts/sync-version.mjs"
+    "sync:version": "node scripts/sync-version.mjs",
+    "lint": "ng lint",
+    "lint:fix": "ng lint --fix",
+    "lint:rust": "cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings",
+    "lint:rust:fix": "cd src-tauri && cargo clippy --fix --allow-dirty --allow-no-vcs",
+    "format:rust": "cd src-tauri && cargo fmt",
+    "format:all": "npm run lint:fix && npm run format:rust"
   },
   "dependencies": {
     "@angular/animations": "^19.0.0",
@@ -41,6 +47,9 @@
     "@angular/compiler-cli": "^19.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "@types/jasmine": "~5.1.0",
+    "angular-eslint": "21.0.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
     "jasmine-core": "~5.4.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
@@ -48,6 +57,7 @@
     "karma-jasmine": "~5.1.0",
     "karma-jasmine-html-reporter": "~2.1.0",
     "sass": "^1.80.0",
-    "typescript": "~5.6.0"
+    "typescript": "~5.6.0",
+    "typescript-eslint": "8.46.4"
   }
 }

@@ -6,7 +6,7 @@ import { FxService, FxCacheEntry } from '../../core/services/fx.service';
 import { ToastService } from '../../core/services/toast.service';
 import { TaxConfig, TaxBand } from '../../core/models';
 import { NairaPipe } from '../../shared/pipes/naira.pipe';
-import { LucideAngularModule, Check, AlertTriangle } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 const NTA_SECTIONS: Record<string, string> = {
@@ -302,7 +302,7 @@ export class ConfigurationComponent implements OnInit {
     try {
       const cfg = await this.configService.loadActive();
       this.populate(cfg);
-    } catch (_) {}
+    } catch (_) { /* ignore */ }
   }
 
   private populate(cfg: TaxConfig): void {

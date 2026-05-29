@@ -1,8 +1,8 @@
-import { Component, inject, input, output } from '@angular/core';
+import { Component, inject, input } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { filter, map, startWith } from 'rxjs/operators';
-import { LucideAngularModule, LayoutDashboard, FilePlus2, History, Settings2, SlidersHorizontal } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { Taxpayer } from '../../../core/models';
 import { LogoMarkComponent } from '../logo-mark/logo-mark.component';
 

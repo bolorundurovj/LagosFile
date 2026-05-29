@@ -2,7 +2,7 @@ import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
-import { LucideAngularModule, AlertTriangle, CheckCircle } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
 
 type Step = 'answers' | 'reset' | 'done';

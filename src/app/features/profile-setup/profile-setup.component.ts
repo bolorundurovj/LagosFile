@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ProfileService } from '../../core/services/profile.service';
 import { AuthService } from '../../core/services/auth.service';
-import { LucideAngularModule, AlertTriangle } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
 
 @Component({

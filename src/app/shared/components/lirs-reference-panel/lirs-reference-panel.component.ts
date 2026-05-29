@@ -1,6 +1,6 @@
 import { Component, input, output, signal } from '@angular/core';
 import { LIRSFieldGroup } from '../../../core/models';
-import { LucideAngularModule, Copy, X, ClipboardList } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'lf-lirs-reference-panel',
@@ -8,7 +8,7 @@ import { LucideAngularModule, Copy, X, ClipboardList } from 'lucide-angular';
   imports: [LucideAngularModule],
   template: `
     @if (visible()) {
-      <div class="lirs-overlay" (click)="close.emit()">
+      <div class="lirs-overlay" (click)="closePanel.emit()">
         <aside class="lirs-panel" (click)="$event.stopPropagation()">
           <div class="lirs-panel__header">
             <div>
@@ -17,7 +17,7 @@ import { LucideAngularModule, Copy, X, ClipboardList } from 'lucide-angular';
                 Copy these values into the LIRS Form A fields on the e-Tax portal.
               </p>
             </div>
-            <button class="btn btn--ghost btn--sm icon-btn" (click)="close.emit()">
+            <button class="btn btn--ghost btn--sm icon-btn" (click)="closePanel.emit()">
               <lucide-icon name="x" [size]="18" [strokeWidth]="2"></lucide-icon>
             </button>
           </div>
@@ -65,7 +65,7 @@ import { LucideAngularModule, Copy, X, ClipboardList } from 'lucide-angular';
           </div>
 
           <div class="lirs-panel__footer">
-            <button class="btn btn--secondary flex-1" (click)="close.emit()">Close Panel</button>
+            <button class="btn btn--secondary flex-1" (click)="closePanel.emit()">Close Panel</button>
             @if (showMarkSubmitted()) {
               <button class="btn btn--primary flex-1" (click)="markSubmitted.emit()">
                 Mark as Submitted
@@ -225,7 +225,7 @@ export class LIRSReferencePanelComponent {
   statusMessage = input<string>('');
   showMarkSubmitted = input<boolean>(false);
 
-  close = output<void>();
+  closePanel = output<void>();
   markSubmitted = output<void>();
 
   lastCopied = signal('');
