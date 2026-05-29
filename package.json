@@ -21,7 +21,8 @@
     "lint:rust": "cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings",
     "lint:rust:fix": "cd src-tauri && cargo clippy --fix --allow-dirty --allow-no-vcs",
     "format:rust": "cd src-tauri && cargo fmt",
-    "format:all": "npm run lint:fix && npm run format:rust"
+    "format:all": "npm run lint:fix && npm run format:rust",
+    "prepare": "husky"
   },
   "dependencies": {
     "@angular/animations": "^19.0.0",
@@ -50,6 +51,7 @@
     "angular-eslint": "21.0.1",
     "eslint": "^9.39.1",
     "eslint-plugin-unused-imports": "^4.4.1",
+    "husky": "^9.1.7",
     "jasmine-core": "~5.4.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",

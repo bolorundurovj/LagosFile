@@ -124,6 +124,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint Angular
+        run: npm run lint
+
       - name: Build Angular
         run: npm run build
 

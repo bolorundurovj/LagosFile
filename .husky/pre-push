@@ -1,0 +1,3 @@
+echo "🚀 Running pre-push checks..."
+npm run lint && npm run lint:rust
+echo "✅ Pre-push checks passed!"
