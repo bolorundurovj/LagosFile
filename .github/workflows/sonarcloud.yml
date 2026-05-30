@@ -34,6 +34,16 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Generate Frontend Coverage
+        run: npm run test:coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate Backend Coverage
+        working-directory: src-tauri
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
       - name: Run SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:

@@ -130,8 +130,17 @@ jobs:
       - name: Audit Node dependencies
         run: npm audit --audit-level=moderate
 
+      - name: Test Angular
+        run: npm run test:coverage
+
       - name: Build Angular
         run: npm run build
+
+      - name: Upload Frontend Coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/lagosfile
 
   # ── Rust / Tauri check ─────────────────────────────────────────
   rust:
@@ -166,6 +175,23 @@ jobs:
       - name: Cargo fmt check
         working-directory: src-tauri
         run: cargo fmt --check
+
+      - name: Run Backend Tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate Backend Coverage
+        working-directory: src-tauri
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload Backend Coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: src-tauri/lcov.info
 
       - name: Audit Rust dependencies
         working-directory: src-tauri
