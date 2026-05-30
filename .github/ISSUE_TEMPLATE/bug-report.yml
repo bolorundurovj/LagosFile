@@ -1,0 +1,92 @@
+name: Bug Report
+description: Report a problem or unexpected behaviour
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill in as much detail as you can.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug in plain language.
+      placeholder: When I click "File with LIRS", the extension panel shows "Connecting to LagosFile…" indefinitely.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact steps someone else can follow to see the same issue.
+      placeholder: |
+        1. Open LagosFile and create a YOA 2025 filing
+        2. Add one income entry and confirm the filing
+        3. Click "File with LIRS"
+        4. In the browser, the extension panel shows the loading spinner forever
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: The extension panel should show the filing picker within 3 seconds.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: LagosFile version
+      description: Found in the About section of Settings, or in the app title bar.
+      placeholder: e.g. 1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system
+      options:
+        - Windows 10/11
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Linux (Ubuntu/Debian)
+        - Linux (Other)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser (if extension-related)
+      options:
+        - Chrome
+        - Edge
+        - Firefox
+        - Safari
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error messages
+      description: Paste any error messages, console output, or Tauri dev-tools logs.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this bug has not been reported yet.
+          required: true
+        - label: I am running the latest version of LagosFile.
+          required: false

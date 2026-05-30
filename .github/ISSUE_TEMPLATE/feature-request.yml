@@ -1,0 +1,58 @@
+name: Feature Request
+description: Suggest an improvement or new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to make LagosFile better? Share it here.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Describe the pain point or limitation you are facing.
+      placeholder: Every year I have to manually re-enter my employer's details because there is no way to save recurring income sources.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: Explain what you want to happen and how it should work.
+      placeholder: Add a "Saved Income Sources" section in Settings where I can store employer name, TIN, and address. When creating a new filing, let me pick from the saved list instead of typing from scratch.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: Have you found workarounds or seen this done differently in other tools?
+      placeholder: I currently copy-paste from a text file, which is error-prone.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which part of LagosFile?
+      options:
+        - Desktop app (filing wizard, dashboard, history)
+        - Browser extension (LIRS portal auto-fill)
+        - Settings / configuration
+        - Export (PDF, CSV, JSON)
+        - Backup & restore
+        - Security / PIN / biometric
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and this feature has not been requested yet.
+          required: true
