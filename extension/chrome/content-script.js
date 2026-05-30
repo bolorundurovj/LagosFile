@@ -634,6 +634,9 @@
       sendResponse({ pong: true, panelInjected: true });
       return false;
     }
-  });
+   });
+
+  // ── Init ─────────────────────────────────────────────────
+  init();
 
 })();

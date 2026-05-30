@@ -321,15 +321,17 @@
   }
 
   // ── Load filings from bridge ──────────────────────────────
+  // Firefox blocks direct fetch from https:// pages to http://localhost.
+  // We proxy through the background script which has unrestricted network access.
 
   function loadFilings() {
-    fetch(BRIDGE + '/filings', { mode: 'cors', cache: 'no-store' })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (data) {
+    browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filings' })
+      .then(function (resp) {
+        if (!resp || !resp.ok) throw new Error(resp && resp.error || 'fetch failed');
+        var data = resp.data;
         if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
         allFilings = data;
-        // Let background know for popup fallback
-        try { runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
+        try { browser.runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
         if (allFilings.length === 1) {
           selectedFiling = allFilings[0];
           renderFill();
@@ -339,12 +341,13 @@
       })
       .catch(function () {
         // Try single /filing (backward compat)
-        fetch(BRIDGE + '/filing', { mode: 'cors', cache: 'no-store' })
-          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-          .then(function (single) {
+        browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filing' })
+          .then(function (resp) {
+            if (!resp || !resp.ok) throw new Error('fetch failed');
+            var single = resp.data;
             allFilings = [single];
             selectedFiling = single;
-            try { runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
+            try { browser.runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
             renderFill();
           })
           .catch(function () { renderOffline(); });
@@ -614,4 +617,28 @@
   }
 
   function fmtN(n) {
-    if (n == null || isNaN(n)) return '�
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toLocaleString('en-NG');
+  }
+
+  // ── Message listener ──────────────────────────────────────────
+
+  browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+    if (msg.type === 'INJECT_STEP') {
+      var saved = selectedFiling;
+      if (msg.data) selectedFiling = msg.data;
+      try { injectStep(msg.step); sendResponse({ ok: true }); }
+      catch (e) { sendResponse({ ok: false, error: String(e) }); }
+      if (!saved && msg.data) selectedFiling = msg.data;
+      return false;
+    }
+    if (msg.type === 'PING') {
+      sendResponse({ pong: true, panelInjected: true });
+      return false;
+    }
+  });
+
+  // Init
+  init();
+
+})();
