@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Detect VERSION.ini change (master only) ───────────────────
+  # Detect VERSION.ini change (master push only)
   check-version:
     name: Check VERSION.ini
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -59,7 +59,7 @@ jobs:
           ")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-  # ── Sync all version files and cut tag ────────────────────────
+  # Sync all version files and cut tag
   cut-release:
     name: Sync versions and cut tag
     needs: check-version
@@ -68,9 +68,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      # Use RELEASE_TOKEN (PAT) so the tag push triggers release.yml.
-      # GITHUB_TOKEN pushes are intentionally blocked from triggering
-      # downstream workflows by GitHub to prevent infinite loops.
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.RELEASE_TOKEN }}
@@ -82,7 +79,6 @@ jobs:
 
       - name: Sync version across all files
         run: node scripts/sync-version.mjs
-        # no argument - reads and assembles version from VERSION.ini
 
       - name: Commit synced version files
         uses: stefanzweifel/git-auto-commit-action@v5
@@ -96,22 +92,19 @@ jobs:
             extension/chrome/manifest.json
             extension/firefox/manifest.json
           skip_dirty_check: false
-          # Use PAT so this commit is not treated as a bot commit
           push_options: '--force-with-lease'
 
       - name: Create and push git tag
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Set remote URL with PAT so the push is authenticated as a
-          # real user event, which allows it to trigger release.yml
           git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}
           git tag "v${{ needs.check-version.outputs.version }}"
           git push origin "v${{ needs.check-version.outputs.version }}"
 
-  # ── Angular build check ────────────────────────────────────────
+  # Angular lint & build
   angular:
-    name: Angular build
+    name: Angular lint & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,25 +121,41 @@ jobs:
         run: npm run lint
 
       - name: Audit Node dependencies
-        # moderate vulns in serialize-javascript/tar/uuid are in Angular CLI's
-        # build tooling with no available fix; bump to high to unblock CI.
-        run: npm audit --audit-level=high
-
-      - name: Test Angular
-        run: npm run test:coverage
+        # All vulnerable packages (serialize-javascript, tar, uuid) are devDependencies
+        # inside Angular CLI / webpack build tooling -- they are never shipped in the
+        # app bundle. --omit=dev audits production deps only.
+        run: npm audit --omit=dev --audit-level=moderate
 
       - name: Build Angular
         run: npm run build
 
-      - name: Upload Frontend Coverage
+  # Angular tests
+  angular-test:
+    name: Angular tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test Angular
+        run: npm run test:coverage
+
+      - name: Upload frontend coverage
         uses: actions/upload-artifact@v4
         with:
           name: frontend-coverage
           path: coverage/lagosfile
 
-  # ── Rust / Tauri check ─────────────────────────────────────────
+  # Rust lint & check
   rust:
-    name: Rust check
+    name: Rust lint & check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -178,30 +187,52 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
-      - name: Run Backend Tests
-        working-directory: src-tauri
-        run: cargo test
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Generate Backend Coverage
-        working-directory: src-tauri
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
-
-      - name: Upload Backend Coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-coverage
-          path: src-tauri/lcov.info
-
       - name: Audit Rust dependencies
         working-directory: src-tauri
         run: |
           cargo install cargo-audit --locked
           cargo audit
 
-  # ── Extension pack check ───────────────────────────────────────
+  # Rust tests
+  rust-test:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Run backend tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate backend coverage
+        working-directory: src-tauri
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: src-tauri/lcov.info
+
+  # Extension pack check
   extension:
     name: Extension pack check
     runs-on: ubuntu-latest
