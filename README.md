@@ -31,6 +31,36 @@ Built with **Angular 19** and **Tauri 2** (Rust backend). Your data never leaves
 
 ---
 
+## Screenshots
+
+Click any section below to expand.
+
+<details>
+<summary><strong>Dashboard</strong> — Year-over-year tax overview and filing status</summary>
+<br>
+<img src="src/assets/screenshots/dashboard.png" alt="Dashboard" width="800">
+</details>
+
+<details>
+<summary><strong>Filing History</strong> — Confirmed filings, amendments, and exports</summary>
+<br>
+<img src="src/assets/screenshots/filing_history.png" alt="Filing History" width="800">
+</details>
+
+<details>
+<summary><strong>PIN Entry with Biometric</strong> — Unlock with PIN or Windows Hello / Touch ID</summary>
+<br>
+<img src="src/assets/screenshots/login_with_biometrics_enabled.png" alt="PIN Entry with Biometric" width="800">
+</details>
+
+<details>
+<summary><strong>Configuration</strong> — Customise tax bands, rates, and caps</summary>
+<br>
+<img src="src/assets/screenshots/configuration.png" alt="Configuration" width="800">
+</details>
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
