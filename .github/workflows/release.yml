@@ -196,6 +196,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -204,7 +206,32 @@ jobs:
 
       - name: Read release notes
         id: notes
-        run: echo "body<<EOF" >> $GITHUB_OUTPUT && cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT && echo "EOF" >> $GITHUB_OUTPUT
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION }}^ 2>/dev/null || echo "")
+          
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo -e "\n\n---\n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...${{ env.VERSION }}" >> $GITHUB_OUTPUT
+          fi
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Set up Node for notice generation
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install cargo-license
+        run: cargo install cargo-license --locked
+
+      - name: Generate third-party notices
+        run: npm run generate:notices
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -222,5 +249,6 @@ jobs:
             artifacts/tauri-*/**/*.AppImage
             artifacts/ext-chrome/chrome-lagosfile-lirs.zip
             artifacts/ext-firefox/firefox-lagosfile-lirs.xpi
+            THIRD-PARTY-NOTICES.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -9,16 +9,22 @@ export class AuthService {
   private readonly _state = signal<AuthState>('locked');
   private readonly _taxpayer = signal<Taxpayer | null>(null);
   private readonly _hasRecovery = signal(false);
+  private readonly _biometricAvailable = signal(false);
+  private readonly _biometricEnabled = signal(false);
 
   readonly state = this._state.asReadonly();
   readonly taxpayer = this._taxpayer.asReadonly();
   readonly hasRecovery = this._hasRecovery.asReadonly();
+  readonly biometricAvailable = this._biometricAvailable.asReadonly();
+  readonly biometricEnabled = this._biometricEnabled.asReadonly();
 
   constructor(private tauri: TauriService) {}
 
   async init(): Promise<void> {
     const status = await this.tauri.invoke<AppStatus>('check_app_status');
     this._hasRecovery.set(status.hasRecovery);
+    this._biometricAvailable.set(status.biometricAvailable);
+    this._biometricEnabled.set(status.biometricEnabled);
     this._state.set(status.hasDb ? 'locked' : 'needs_pin_setup');
   }
 
@@ -36,6 +42,26 @@ export class AuthService {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: msg };
     }
+  }
+
+  async unlockWithBiometric(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const taxpayer = await this.tauri.invoke<Taxpayer | null>('unlock_with_biometric');
+      this._setUnlocked(taxpayer);
+      return { success: true };
+    } catch (err: unknown) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  async enableBiometric(): Promise<void> {
+    await this.tauri.invoke('enable_biometric');
+    this._biometricEnabled.set(true);
+  }
+
+  async disableBiometric(): Promise<void> {
+    await this.tauri.invoke('disable_biometric');
+    this._biometricEnabled.set(false);
   }
 
   async lock(): Promise<void> {

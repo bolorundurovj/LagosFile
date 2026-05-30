@@ -1,7 +1,3 @@
-// ── Field Selectors for LIRS e-Tax Form A ─────────────────
-// Priority cascade: name > aria-label > label text > data-testid > XPath
-// DO NOT use #id selectors — LIRS uses dynamic framework-generated IDs.
-
 /**
  * Find an input by its `name` attribute (most stable selector).
  * @param {string} pattern - Substring to match in the name attribute.

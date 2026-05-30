@@ -1,0 +1,10 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LagosFile app icon (cream)">
+  <!-- Tile · cream — single arch on paper background -->
+  <rect width="120" height="120" rx="26" fill="#F7F9FB"/>
+  <!-- Single arch: mark-single-span scaled to 90px wide, centered -->
+  <g transform="translate(15, 30) scale(0.45)">
+    <path d="M30 76 Q100 6 170 76 Q100 46 30 76 Z" fill="#001E40"/>
+  </g>
+  <!-- Baseline bar aligned with arch foot -->
+  <rect x="15" y="68" width="90" height="4" rx="2" fill="#001E40"/>
+</svg>

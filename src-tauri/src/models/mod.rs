@@ -2,8 +2,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ── Taxpayer ─────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Taxpayer {
@@ -16,8 +14,6 @@ pub struct Taxpayer {
     pub filing_agent: Option<String>,
     pub created_at: DateTime<Utc>,
 }
-
-// ── Filing ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[allow(dead_code)]
@@ -70,9 +66,7 @@ pub struct Filing {
     pub tax_config_version: String,
 }
 
-// ── Income Entry ─────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomeEntry {
     pub id: Uuid,
@@ -95,8 +89,6 @@ pub struct IncomeEntry {
     pub documents: Vec<Document>,
 }
 
-// ── Capital Allowance ─────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapitalAllowance {
@@ -112,9 +104,7 @@ pub struct CapitalAllowance {
     pub documents: Vec<Document>,
 }
 
-// ── Relief Entry ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ReliefEntry {
     pub id: Uuid,
@@ -128,9 +118,7 @@ pub struct ReliefEntry {
     pub documents: Vec<Document>,
 }
 
-// ── Document ──────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
     pub id: Uuid,
@@ -143,8 +131,6 @@ pub struct Document {
     pub uploaded_at: DateTime<Utc>,
 }
 
-// ── FX Cache ──────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FxCacheEntry {
@@ -156,8 +142,6 @@ pub struct FxCacheEntry {
     pub source: String,
     pub fetched_at: DateTime<Utc>,
 }
-
-// ── Tax Config ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,8 +181,6 @@ pub struct TaxConfig {
     pub modified_by: String,
 }
 
-// ── FX Result (returned to frontend) ─────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FxResult {
@@ -208,8 +190,6 @@ pub struct FxResult {
     pub is_cached: bool,
     pub cache_date: Option<NaiveDate>,
 }
-
-// ── Computation Result ────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -241,17 +221,15 @@ pub struct ComputationResult {
     pub rent_relief_applied: f64,
 }
 
-// ── App Status ────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppStatus {
     pub has_db: bool,
     pub has_profile: bool,
     pub has_recovery: bool,
+    pub biometric_available: bool,
+    pub biometric_enabled: bool,
 }
-
-// ── LIRS Pending Filing (shared JSON schema) ──────────────────
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

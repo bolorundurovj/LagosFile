@@ -1,17 +1,31 @@
 import { Component, computed, inject, input } from '@angular/core';
 import { Taxpayer } from '../../../core/models';
 import { AuthService } from '../../../core/services/auth.service';
+import { ThemeService } from '../../../core/services/theme.service';
+import { ToastService } from '../../../core/services/toast.service';
 import { Router } from '@angular/router';
+import { LucideAngularModule } from 'lucide-angular';
+
+type Theme = 'light' | 'dark' | 'system';
 
 @Component({
   selector: 'lf-topbar',
   standalone: true,
+  imports: [LucideAngularModule],
   template: `
     <header class="topbar">
       <div class="topbar__left">
+        <lucide-icon name="calendar" [size]="16" [strokeWidth]="1.75" style="vertical-align:middle;margin-right:6px;opacity:0.6"></lucide-icon>
         <span class="topbar__yoa">YOA {{ currentYear }}</span>
       </div>
       <div class="topbar__right">
+        <button class="topbar__theme-btn" (click)="cycleTheme()" [attr.aria-label]="'Theme: ' + themeService.theme()">
+          @switch (themeService.theme()) {
+            @case ('light') { <lucide-icon name="sun" [size]="18" [strokeWidth]="1.75"></lucide-icon> }
+            @case ('dark')  { <lucide-icon name="moon" [size]="18" [strokeWidth]="1.75"></lucide-icon> }
+            @case ('system') { <lucide-icon name="monitor" [size]="18" [strokeWidth]="1.75"></lucide-icon> }
+          }
+        </button>
         @if (taxpayer()) {
           <div class="topbar__user">
             <div class="topbar__user-info">
@@ -53,7 +67,15 @@ import { Router } from '@angular/router';
       letter-spacing: 0.06em;
     }
 
-    .topbar__right { display: flex; align-items: center; gap: var(--space-4); }
+    .topbar__right { display: flex; align-items: center; gap: var(--space-3); }
+
+    .topbar__theme-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: var(--radius-full);
+      border: none; background: transparent; color: var(--color-on-surface-variant);
+      cursor: pointer; transition: all var(--transition-fast);
+      &:hover { background: var(--color-surface-container-low); color: var(--color-on-surface); }
+    }
 
     .topbar__user { display: flex; align-items: center; gap: var(--space-3); position: relative; }
 
@@ -129,6 +151,11 @@ export class TopbarComponent {
 
   private auth = inject(AuthService);
   private router = inject(Router);
+  private toast = inject(ToastService);
+  readonly themeService = inject(ThemeService);
+
+  private readonly themeCycle: Theme[] = ['light', 'dark', 'system'];
+  private themeIndex = 0;
 
   readonly initials = computed(() => {
     const t = this.taxpayer();
@@ -136,9 +163,20 @@ export class TopbarComponent {
     return t.fullName.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase();
   });
 
+  cycleTheme(): void {
+    const current = this.themeService.theme() as Theme;
+    const idx = this.themeCycle.indexOf(current);
+    const next = this.themeCycle[(idx + 1) % this.themeCycle.length];
+    this.themeService.setTheme(next);
+  }
+
   async lock(): Promise<void> {
     this.showMenu = false;
-    await this.auth.lock();
-    this.router.navigate(['/unlock']);
+    try {
+      await this.auth.lock();
+      this.router.navigate(['/unlock']);
+    } catch (err: unknown) {
+      this.toast.error('Failed to lock app: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 }

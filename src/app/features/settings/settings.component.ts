@@ -9,6 +9,13 @@ import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir, join } from '@tauri-apps/api/path';
+import pkg from '../../../../package.json';
+
+interface ChangelogEntry {
+  version: string;
+  date: string;
+  items: string[];
+}
 
 @Component({
   selector: 'lf-settings',
@@ -160,6 +167,20 @@ import { homeDir, join } from '@tauri-apps/api/path';
         <p class="body-sm text-muted" style="margin-bottom:var(--space-5)">
           Your data is encrypted at rest using AES-256-GCM. Your PIN is never stored.
         </p>
+
+        @if (auth.biometricAvailable()) {
+          <div class="backup-row" style="margin-bottom:var(--space-5)">
+            <div class="backup-item">
+              <div class="backup-item__title">Biometric Authentication</div>
+              <div class="backup-item__sub">Use Windows Hello or Touch ID to unlock your vault</div>
+            </div>
+            <div class="toggle-switch">
+              <input type="checkbox" id="biometricToggle" [checked]="auth.biometricEnabled()" (change)="toggleBiometric()" [disabled]="togglingBiometric()">
+              <label for="biometricToggle"></label>
+            </div>
+          </div>
+        }
+
         <div class="security-badges">
           <div class="security-badge">
             <span class="security-badge__icon"><lucide-icon name="lock" [size]="18" [strokeWidth]="1.75"></lucide-icon></span>
@@ -218,7 +239,7 @@ import { homeDir, join } from '@tauri-apps/api/path';
       <!-- About -->
       <div class="card">
         <h2 class="title-md" style="margin-bottom:var(--space-3)">About LagosFile</h2>
-        <div class="about-row"><span>Version</span><span>2.0.0</span></div>
+        <div class="about-row"><span>Version</span><span>{{ pkg.version }}</span></div>
         <div class="about-row"><span>Technology</span><span>Angular 19 + Tauri 2 (Rust)</span></div>
         <div class="about-row"><span>Legislation</span><span>Nigeria Tax Act (NTA) 2025</span></div>
         <div class="about-row"><span>Tax Authority</span><span>Lagos Internal Revenue Service (LIRS)</span></div>
@@ -226,8 +247,49 @@ import { homeDir, join } from '@tauri-apps/api/path';
           <span>LIRS e-Tax Portal</span>
           <a href="https://etax.lirs.net" target="_blank" class="btn btn--ghost btn--sm">Open Portal</a>
         </div>
+        <div class="about-actions">
+          <button class="btn btn--ghost btn--sm" (click)="openChangelog()">
+            <lucide-icon name="book-open" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>
+            Changelog
+          </button>
+          <button class="btn btn--ghost btn--sm" (click)="checkForUpdates()">
+            <lucide-icon name="refresh-cw" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>
+            Check for Updates
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Changelog modal -->
+    @if (showChangelog) {
+      <div class="modal-overlay" (click)="showChangelog = false">
+        <div class="modal changelog-modal" (click)="$event.stopPropagation()">
+          <div class="changelog-header">
+            <h3 class="title-md">Changelog</h3>
+            <button class="btn btn--ghost btn--sm" (click)="showChangelog = false">✕</button>
+          </div>
+          <div class="changelog-body">
+            @if (changelogLoading()) {
+              <div class="skeleton" style="height:200px;border-radius:var(--radius-lg)"></div>
+            } @else if (changelogError()) {
+              <div class="text-muted body-sm">{{ changelogError() }}</div>
+            } @else {
+              @for (entry of changelogEntries(); track entry.version) {
+                <div class="changelog-entry">
+                  <div class="changelog-entry__version">{{ entry.version }}</div>
+                  @if (entry.date) { <div class="changelog-entry__date">{{ entry.date }}</div> }
+                  <ul class="changelog-entry__list">
+                    @for (item of entry.items; track item) {
+                      <li>{{ item }}</li>
+                    }
+                  </ul>
+                </div>
+              }
+            }
+          </div>
+        </div>
+      </div>
+    }
   `,
   styles: [`
     .settings-page { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
@@ -281,9 +343,33 @@ import { homeDir, join } from '@tauri-apps/api/path';
       font-size: var(--text-body-sm);
     }
     .about-row:last-child { border-bottom: none; }
+    .about-actions { display: flex; gap: var(--space-3); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+    .changelog-modal { max-width: 560px; max-height: 70vh; display: flex; flex-direction: column; }
+    .changelog-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-surface-container); margin-bottom: var(--space-4); }
+    .changelog-body { overflow-y: auto; flex: 1; }
+    .changelog-entry { margin-bottom: var(--space-5); }
+    .changelog-entry__version { font-size: var(--text-title-sm); font-weight: var(--font-weight-bold); }
+    .changelog-entry__date { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-bottom: var(--space-2); }
+    .changelog-entry__list { margin: 0; padding-left: var(--space-5); font-size: var(--text-body-sm); display: flex; flex-direction: column; gap: var(--space-1); }
+
+    /* Toggle switch */
+    .toggle-switch { position: relative; width: 44px; height: 24px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-switch label {
+      position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+      background-color: var(--color-surface-container-high); transition: .4s; border-radius: 24px;
+    }
+    .toggle-switch label:before {
+      position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background-color: white; transition: .4s; border-radius: 50%;
+    }
+    .toggle-switch input:checked + label { background-color: var(--color-primary); }
+    .toggle-switch input:checked + label:before { transform: translateX(20px); }
+    .toggle-switch input:disabled + label { opacity: 0.5; cursor: not-allowed; }
   `],
 })
 export class SettingsComponent {
+  readonly pkg = pkg;
   auth = inject(AuthService);
   themeService = inject(ThemeService);
   private profileService = inject(ProfileService);
@@ -294,7 +380,70 @@ export class SettingsComponent {
   backingUp = signal(false);
   restoring = signal(false);
   changingPin = signal(false);
+  togglingBiometric = signal(false);
   pinError = signal('');
+  showChangelog = false;
+  changelogEntries = signal<ChangelogEntry[]>([]);
+  changelogLoading = signal(false);
+  changelogError = signal('');
+
+  async toggleBiometric(): Promise<void> {
+    this.togglingBiometric.set(true);
+    try {
+      if (this.auth.biometricEnabled()) {
+        await this.auth.disableBiometric();
+        this.toast.success('Biometric authentication disabled.');
+      } else {
+        await this.auth.enableBiometric();
+        this.toast.success('Biometric authentication enabled.');
+      }
+    } catch (err: unknown) {
+      this.toast.error('Failed to update biometric settings: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.togglingBiometric.set(false);
+    }
+  }
+
+  async openChangelog(): Promise<void> {
+    this.showChangelog = true;
+    if (this.changelogEntries().length > 0) return;
+    this.changelogLoading.set(true);
+    this.changelogError.set('');
+    try {
+      const res = await fetch('/assets/CHANGELOG.md');
+      const text = await res.text();
+      this.changelogEntries.set(this.parseChangelog(text));
+    } catch {
+      this.changelogError.set('Could not load changelog.');
+    } finally {
+      this.changelogLoading.set(false);
+    }
+  }
+
+  private parseChangelog(md: string): ChangelogEntry[] {
+    const entries: ChangelogEntry[] = [];
+    let current: ChangelogEntry | null = null;
+    const lines = md.split('\n');
+    for (const line of lines) {
+      const versionMatch = line.match(/^##\s*\[([^\]]+)\]\s*-?\s*(.*)/);
+      if (versionMatch) {
+        if (versionMatch[1] === 'Unreleased') continue;
+        current = { version: versionMatch[1], date: versionMatch[2].trim(), items: [] };
+        entries.push(current);
+        continue;
+      }
+      const itemMatch = line.match(/^\s*-\s+(.+)/);
+      if (itemMatch && current) {
+        const item = itemMatch[1].replace(/\(\[`[^`]+`\].*?\)$/, '').trim();
+        if (item) current.items.push(item);
+      }
+    }
+    return entries;
+  }
+
+  checkForUpdates(): void {
+    this.toast.info('Check for updates is work in progress and will be available in a future release.');
+  }
 
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
   pinForm = { current: '', next: '', confirm: '' };
@@ -398,8 +547,12 @@ export class SettingsComponent {
     }
   }
 
-  lock(): void {
-    this.auth.lock();
-    this.router.navigate(['/unlock']);
+  async lock(): Promise<void> {
+    try {
+      await this.auth.lock();
+      this.router.navigate(['/unlock']);
+    } catch (err: unknown) {
+      this.toast.error('Failed to lock app: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 }

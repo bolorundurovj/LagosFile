@@ -1,6 +1,6 @@
 import { Component, output, input } from '@angular/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { LucideAngularModule, Paperclip } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 
 export interface DropzoneFile {
   path: string;

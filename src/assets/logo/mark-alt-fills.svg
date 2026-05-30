@@ -1,0 +1,7 @@
+<svg width="200" height="84" viewBox="0 0 200 84" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="LagosFile mark">
+  <!-- AltFills — three bridge arches, blue / navy / blue, on light background -->
+  <path d="M10 76 Q40 14 70 76 Q40 50 10 76 Z" fill="#004A99"/>
+  <path d="M65 76 Q100 8 135 76 Q100 46 65 76 Z" fill="#001E40"/>
+  <path d="M130 76 Q160 22 190 76 Q160 52 130 76 Z" fill="#004A99"/>
+  <rect x="0" y="78" width="200" height="6" rx="3" fill="#001E40"/>
+</svg>

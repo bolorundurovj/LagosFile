@@ -10,7 +10,6 @@ impl ComputationEngine {
         relief_entries: &[ReliefEntry],
         config: &TaxConfig,
     ) -> Result<ComputationResult> {
-        // ── 1. Separate digital assets ───────────────────────────
         let digital_entries: Vec<_> = income_entries
             .iter()
             .filter(|e| e.income_type == "digital_asset")
@@ -24,7 +23,6 @@ impl ComputationEngine {
         let digital_net = digital_gross.max(0.0);
         let digital_asset_loss_ringfenced = (-digital_gross).max(0.0);
 
-        // ── 2. CGT exemption on Nigerian company share gains ─────
         let mut cgt_exempt_amount = 0.0;
         let mut effective_other_income = 0.0;
 
@@ -44,14 +42,12 @@ impl ComputationEngine {
 
         let total_gross = effective_other_income + digital_net;
 
-        // ── 3. Capital allowances (prorated if non-taxable ≥ 10%) ─
         let total_ca: f64 = capital_allowances
             .iter()
             .map(|ca| ca.annual_allowance_amount)
             .sum();
-        let prorated_ca = total_ca; // proration hook (§ non-taxable income ratio)
+        let prorated_ca = total_ca;
 
-        // ── 4. Deductions & reliefs ──────────────────────────────
         let mut pension = 0.0f64;
         let mut nhis = 0.0f64;
         let mut nhf = 0.0f64;
@@ -81,7 +77,6 @@ impl ComputationEngine {
 
         let chargeable_income = (total_gross - prorated_ca - total_deductions).max(0.0);
 
-        // ── 5. Graduated tax by band ─────────────────────────────
         let mut sorted_bands = config.bands.clone();
         sorted_bands.sort_by(|a, b| a.lower.partial_cmp(&b.lower).unwrap());
 
@@ -110,7 +105,6 @@ impl ComputationEngine {
             });
         }
 
-        // ── 6. Net tax payable & minimum tax ────────────────────
         let net_tax_payable = (graduated_tax - wht_credits).max(0.0);
         let minimum_tax = total_gross * config.minimum_tax_rate;
         let final_tax_payable = net_tax_payable.max(minimum_tax);

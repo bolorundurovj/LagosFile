@@ -3,13 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <title>LagosFile for LIRS</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
 
   <header class="popup-header">
-    <div class="popup-logo">LagosFile</div>
-    <div class="popup-subtitle">LIRS e-Tax Assistant</div>
+    <!-- AltFills mark, white variants on dark bg -->
+    <svg class="popup-mark" width="48" height="15" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M10 46 Q40 -6 70 46 Q40 26 10 46 Z" fill="#4D90CC"/>
+      <path d="M65 46 Q100 -12 135 46 Q100 22 65 46 Z" fill="rgba(255,255,255,0.55)"/>
+      <path d="M130 46 Q160 2 190 46 Q160 28 130 46 Z" fill="#4D90CC"/>
+      <rect x="0" y="48" width="200" height="5" rx="2.5" fill="rgba(255,255,255,0.35)"/>
+    </svg>
+    <div class="popup-wordmark">
+      <span class="popup-logo">LagosFile</span>
+      <span class="popup-subtitle">LIRS e-Tax Assistant</span>
+    </div>
   </header>
 
   <!-- ── State: Loading ── -->
@@ -63,24 +75,4 @@
       Open LagosFile, then click <strong>File with LIRS</strong> on any confirmed filing.
       Then click Refresh below.
     </p>
-    <p class="state-desc state-desc--alt">Or load <code>pending_filing.json</code> manually:</p>
-    <div class="input-group">
-      <textarea id="json-input" placeholder='Paste JSON or click "Open File"…' rows="5"></textarea>
-    </div>
-    <div id="parse-error" class="error-text hidden"></div>
-    <div class="button-row">
-      <button type="button" id="load-file-btn"  class="btn btn--secondary">Open File</button>
-      <button type="button" id="parse-json-btn" class="btn btn--primary">Load Data</button>
-    </div>
-    <button type="button" id="offline-refresh-btn" class="btn btn--ghost btn--full" style="margin-top:6px">&#x21BB; Try Again</button>
-  </div>
-
-  <footer class="popup-footer">
-    <span>v1.1.0</span>
-    <span id="status-text">Connecting…</span>
-  </footer>
-
-  <input type="file" id="file-input" accept=".json" class="hidden">
-  <script src="popup.js"></script>
-</body>
-</html>
+    <p class="state-desc state-desc--alt">Or load <code>pending_filing.json</code> manu

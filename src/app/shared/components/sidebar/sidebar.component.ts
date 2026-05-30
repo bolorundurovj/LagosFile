@@ -1,9 +1,10 @@
-import { Component, inject, input, output } from '@angular/core';
+import { Component, inject, input } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { filter, map, startWith } from 'rxjs/operators';
-import { LucideAngularModule, LayoutDashboard, FilePlus2, History, Settings2, SlidersHorizontal } from 'lucide-angular';
+import { LucideAngularModule } from 'lucide-angular';
 import { Taxpayer } from '../../../core/models';
+import { LogoMarkComponent } from '../logo-mark/logo-mark.component';
 
 interface NavItem {
   label: string;
@@ -25,12 +26,12 @@ const NAV_ITEMS: NavItem[] = [
 @Component({
   selector: 'lf-sidebar',
   standalone: true,
-  imports: [RouterLink, RouterLinkActive, LucideAngularModule],
+  imports: [RouterLink, RouterLinkActive, LucideAngularModule, LogoMarkComponent],
   template: `
     <nav class="sidebar">
       <!-- Logo -->
       <div class="sidebar__logo">
-        <span class="logo-mark">LF</span>
+        <lf-logo-mark [size]="52" [dark]="true" />
         <span class="logo-text">LagosFile</span>
       </div>
 
@@ -78,34 +79,20 @@ const NAV_ITEMS: NavItem[] = [
 
     .sidebar__logo {
       display: flex;
+      flex-direction: row;
       align-items: center;
       gap: var(--space-3);
-      padding: var(--space-6) var(--space-5);
+      padding: var(--space-5) var(--space-5) var(--space-4);
       border-bottom: 1px solid rgba(255,255,255,0.06);
     }
 
-    .logo-mark {
-      width: 36px;
-      height: 36px;
-      background: var(--gradient-cta);
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: var(--font-display);
-      font-weight: var(--font-weight-bold);
-      font-size: 0.875rem;
-      color: white;
-      letter-spacing: 0.05em;
-      flex-shrink: 0;
-    }
-
     .logo-text {
-      font-family: var(--font-display);
+      font-family: 'Geist', var(--font-display), sans-serif;
       font-size: var(--text-title-sm);
-      font-weight: var(--font-weight-bold);
+      font-weight: 600;
       color: var(--color-sidebar-text);
-      letter-spacing: -0.01em;
+      letter-spacing: -0.025em;
+      white-space: nowrap;
     }
 
     .sidebar__nav {

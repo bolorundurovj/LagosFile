@@ -1,14 +1,11 @@
 use crate::{
     commands::auth::persist_db, models::*, services::computation::ComputationEngine, AppState,
 };
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use rusqlite::params;
 use tauri::State;
 use uuid::Uuid;
 
-// ── helpers ──────────────────────────────────────────────────
-
-/// Load all documents attached to a single entry, identified by its UUID string.
 fn load_documents(conn: &rusqlite::Connection, parent_entry_id: &str) -> Vec<Document> {
     let mut stmt = match conn.prepare(
         "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
@@ -109,8 +106,6 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
     )
 }
 
-// ── Filing commands ───────────────────────────────────────────
-
 #[tauri::command]
 pub async fn list_filings(state: State<'_, AppState>) -> Result<Vec<Filing>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
@@ -155,6 +150,12 @@ pub async fn create_draft_filing(
     year_of_assessment: i32,
     state: State<'_, AppState>,
 ) -> Result<Filing, String> {
+    let current_year = Utc::now().year();
+    if year_of_assessment >= current_year {
+        return Err(format!(
+            "Filings can only be created for past years of assessment, not {current_year} or later.",
+        ));
+    }
     let id = Uuid::new_v4();
     let now = Utc::now();
     let _config_version = {
@@ -164,6 +165,20 @@ pub async fn create_draft_filing(
         let taxpayer_id: String = conn
             .query_row("SELECT id FROM taxpayer LIMIT 1", [], |r| r.get(0))
             .map_err(|_| "No profile found. Please create your taxpayer profile first.")?;
+
+        let existing: bool = conn
+            .query_row(
+                "SELECT COUNT(1) FROM filing WHERE year_of_assessment=?1 AND taxpayer_id=?2",
+                params![year_of_assessment, taxpayer_id],
+                |r| r.get::<_, i32>(0),
+            )
+            .map_err(|e| e.to_string())?
+            > 0;
+        if existing {
+            return Err(format!(
+                "A filing for {year_of_assessment} already exists. Duplicate or amend the existing filing instead.",
+            ));
+        }
 
         let config = load_active_config(&conn).map_err(|e| e.to_string())?;
         conn.execute(
@@ -185,7 +200,6 @@ pub async fn confirm_filing(
     state: State<'_, AppState>,
 ) -> Result<Filing, String> {
     let now = Utc::now();
-    // Generate a filing reference: LIRS/REF/YYYY/NNNNN
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -247,8 +261,6 @@ pub async fn mark_filing_submitted(
     get_filing(id, state).await
 }
 
-/// Delete a filing and all its child rows (income entries, allowances, reliefs, documents).
-/// Only Draft filings may be deleted; confirmed or submitted filings are permanent records.
 #[tauri::command]
 pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
     {
@@ -256,7 +268,6 @@ pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(),
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-        // Guard: only drafts can be deleted
         let status: String = conn
             .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
                 r.get(0)
@@ -269,7 +280,6 @@ pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(),
             ));
         }
 
-        // ON DELETE CASCADE in the schema handles child rows automatically.
         conn.execute("DELETE FROM filing WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
     }
@@ -297,7 +307,6 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
             params![new_id.to_string(), taxpayer_id, id, yoa + 1, config_ver],
         )
         .map_err(|e| e.to_string())?;
-        // Duplicate income entries
         conn.execute(
             "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
              foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
@@ -338,8 +347,6 @@ pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Fili
     persist_db(&state).await?;
     get_filing(new_id.to_string(), state).await
 }
-
-// ── Income entries ────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn list_income_entries(
@@ -451,8 +458,6 @@ pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Resu
     persist_db(&state).await
 }
 
-// ── Capital Allowances ────────────────────────────────────────
-
 #[tauri::command]
 pub async fn list_allowances(
     filing_id: String,
@@ -545,8 +550,6 @@ pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<
     persist_db(&state).await
 }
 
-// ── Relief entries ────────────────────────────────────────────
-
 #[tauri::command]
 pub async fn list_relief_entries(
     filing_id: String,
@@ -628,8 +631,6 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
     }
     persist_db(&state).await
 }
-
-// ── Computation ───────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn compute_filing(

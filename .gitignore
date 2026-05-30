@@ -21,6 +21,11 @@ Thumbs.db
 *.bak
 *.log
 
+# Generated files
+THIRD-PARTY-NOTICES.txt
+coverage/
+src-tauri/lcov.info
+
 # Encrypted DB (user data — never commit)
 *.db.enc
 *.db.enc.tmp

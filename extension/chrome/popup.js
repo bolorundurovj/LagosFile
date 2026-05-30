@@ -1,9 +1,3 @@
-// ── LagosFile for LIRS — Popup v1.1 ──────────────────────
-// States: loading → pick (select filing) → fill (tab buttons) → offline
-// Bridge endpoints:
-//   GET /filings → JSON array of PendingFiling (all confirmed filings)
-//   GET /filing  → first PendingFiling (backward compat)
-
 (function () {
   'use strict';
 
@@ -16,7 +10,6 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // ── State transitions ─────────────────────────────────────
 
   function showLoading() {
     $('state-loading').classList.remove('hidden');
@@ -61,7 +54,6 @@
     $('status-text').textContent = 'Not connected';
   }
 
-  // ── Background sync (survives popup close) ───────────────
 
   function syncSelectedToBackground() {
     runtime.sendMessage({ type: 'SET_FILING_DATA', data: filingData || null }, function () {});
@@ -104,7 +96,6 @@
     }
   }
 
-  // ── Fetch filings from bridge ─────────────────────────────
 
   bootstrapFromCache();
 
@@ -201,7 +192,6 @@
       });
   }
 
-  // ── Filing list renderer ──────────────────────────────────
 
   function renderFilingList() {
     var container = $('filing-list');
@@ -227,7 +217,6 @@
     });
   }
 
-  // ── Copy fields ───────────────────────────────────────────
 
   function buildCopyFields() {
     var container = $('copy-fields');
@@ -271,7 +260,6 @@
     });
   }
 
-  // ── Helpers ───────────────────────────────────────────────
 
   function fmtNaira(n) {
     if (n == null || isNaN(n)) return '—';
@@ -294,7 +282,6 @@
     return d.innerHTML;
   }
 
-  // ── Auto-fill buttons ─────────────────────────────────────
 
   var STEPS = ['income', 'deductions', 'reliefs', 'wht', 'adjustments'];
 
@@ -328,7 +315,6 @@
     });
   }
 
-  // ── Navigation ────────────────────────────────────────────
 
   $('back-btn').addEventListener('click', function () {
     filingData = null;
@@ -347,7 +333,6 @@
     showOffline();
   });
 
-  // ── Manual load ───────────────────────────────────────────
 
   $('load-file-btn').addEventListener('click', function () { $('file-input').click(); });
 

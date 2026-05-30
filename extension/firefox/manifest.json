@@ -9,13 +9,13 @@
     "tabs",
     "https://etax.lirs.gov.ng/*",
     "https://etax.lirs.net/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1:19876/*"
   ],
   "background": {
     "scripts": [
       "background.js"
     ],
-    "persistent": false
+    "persistent": true
   },
   "browser_action": {
     "default_popup": "popup.html",

@@ -34,7 +34,6 @@ export class LIRSService {
   ): LIRSFieldGroup[] {
     const groups: LIRSFieldGroup[] = [];
 
-    // ── Taxpayer Info ──
     groups.push({
       section: 'Taxpayer',
       fields: [
@@ -43,7 +42,6 @@ export class LIRSService {
       ],
     });
 
-    // ── Income Declaration ──
     const incomeByType = this.aggregateIncomeByType(incomeEntries);
     const incomeFields = [
       { label: 'Salary / Employment', value: this.fmt(incomeByType.employment), copyText: String(incomeByType.employment) },
@@ -70,7 +68,6 @@ export class LIRSService {
 
     groups.push({ section: 'Income Declaration', fields: incomeFields });
 
-    // ── Capital Allowances ──
     if (allowances.length > 0) {
       const totalCa = allowances.reduce((s, a) => s + a.annualAllowanceAmount, 0);
       const caFields: LIRSFieldItem[] = allowances.map(a => ({
@@ -83,7 +80,6 @@ export class LIRSService {
       groups.push({ section: 'Capital Allowances', fields: caFields });
     }
 
-    // ── Deductions & Reliefs ──
     const reliefFields: LIRSFieldItem[] = reliefs.map(r => ({
       label: this.reliefLabel(r.reliefType),
       value: this.fmt(r.claimedAmount, true),
@@ -95,7 +91,6 @@ export class LIRSService {
     }
     groups.push({ section: 'Deductions & Reliefs', fields: reliefFields });
 
-    // ── Computation Summary ──
     if (computation) {
       groups.push({
         section: 'Tax Computation',

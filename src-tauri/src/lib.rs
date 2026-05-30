@@ -1,11 +1,10 @@
-mod commands;
-mod db;
-mod models;
-mod services;
+pub mod commands;
+pub mod db;
+pub mod models;
+pub mod services;
 
 use db::AppDb;
 use std::sync::Mutex;
-
 pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
@@ -36,6 +35,10 @@ pub fn run() {
             commands::auth::recover_with_answers,
             commands::auth::reset_pin,
             commands::auth::change_pin,
+            commands::auth::is_biometric_available,
+            commands::auth::enable_biometric,
+            commands::auth::disable_biometric,
+            commands::auth::unlock_with_biometric,
             // Backup / Restore
             commands::auth::backup_db,
             commands::auth::restore_db,

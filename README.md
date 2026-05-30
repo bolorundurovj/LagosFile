@@ -1,5 +1,13 @@
 # LagosFile
 
+[![GitHub Release](https://img.shields.io/github/v/release/bolorundurovj/LagosFile?sort=semver&style=flat-square)](https://github.com/bolorundurovj/LagosFile/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/bolorundurovj/LagosFile/total?style=flat-square)](https://github.com/bolorundurovj/LagosFile/releases)
+[![CI](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml/badge.svg)](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml)
+[![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
+[![SonarCloud Coverage](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=coverage)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
+[![License](https://img.shields.io/badge/License-Non--Commercial-orange?style=flat-square)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/bolorundurovj/LagosFile?style=flat-square)](https://github.com/bolorundurovj/LagosFile/stargazers)
+
 **LagosFile** is an offline-first desktop application for Lagos-based individual taxpayers filing Direct Assessment returns under the Nigeria Tax Act (NTA) 2025. It guides you through income entry, capital allowances, deductions, and a full tax computation, then helps you file directly on the LIRS e-Tax portal via a companion browser extension.
 
 Built with **Angular 19** and **Tauri 2** (Rust backend). Your data never leaves your machine.
@@ -20,6 +28,36 @@ Built with **Angular 19** and **Tauri 2** (Rust backend). Your data never leaves
 - **Configurable tax parameters** - Edit bands, rates, and caps in-app without a software release
 - **Year-over-year tax chart** - Dashboard chart showing tax liability across filing years
 - **Light / dark / system theming**
+
+---
+
+## Screenshots
+
+Click any section below to expand.
+
+<details>
+<summary><strong>Dashboard</strong> — Year-over-year tax overview and filing status</summary>
+<br>
+<img src="src/assets/screenshots/dashboard.png" alt="Dashboard" width="800">
+</details>
+
+<details>
+<summary><strong>Filing History</strong> — Confirmed filings, amendments, and exports</summary>
+<br>
+<img src="src/assets/screenshots/filing_history.png" alt="Filing History" width="800">
+</details>
+
+<details>
+<summary><strong>PIN Entry with Biometric</strong> — Unlock with PIN or Windows Hello / Touch ID</summary>
+<br>
+<img src="src/assets/screenshots/login_with_biometrics_enabled.png" alt="PIN Entry with Biometric" width="800">
+</details>
+
+<details>
+<summary><strong>Configuration</strong> — Customise tax bands, rates, and caps</summary>
+<br>
+<img src="src/assets/screenshots/configuration.png" alt="Configuration" width="800">
+</details>
 
 ---
 
@@ -71,24 +109,7 @@ The installer is output to `src-tauri/target/release/bundle/`.
 
 ## Browser Extension
 
-The **LagosFile for LIRS** extension auto-populates the LIRS e-Tax portal with your confirmed filing data. It runs alongside the desktop app via a local HTTP bridge on port `19876`.
-
-### Install (development)
-
-**Chrome / Edge**
-1. Pack the extension: `npm run pack:ext:chrome`
-2. Go to `chrome://extensions` → Enable Developer Mode → Load unpacked → select `extension/chrome/`
-
-**Firefox**
-1. Pack the extension: `npm run pack:ext:firefox`
-2. Go to `about:debugging` → This Firefox → Load Temporary Add-on → select `dist-ext/firefox-lagosfile-lirs.xpi`
-
-### How it works
-
-1. Open a confirmed filing in LagosFile and click **File with LIRS**
-2. The app starts the local bridge and opens the LIRS e-Tax portal in your browser
-3. The extension injects a floating panel into the portal page
-4. Select the filing from the picker and use the per-tab fill buttons to auto-populate each form section
+[LagosFile for LIRS](extension/README.md) is a companion browser extension that auto-fills the LIRS e-Tax portal from your confirmed filing data. See the [extension README](extension/README.md) for installation and usage instructions.
 
 ---
 

@@ -12,8 +12,6 @@ export class FilingService {
 
   constructor(private tauri: TauriService) {}
 
-  // ── Filing CRUD ──────────────────────────────────────────
-
   async listFilings(): Promise<Filing[]> {
     return this.tauri.invoke<Filing[]>('list_filings');
   }
@@ -46,8 +44,6 @@ export class FilingService {
     return this.tauri.invoke<Filing>('amend_filing', { id });
   }
 
-  // ── Income entries ───────────────────────────────────────
-
   async listIncomeEntries(filingId: string): Promise<IncomeEntry[]> {
     return this.tauri.invoke<IncomeEntry[]>('list_income_entries', { filingId });
   }
@@ -59,8 +55,6 @@ export class FilingService {
   async deleteIncomeEntry(id: string): Promise<void> {
     return this.tauri.invoke('delete_income_entry', { id });
   }
-
-  // ── Capital allowances ───────────────────────────────────
 
   async listAllowances(filingId: string): Promise<CapitalAllowance[]> {
     return this.tauri.invoke<CapitalAllowance[]>('list_allowances', { filingId });
@@ -74,8 +68,6 @@ export class FilingService {
     return this.tauri.invoke('delete_allowance', { id });
   }
 
-  // ── Relief entries ───────────────────────────────────────
-
   async listReliefEntries(filingId: string): Promise<ReliefEntry[]> {
     return this.tauri.invoke<ReliefEntry[]>('list_relief_entries', { filingId });
   }
@@ -87,8 +79,6 @@ export class FilingService {
   async deleteReliefEntry(id: string): Promise<void> {
     return this.tauri.invoke('delete_relief_entry', { id });
   }
-
-  // ── Documents ────────────────────────────────────────────
 
   async attachDocument(
     parentEntryId: string,
@@ -111,16 +101,12 @@ export class FilingService {
     return this.tauri.invoke('delete_document', { id });
   }
 
-  // ── Computation ──────────────────────────────────────────
-
   async compute(filingId: string): Promise<ComputationResult> {
     return this.tauri.invoke<ComputationResult>('compute_filing', { filingId });
   }
 
-  // ── Export ───────────────────────────────────────────────
-
-  async exportPdf(filingId: string, savePath: string, includeAttachments: boolean): Promise<string> {
-    return this.tauri.invoke<string>('export_filing_pdf', { filingId, savePath, includeAttachments });
+  async exportPdf(filingId: string, savePath: string, includeAttachments: boolean, letterheadStyle: 'single' | 'alt-fills' = 'single'): Promise<string> {
+    return this.tauri.invoke<string>('export_filing_pdf', { filingId, savePath, includeAttachments, letterheadStyle });
   }
 
   async exportCsv(filingId: string, savePath: string): Promise<string> {
@@ -130,8 +116,6 @@ export class FilingService {
   async exportJson(filingId: string, savePath: string): Promise<string> {
     return this.tauri.invoke<string>('export_filing_json', { filingId, savePath });
   }
-
-  // ── Wizard state helpers ─────────────────────────────────
 
   initWizard(yearOfAssessment: number, filingId: string): void {
     this._wizard.set({
@@ -149,8 +133,6 @@ export class FilingService {
   clearWizard(): void {
     this._wizard.set(null);
   }
-
-  // ── Deadline helpers ──────────────────────────────────────
 
   /** Returns the number of days until the 31 March deadline for the given YOA. */
   daysUntilDeadline(yearOfAssessment: number): number {
