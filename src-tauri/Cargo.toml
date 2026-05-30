@@ -71,8 +71,6 @@ open = "5"
 
 # Biometric and Secure Storage
 keyring = "2"
-[target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation", "Win32_System_WinRT", "Win32_Foundation"] }
 
 # PDF generation
 printpdf = { version = "0.5", features = ["svg"] }
@@ -80,6 +78,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 # lopdf for PDF manipulation
 lopdf = "0.34"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation", "Win32_System_WinRT", "Win32_Foundation"] }
 
 [profile.dev]
 incremental = true
