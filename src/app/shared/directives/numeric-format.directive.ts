@@ -46,8 +46,9 @@ export class NumericFormatDirective implements OnInit {
     this.applyFormat();
   }
 
-  @HostListener('input', ['$event.target.value'])
-  onInput(raw: string): void {
+  @HostListener('input', ['$event'])
+  onInput(event: Event): void {
+    const raw = (event.target as HTMLInputElement | null)?.value ?? '';
     // Strip commas and anything that isn't a digit, minus or decimal point
     const cleaned = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '');
     const num     = cleaned === '' || cleaned === '-' ? null : parseFloat(cleaned);
