@@ -53,18 +53,11 @@ jobs:
           name: release-notes
           path: CHANGELOG_RELEASE.md
 
-      - name: Update full CHANGELOG.md
+      - name: Generate full CHANGELOG.md (for artifact only)
         run: git-cliff --config cliff.toml -o CHANGELOG.md
         env:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Commit updated CHANGELOG.md
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: 'chore(release): update CHANGELOG.md for ${{ env.VERSION }} [skip ci]'
-          file_pattern: CHANGELOG.md
-          skip_dirty_check: false
 
   # ── 2. Build browser extensions ───────────────────────────────
   build-extensions:

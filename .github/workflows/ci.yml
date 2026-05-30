@@ -94,6 +94,24 @@ jobs:
           skip_dirty_check: false
           push_options: '--force-with-lease'
 
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Generate changelog
+        run: git-cliff --config cliff.toml -o CHANGELOG.md
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Commit updated CHANGELOG.md
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'chore(release): update CHANGELOG.md for v${{ needs.check-version.outputs.version }} [skip ci]'
+          file_pattern: CHANGELOG.md
+          skip_dirty_check: false
+
       - name: Create and push git tag
         run: |
           git config user.name  "github-actions[bot]"
