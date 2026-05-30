@@ -5,7 +5,7 @@
 [![CI](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml/badge.svg)](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml)
 [![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
 [![SonarCloud Coverage](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=coverage)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
-[![License](https://img.shields.io/github/license/bolorundurovj/LagosFile?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-Non--Commercial-orange?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/bolorundurovj/LagosFile?style=flat-square)](https://github.com/bolorundurovj/LagosFile/stargazers)
 
 **LagosFile** is an offline-first desktop application for Lagos-based individual taxpayers filing Direct Assessment returns under the Nigeria Tax Act (NTA) 2025. It guides you through income entry, capital allowances, deductions, and a full tax computation, then helps you file directly on the LIRS e-Tax portal via a companion browser extension.
