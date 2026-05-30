@@ -174,8 +174,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          cache-on-failure: true
-          key: rust-v2
+          key: rust-v3
 
       - name: Cargo check
         working-directory: src-tauri
@@ -216,8 +215,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          cache-on-failure: true
-          key: rust-v2
+          key: rust-v3
 
       - name: Run backend tests
         working-directory: src-tauri
