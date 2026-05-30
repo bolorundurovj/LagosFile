@@ -17,9 +17,9 @@ impl ConfigService {
              FROM tax_config WHERE is_active=1 LIMIT 1",
             [],
             Self::row_to_config,
-        ).map_err(|e| e.into())
+        )
+        .map_err(|e| e.into())
     }
-
 
     pub fn save(db: &AppDb, config: serde_json::Value) -> Result<TaxConfig> {
         let id = Uuid::new_v4();
