@@ -1,7 +1,7 @@
-mod commands;
-mod db;
-mod models;
-mod services;
+pub mod commands;
+pub mod db;
+pub mod models;
+pub mod services;
 
 use db::AppDb;
 use std::sync::Mutex;

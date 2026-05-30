@@ -66,7 +66,7 @@ pub struct Filing {
     pub tax_config_version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct IncomeEntry {
     pub id: Uuid,
@@ -104,7 +104,7 @@ pub struct CapitalAllowance {
     pub documents: Vec<Document>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ReliefEntry {
     pub id: Uuid,
@@ -118,7 +118,7 @@ pub struct ReliefEntry {
     pub documents: Vec<Document>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
     pub id: Uuid,
