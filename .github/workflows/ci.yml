@@ -127,6 +127,9 @@ jobs:
       - name: Lint Angular
         run: npm run lint
 
+      - name: Audit Node dependencies
+        run: npm audit --audit-level=moderate
+
       - name: Build Angular
         run: npm run build
 
@@ -163,6 +166,12 @@ jobs:
       - name: Cargo fmt check
         working-directory: src-tauri
         run: cargo fmt --check
+
+      - name: Audit Rust dependencies
+        working-directory: src-tauri
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
 
   # ── Extension pack check ───────────────────────────────────────
   extension:
