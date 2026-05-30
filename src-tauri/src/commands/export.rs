@@ -5,8 +5,6 @@ use rusqlite::params;
 use std::io::BufWriter;
 use tauri::State;
 
-// ── shared DB helpers ─────────────────────────────────────────
-
 struct FilingSummary {
     filing_reference: Option<String>,
     year_of_assessment: i32,
@@ -92,8 +90,6 @@ fn ensure_parent(path: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
-// ── Attachment helpers ────────────────────────────────────────
 
 struct DocRecord {
     file_path: String,
@@ -373,8 +369,6 @@ fn embed_image_page(
     Ok(())
 }
 
-// ── PDF export ────────────────────────────────────────────────
-
 #[tauri::command]
 pub async fn export_filing_pdf(
     filing_id: String,
@@ -400,7 +394,6 @@ pub async fn export_filing_pdf(
 
     let is_alt_fills = letterhead_style.as_deref() == Some("alt-fills");
 
-    // ── Build PDF (A4 portrait, 210×297 mm) ───────────────────
     let (doc, page1, layer1) = PdfDocument::new(
         "LagosFile Tax Computation Statement",
         Mm(210.0),
@@ -419,7 +412,6 @@ pub async fn export_filing_pdf(
     let left = Mm(20.0);
     let right = Mm(190.0);
 
-    // ── Shared helpers: embed SVG logo, watermark, footer ────
     // Parse the actual SVG logo files and embed them natively in the PDF.
     static SVG_SINGLE: &str = include_str!("../../../src/assets/logo/mark-single-span.svg");
     static SVG_ALT: &str = include_str!("../../../src/assets/logo/mark-alt-fills.svg");
@@ -491,7 +483,6 @@ pub async fn export_filing_pdf(
         layer.restore_graphics_state();
     };
 
-    // ── Cover page ────────────────────────────────────────────
     {
         let logo_x = Mm(20.0);
         let logo_y = Mm(261.0);
@@ -626,7 +617,6 @@ pub async fn export_filing_pdf(
         );
     }
 
-    // ── Computation page ──────────────────────────────────────
     let (page2, layer2) = doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
     let layer = doc.get_page(page2).get_layer(layer2);
 
@@ -634,8 +624,6 @@ pub async fn export_filing_pdf(
     let line_h = Mm(7.0);
     let gap = Mm(5.0);
 
-    // ── Header: brand strip (logo + wordmark) ─────────────────
-    // Logo anchored so its baseline sits at y; rendered height ~12 mm.
     embed_logo(&layer, left, y, LOGO_W_MM);
     layer.use_text(
         "LagosFile",
@@ -653,7 +641,6 @@ pub async fn export_filing_pdf(
     );
     layer.use_text("NIGERIA TAX ACT 2025", 7.0, Mm(148.0), y + Mm(7.5), &font);
 
-    // Thin rule below the brand strip — clear of the logo
     y -= Mm(2.5);
     layer.add_shape(Line {
         points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
@@ -664,7 +651,6 @@ pub async fn export_filing_pdf(
     });
     y -= Mm(7.0);
 
-    // ── Document title block (fully below the rule) ────────────
     layer.use_text("LAGOS STATE DIRECT ASSESSMENT", 9.0, left, y, &font);
     y -= Mm(7.0);
     layer.use_text("TAX COMPUTATION STATEMENT", 18.0, left, y, &font_bold);
@@ -679,7 +665,6 @@ pub async fn export_filing_pdf(
     });
     y -= gap;
 
-    // ── Taxpayer details ──────────────────────────────────────
     let details: &[(&str, String)] = &[
         ("Taxpayer", summary.full_name.clone()),
         ("TIN", summary.tin.clone()),
@@ -718,7 +703,6 @@ pub async fn export_filing_pdf(
     });
     y -= gap;
 
-    // ── Computation summary ───────────────────────────────────
     layer.use_text("COMPUTATION SUMMARY", 11.0, left, y, &font_bold);
     y -= line_h;
 
@@ -758,7 +742,6 @@ pub async fn export_filing_pdf(
     );
     y -= Mm(14.0);
 
-    // ── Footer ────────────────────────────────────────────────
     layer.add_shape(Line {
         points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
         is_closed: false,
@@ -792,11 +775,9 @@ pub async fn export_filing_pdf(
     draw_watermark(&layer, &font);
     draw_footer(&layer, &font, "Page 1  \u{00B7}  Tax Computation Statement");
 
-    // ── Attachments (phase 1 — before printpdf save) ─────────
     let mut pdf_att_paths: Vec<String> = Vec::new();
 
     if include_attachments && !documents.is_empty() {
-        // Sort docs into three buckets
         let mut images: Vec<&DocRecord> = Vec::new();
         let mut pdfs: Vec<&DocRecord> = Vec::new();
         let mut others: Vec<&DocRecord> = Vec::new();
@@ -812,8 +793,6 @@ pub async fn export_filing_pdf(
             }
         }
 
-        // Sibling _attachments/ folder — PDFs will also be merged into the PDF
-        // itself; copy them to the folder as a backup alongside other files.
         let needs_folder = !pdfs.is_empty() || !others.is_empty();
         let attach_folder: Option<std::path::PathBuf> = if needs_folder {
             let base = std::path::Path::new(&save_path);
@@ -832,17 +811,14 @@ pub async fn export_filing_pdf(
             None
         };
 
-        // Appendix listing page (always comes right after the computation pages)
         let _ = add_attachments_appendix(
             &doc,
             &documents,
             attach_folder.as_ref().and_then(|d| d.to_str()),
         );
 
-        // Embed image files directly as PDF pages
         for rec in &images {
             if embed_image_page(&doc, &rec.file_path, &rec.file_name).is_err() {
-                // Fallback: copy to _attachments/ folder
                 let base = std::path::Path::new(&save_path);
                 let stem = base
                     .file_stem()
@@ -856,15 +832,12 @@ pub async fn export_filing_pdf(
         }
     }
 
-    // ── Write main PDF to disk ─────────────────────────────────
     doc.save(&mut BufWriter::new(
         std::fs::File::create(&save_path).map_err(|e| e.to_string())?,
     ))
     .map_err(|e| e.to_string())?;
 
-    // ── Attachments (phase 2 — merge PDF pages with lopdf) ────
     if !pdf_att_paths.is_empty() {
-        // Best-effort: don't fail the whole export if merging has issues
         if let Err(e) = append_pdf_attachments(&save_path, &pdf_att_paths) {
             eprintln!("Warning: could not merge PDF attachments: {}", e);
         }
@@ -872,8 +845,6 @@ pub async fn export_filing_pdf(
 
     Ok(save_path)
 }
-
-// ── CSV export ────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn export_filing_csv(
@@ -938,8 +909,6 @@ pub async fn export_filing_csv(
     std::fs::write(&save_path, csv.as_bytes()).map_err(|e| e.to_string())?;
     Ok(save_path)
 }
-
-// ── JSON export ───────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn export_filing_json(
@@ -1012,8 +981,6 @@ pub async fn export_filing_json(
     std::fs::write(&save_path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(save_path)
 }
-
-// ── Open file with OS default application ────────────────
 
 #[tauri::command]
 pub async fn open_file(path: String) -> Result<(), String> {

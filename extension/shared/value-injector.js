@@ -1,8 +1,3 @@
-// ── Framework-Aware Value Injection ────────────────────────
-// Standard `input.value = 'x'` does NOT trigger React/Angular change
-// detection. This module fires the correct synthetic events after
-// setting the native value.
-
 /**
  * Set a form field's value and fire all the events needed for
  * React (__reactFiber), Angular (ngControl), and native DOM

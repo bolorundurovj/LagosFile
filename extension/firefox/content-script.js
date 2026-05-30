@@ -1,26 +1,15 @@
-// ── LagosFile for LIRS — Content Script v2 ───────────────
-// Injects a floating panel directly into the LIRS page so
-// the user never has to leave the tab. The panel fetches all
-// confirmed filings from the local bridge, lets the user pick
-// one, then fills visible form fields on the current tab.
-//
-// Using Shadow DOM for full style isolation from LIRS portal CSS.
-
 (function () {
   'use strict';
 
-  // Prevent double injection on SPA navigations
   if (document.getElementById('__lf_panel_host')) return;
 
   const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
   const BRIDGE  = 'http://127.0.0.1:19876';
 
-  // ── State ─────────────────────────────────────────────────
   let allFilings     = [];
   let selectedFiling = null;
   let panelOpen      = false;
 
-  // ── Shadow DOM setup ──────────────────────────────────────
   const host = document.createElement('div');
   host.id = '__lf_panel_host';
   Object.assign(host.style, {
@@ -38,7 +27,6 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ── Toggle button ── */
   #toggle {
     width: 44px; height: 44px;
     background: #001E40; color: #fff;
@@ -51,7 +39,6 @@
   #toggle:hover { background: #004A99; transform: scale(1.08); }
   #toggle.active { background: #004A99; }
 
-  /* ── Panel ── */
   #panel {
     position: absolute;
     bottom: 52px; right: 0;
@@ -69,7 +56,6 @@
     opacity: 0; pointer-events: none; transform: translateY(8px) scale(0.97);
   }
 
-  /* ── Panel header ── */
   .ph {
     background: #001e40; color: #fff;
     padding: 10px 14px;
@@ -83,10 +69,8 @@
   }
   .ph-close:hover { color: #fff; }
 
-  /* ── Panel body ── */
   .pb { padding: 12px 14px; }
 
-  /* ── Loading ── */
   .spinner {
     width: 22px; height: 22px;
     border: 3px solid #e2e8f0; border-top-color: #004A99;
@@ -96,14 +80,12 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-text { text-align: center; font-size: 12px; color: #64748b; padding-bottom: 12px; }
 
-  /* ── Section label ── */
   .slabel {
     font-size: 10px; font-weight: 700; color: #94a3b8;
     text-transform: uppercase; letter-spacing: 0.06em;
     margin-bottom: 7px; display: block;
   }
 
-  /* ── Filing cards ── */
   .filing-list { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
   .fc {
     background: #fff; border: 1px solid #e2e8f0; border-radius: 8px;
@@ -122,7 +104,6 @@
   }
   .fc-btn:hover { background: #003366; }
 
-  /* ── Selected summary ── */
   .sel-box {
     background: #001e40; color: #fff; border-radius: 8px;
     padding: 9px 11px; margin-bottom: 10px;
@@ -131,7 +112,6 @@
   .sel-meta { font-size: 11px; opacity: 0.72; margin-top: 1px; }
   .sel-tax  { font-size: 15px; font-weight: 700; margin-top: 5px; font-variant-numeric: tabular-nums; }
 
-  /* ── Buttons ── */
   .btn {
     display: block; width: 100%;
     padding: 8px 12px; border-radius: 6px;
@@ -154,12 +134,10 @@
   .btn-ghost:hover { background: #f1f5f9; }
   .btn-row { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; }
 
-  /* ── Offline state ── */
   .offline-icon { font-size: 24px; text-align: center; margin-bottom: 4px; }
   .offline-title { font-size: 13px; font-weight: 600; text-align: center; margin-bottom: 4px; }
   .offline-desc { font-size: 11px; color: #64748b; text-align: center; line-height: 1.5; }
 
-  /* ── Toast ── */
   #toast {
     position: fixed; bottom: 140px; right: 14px;
     background: #001e40; color: #fff;
@@ -206,14 +184,12 @@
 <div id="toast" class="hidden"></div>
 `;
 
-  // ── Element refs ──────────────────────────────────────────
   const toggleBtn = shadow.getElementById('toggle');
   const panel     = shadow.getElementById('panel');
   const body      = shadow.getElementById('panel-body');
   const closeBtn  = shadow.getElementById('close-btn');
   const toastEl   = shadow.getElementById('toast');
 
-  // ── Panel open/close ──────────────────────────────────────
   toggleBtn.addEventListener('click', function () {
     panelOpen = !panelOpen;
     panel.classList.toggle('hidden', !panelOpen);
@@ -229,8 +205,6 @@
     panel.classList.add('hidden');
     toggleBtn.classList.remove('active');
   });
-
-  // ── Render helpers ────────────────────────────────────────
 
   function renderLoading() {
     body.innerHTML = '<div class="spinner"></div><div class="loading-text">Connecting to LagosFile…</div>';
@@ -320,10 +294,6 @@
     });
   }
 
-  // ── Load filings from bridge ──────────────────────────────
-  // Firefox blocks direct fetch from https:// pages to http://localhost.
-  // We proxy through the background script which has unrestricted network access.
-
   function loadFilings() {
     browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filings' })
       .then(function (resp) {
@@ -340,7 +310,6 @@
         }
       })
       .catch(function () {
-        // Try single /filing (backward compat)
         browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filing' })
           .then(function (resp) {
             if (!resp || !resp.ok) throw new Error('fetch failed');
@@ -354,11 +323,6 @@
       });
   }
 
-  // ── Field injection ───────────────────────────────────────
-
-  // Each entry is [labelNeedle, dataPath].
-  // Multiple entries with the same dataPath are tried in order;
-  // injectStep deduplicates by element so the field is filled only once.
   const MAPPINGS = {
     income: [
       ['Employment',                   'income.employment'],
@@ -408,28 +372,25 @@
     var mappings = MAPPINGS[step];
     if (!mappings) { showToast('Unknown step: ' + step, 'warning'); return; }
     var done = 0;
-    var filledEls  = new Set(); // prevent filling the same element twice
-    var filledPaths = new Set(); // prevent counting the same data field twice as "miss"
+    var filledEls  = new Set();
+    var filledPaths = new Set();
 
     mappings.forEach(function (m) {
       var val = getPath(selectedFiling, m[1]);
       if (val == null || val === '' || val === 0) return;
       var el = byLabel(m[0]);
       if (!el) {
-        // Only count as missing if no other variant has already found/filled this data path
         if (!filledPaths.has(m[1])) {
-          // will be counted after the loop if nothing filled this path at all
         }
         return;
       }
-      if (filledEls.has(el)) return; // already filled by another label variant
+      if (filledEls.has(el)) return;
       setFieldValue(el, String(val));
       filledEls.add(el);
       filledPaths.add(m[1]);
       done++;
     });
 
-    // Count data paths that had a value but no element was found
     var allPaths = {};
     mappings.forEach(function (m) {
       var val = getPath(selectedFiling, m[1]);
@@ -454,20 +415,17 @@
     var clean = String(value).replace(/,/g, '').trim();
     el.focus();
 
-    // 1. Native setter
     var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') &&
                        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     if (nativeSetter) nativeSetter.call(el, clean);
     else el.value = clean;
 
-    // 2. InputEvent (frameworks check inputType)
     el.dispatchEvent(new InputEvent('input', {
       bubbles: true, composed: true,
       inputType: 'insertText', data: clean,
     }));
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 
-    // 3. React fiber
     var reactKey = Object.keys(el).find(function (k) {
       return k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance');
     });
@@ -476,7 +434,6 @@
       if (props && props.onChange) try { props.onChange({ target: el, type: 'change' }); } catch (_) {}
     }
 
-    // 4. Angular Ivy — walk __ngContext__ LView
     try {
       var ctx = el.__ngContext__;
       if (Array.isArray(ctx)) {
@@ -495,28 +452,24 @@
       }
     } catch (_) {}
 
-    // NOTE: no blur dispatch — Angular blur resets field to model value
     return true;
   }
 
   function byLabel(labelText) {
     var needle = labelText.toLowerCase();
 
-    // Helper: find the closest input to a label-like element
     function inputNear(labelEl) {
       var forId = labelEl.getAttribute && labelEl.getAttribute('for');
       if (forId) {
         var byFor = document.querySelector('#' + CSS.escape(forId));
         if (byFor && byFor.tagName === 'INPUT') return byFor;
       }
-      // Next sibling
       var sib = labelEl.nextElementSibling;
       if (sib) {
         if (sib.tagName === 'INPUT') return sib;
         var inSib = sib.querySelector('input');
         if (inSib) return inSib;
       }
-      // Parent → input (1-2 levels up)
       for (var up = labelEl.parentElement, depth = 0; up && depth < 5; up = up.parentElement, depth++) {
         var inUp = up.querySelector('input');
         if (inUp) return inUp;
@@ -524,7 +477,6 @@
       return null;
     }
 
-    // 1. <label> and Angular Material <mat-label>
     var labelSelectors = 'label, mat-label';
     try {
       var labelEls = document.querySelectorAll(labelSelectors);
@@ -536,7 +488,6 @@
       }
     } catch (_) {}
 
-    // 2. Table cells as labels (LIRS uses table-based layout on some tabs)
     var cells = document.querySelectorAll('td, th');
     for (var j = 0; j < cells.length; j++) {
       var cell = cells[j];
@@ -553,12 +504,9 @@
       }
     }
 
-    // 3. Any element with text matching the label that has a nearby input
-    //    (covers div/span label patterns used by custom Angular components)
     var textNodes = document.querySelectorAll('span, div, p, li');
     for (var k = 0; k < textNodes.length; k++) {
       var node = textNodes[k];
-      // Only exact direct text — skip nodes with many child elements
       if (node.children.length > 2) continue;
       var txt = node.textContent.trim().toLowerCase();
       if (!txt.includes(needle) || txt.length > needle.length + 40) continue;
@@ -566,7 +514,6 @@
       if (near) return near;
     }
 
-    // 4. aria-label on input itself
     var inputs = document.querySelectorAll('input[aria-label], input[placeholder]');
     for (var m = 0; m < inputs.length; m++) {
       var inp2 = inputs[m];
@@ -581,8 +528,6 @@
   function getPath(obj, path) {
     return path.split('.').reduce(function (o, k) { return o && o[k]; }, obj);
   }
-
-  // ── Toast (rendered inside the tab, not shadow) ───────────
 
   function showToast(msg, type, duration) {
     var prev = document.getElementById('__lf_toast_outer');
@@ -621,8 +566,6 @@
     return Number(n).toLocaleString('en-NG');
   }
 
-  // ── Message listener ──────────────────────────────────────────
-
   browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     if (msg.type === 'INJECT_STEP') {
       var saved = selectedFiling;
@@ -638,7 +581,7 @@
     }
   });
 
-  // Init
   init();
 
 })();
+

@@ -1,7 +1,3 @@
-// ── LagosFile for LIRS — Popup v1.1 (Firefox / MV2) ──────────
-// Firefox uses Promise-based browser.* APIs; Chrome uses callbacks.
-// This file is the Firefox variant — all sendMessage calls use .then().
-
 (function () {
   'use strict';
 
@@ -12,13 +8,9 @@
 
   const $ = (id) => document.getElementById(id);
 
-  // ── Messaging helper ──────────────────────────────────────
-  // Firefox: browser.runtime.sendMessage returns a Promise (no callback arg).
   function sendMsg(msg) {
     return browser.runtime.sendMessage(msg);
   }
-
-  // ── State transitions ─────────────────────────────────────
 
   function showLoading() {
     $('state-loading').classList.remove('hidden');
@@ -63,8 +55,6 @@
     $('status-text').textContent = 'Not connected';
   }
 
-  // ── Background sync ───────────────────────────────────────
-
   function syncSelectedToBackground() {
     sendMsg({ type: 'SET_FILING_DATA', data: filingData || null }).catch(() => {});
   }
@@ -101,8 +91,6 @@
     if (!silent || allFilings.length > 0) showPickState();
   }
 
-  // ── Bootstrap from cache then refresh ────────────────────
-
   async function bootstrap() {
     try {
       const [cachedList, cachedSelected] = await Promise.all([
@@ -128,7 +116,7 @@
         filingData = match;
         syncSelectedToBackground();
         showFillState();
-        fetchFilings(true).catch(() => {}); // silent background refresh
+        fetchFilings(true).catch(() => {});
         return;
       }
 
@@ -153,7 +141,6 @@
   async function fetchFilings(silent) {
     if (!silent) showLoading();
     try {
-      // Proxy through background to avoid Firefox mixed-content blocking (https page → http bridge)
       const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
       if (!resp || !resp.ok) throw new Error(resp && resp.error || 'fetch failed');
       const data = resp.data;
@@ -162,7 +149,6 @@
       sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings }).catch(() => {});
       applyFilingsPayloadFromNetwork(silent);
     } catch (_) {
-      // Fallback: try single /filing endpoint
       try {
         const resp2 = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
         if (!resp2 || !resp2.ok) throw new Error('fetch failed');
@@ -174,7 +160,6 @@
         showFillState();
       } catch (__) {
         if (silent) return;
-        // Try returning whatever is cached
         try {
           const cached = await sendMsg({ type: 'GET_FILINGS_DATA' });
           if (cached && cached.length > 0) {
@@ -197,8 +182,6 @@
       }
     }
   }
-
-  // ── Filing list renderer ──────────────────────────────────
 
   function renderFilingList() {
     const container = $('filing-list');
@@ -223,8 +206,6 @@
       container.appendChild(card);
     });
   }
-
-  // ── Copy fields ───────────────────────────────────────────
 
   function buildCopyFields() {
     const container = $('copy-fields');
@@ -268,8 +249,6 @@
     });
   }
 
-  // ── Auto-fill ─────────────────────────────────────────────
-
   const STEPS = ['income', 'deductions', 'reliefs', 'wht', 'adjustments'];
 
   function injectStep(step) {
@@ -290,8 +269,6 @@
     STEPS.forEach((step, i) => setTimeout(() => injectStep(step), i * 900));
   });
 
-  // ── Navigation ────────────────────────────────────────────
-
   $('back-btn').addEventListener('click', () => {
     filingData = null;
     syncSelectedToBackground();
@@ -308,8 +285,6 @@
     sendMsg({ type: 'CLEAR_FILING_DATA' }).catch(() => {});
     showOffline();
   });
-
-  // ── Manual JSON load ──────────────────────────────────────
 
   $('load-file-btn').addEventListener('click', () => $('file-input').click());
 
@@ -362,8 +337,6 @@
     $('parse-error').classList.add('hidden');
   }
 
-  // ── Helpers ───────────────────────────────────────────────
-
   function fmtNaira(n) {
     if (n == null || isNaN(n)) return '—';
     return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
@@ -385,7 +358,6 @@
     return d.innerHTML;
   }
 
-  // ── Start ─────────────────────────────────────────────────
   bootstrap();
 
 })();

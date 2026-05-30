@@ -12,8 +12,6 @@ use uuid::Uuid;
 const LIRS_BRIDGE_PORT: u16 = 19876;
 const LIRS_BRIDGE_TIMEOUT_SECS: u64 = 600; // 10 minutes
 
-// ── helpers ──────────────────────────────────────────────────
-
 fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig> {
     conn.query_row(
         "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
@@ -65,10 +63,6 @@ fn lirs_data_dir() -> std::path::PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
     home.join("LagosFile")
 }
-
-// ── Core filing builder ───────────────────────────────────────
-// Builds a PendingFiling from a filing ID using an open DB connection.
-// Returns Err if the filing doesn't exist or isn't Confirmed.
 
 fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
     let filing = conn
@@ -128,7 +122,6 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
         )
         .map_err(|e| format!("Taxpayer not found: {}", e))?;
 
-    // ── Income ──
     let mut ie_stmt = conn
         .prepare(
             "SELECT income_type,gross_amount_ngn,is_foreign,foreign_currency,
@@ -200,7 +193,6 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
         }
     }
 
-    // ── Reliefs (aggregated) ──
     let mut re_stmt = conn
         .prepare("SELECT relief_type,claimed_amount FROM relief_entry WHERE filing_id=?1")
         .map_err(|e| e.to_string())?;
@@ -228,7 +220,6 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
         }
     }
 
-    // ── Full entries for computation ──
     let config = load_active_config(conn).map_err(|e| e.to_string())?;
 
     let mut ie_full_stmt = conn
@@ -407,13 +398,6 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
     })
 }
 
-// ── Local HTTP bridge ─────────────────────────────────────────
-// Spawns a tiny HTTP server so the browser extension can:
-//   GET /filings  → JSON array of all available PendingFilings (for the picker)
-//   GET /filing   → first filing in the array (backward compat)
-//   GET /health   → {"status":"ok"}
-//   OPTIONS *     → CORS preflight
-
 fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
@@ -439,7 +423,6 @@ fn start_bridge_server(filings_array_json: String, primary_json: String) {
         let listener = match TcpListener::bind(("127.0.0.1", LIRS_BRIDGE_PORT)) {
             Ok(l) => l,
             Err(e) => {
-                // Port already in use — another bridge instance is likely running.
                 eprintln!(
                     "[LagosFile] LIRS bridge port {} already in use: {}",
                     LIRS_BRIDGE_PORT, e
@@ -500,11 +483,6 @@ fn start_bridge_server(filings_array_json: String, primary_json: String) {
     });
 }
 
-// ── Commands ──────────────────────────────────────────────────
-
-/// Open the LIRS portal for a single specific filing.
-/// The bridge serves that filing at /filing AND also fetches all other
-/// confirmed filings so the extension picker can show the full list.
 #[tauri::command]
 pub async fn open_lirs_portal(
     id: String,
@@ -518,7 +496,6 @@ pub async fn open_lirs_portal(
         let primary = build_pending_filing(&conn, &id)?;
         let filing_ref = primary.filing_reference.clone();
 
-        // Also load all other confirmed filings for the extension picker
         let all_ids: Vec<String> = conn
             .prepare(
                 "SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
@@ -535,13 +512,11 @@ pub async fn open_lirs_portal(
             .filter_map(|fid| build_pending_filing(&conn, fid).ok())
             .collect();
 
-        // Primary goes first in the list
         all_filings.insert(0, primary.clone());
 
         (primary, all_filings, filing_ref)
     };
 
-    // Write primary to disk for manual fallback
     let data_dir = lirs_data_dir();
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("pending_filing.json");
@@ -569,8 +544,6 @@ pub async fn open_lirs_portal(
     })
 }
 
-/// Start the LIRS bridge with ALL confirmed filings so the extension
-/// picker can show the full list without needing to pick one first.
 #[tauri::command]
 pub async fn open_lirs_portal_all(
     state: State<'_, AppState>,

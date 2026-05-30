@@ -20,8 +20,6 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
-// ── INI parser ─────────────────────────────────────────────────────────────
-
 function parseVersionIni(relPath) {
   const src = readFileSync(join(ROOT, relPath), 'utf8');
   const fields = {};
@@ -46,8 +44,6 @@ function assembleVersion(fields) {
   return PRE_RELEASE ? `${base}-${PRE_RELEASE}` : base;
 }
 
-// ── JSON helpers ───────────────────────────────────────────────────────────
-
 function readJson(relPath) {
   return JSON.parse(readFileSync(join(ROOT, relPath), 'utf8'));
 }
@@ -64,8 +60,6 @@ function patchCargoToml(relPath, version) {
   );
   writeFileSync(join(ROOT, relPath), src, 'utf8');
 }
-
-// ── main ───────────────────────────────────────────────────────────────────
 
 let version = process.argv[2];
 

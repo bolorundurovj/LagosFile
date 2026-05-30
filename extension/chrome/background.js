@@ -1,6 +1,3 @@
-// ── LagosFile for LIRS — Background (Chrome MV3) ─────────
-// Caches filing data and relays INJECT_STEP to the content script.
-
 const EXT_VERSION = '1.1.0';
 let cachedFilings = [];   // array of PendingFiling
 let currentFiling = null; // the currently selected PendingFiling
@@ -16,7 +13,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   switch (msg.type) {
 
-    // ── Cache the full list of filings ──────────────────────
     case 'SET_FILINGS_DATA':
       cachedFilings = msg.data || [];
       chrome.storage.local.set({ filingsData: cachedFilings }, () => sendResponse({ ok: true }));
@@ -33,7 +29,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       return true;
 
-    // ── Single filing (backward compat) ─────────────────────
     case 'SET_FILING_DATA':
       currentFiling = msg.data ?? null;
       if (currentFiling) {
@@ -59,7 +54,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       chrome.storage.local.remove(['filingsData', 'filingData'], () => sendResponse({ ok: true }));
       return true;
 
-    // ── Relay injection to content script ───────────────────
     case 'INJECT_STEP':
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) { sendResponse({ ok: false, reason: 'no_tab' }); return; }

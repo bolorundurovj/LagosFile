@@ -1,7 +1,3 @@
-// ============================================================
-// LagosFile — TypeScript models (mirrors Rust/DB structs)
-// ============================================================
-
 export interface Taxpayer {
   id: string;
   fullName: string;
@@ -160,7 +156,6 @@ export interface TaxConfig {
   modifiedBy: string;
 }
 
-// Computation results
 export interface BandResult {
   lower: number;
   upper: number | null;
@@ -187,7 +182,6 @@ export interface ComputationResult {
   rentReliefApplied: number;
 }
 
-// FX
 export interface FxResult {
   rate: number | null;
   source: FxRateSource;
@@ -196,14 +190,12 @@ export interface FxResult {
   cacheDate?: string;
 }
 
-// Auth / app state
 export interface AppSession {
   isUnlocked: boolean;
   taxpayerId?: string;
   taxpayer?: Taxpayer;
 }
 
-// Wizard draft (in-progress filing data)
 export interface WizardState {
   filingId?: string;
   yearOfAssessment: number;
@@ -222,7 +214,6 @@ export interface AppStatus {
   biometricEnabled: boolean;
 }
 
-// LIRS Portal Integration
 export interface LIRSAutomationResult {
   success: boolean;
   fallbackActive: boolean;

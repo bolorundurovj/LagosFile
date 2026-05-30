@@ -1,8 +1,3 @@
-// ============================================================
-// LagosFile Design System — "The Financial Architect"
-// Color tokens, spacing, typography, elevation
-// ============================================================
-
 :root {
   // --- Primary palette ---
   --color-primary: #001e40;
@@ -130,10 +125,6 @@
   // --- CTA gradient ---
   --gradient-cta: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-container) 100%);
 }
-
-// ============================================================
-// Dark theme — applied via [data-theme="dark"] on <html>
-// ============================================================
 
 [data-theme="dark"] {
   // --- Primary palette ---

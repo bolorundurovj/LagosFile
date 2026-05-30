@@ -1,5 +1,3 @@
-// ── Field Mappings: LIRS Form A sections → filing data ────
-
 /**
  * Define which fields to inject for each step of Form A.
  * Each mapping uses the selector strategy from field-selectors.js.

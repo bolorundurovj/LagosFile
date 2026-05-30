@@ -1,4 +1,3 @@
-// ── Shared Utilities ──────────────────────────────────────
 
 /**
  * Detect which step/route the user is on within the LIRS portal.

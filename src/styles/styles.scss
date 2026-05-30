@@ -1,10 +1,6 @@
 @use 'tokens';
 @use 'typography';
 
-// ============================================================
-// CSS Reset & Base
-// ============================================================
-
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -33,9 +29,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-// ============================================================
 // Scrollbar — subtle, on-brand
-// ============================================================
 
 ::-webkit-scrollbar {
   width: 6px;
@@ -52,9 +46,7 @@ body {
   background: var(--color-outline);
 }
 
-// ============================================================
 // Form elements base
-// ============================================================
 
 input, textarea, select {
   font-family: var(--font-body);
@@ -76,9 +68,7 @@ a {
   &:hover { text-decoration: underline; }
 }
 
-// ============================================================
 // Card — no borders, xl radius, tonal lift
-// ============================================================
 
 .card {
   background: var(--color-surface-container-lowest);
@@ -93,9 +83,7 @@ a {
   padding: var(--space-6);
 }
 
-// ============================================================
 // Buttons
-// ============================================================
 
 .btn {
   display: inline-flex;
@@ -157,9 +145,7 @@ a {
   }
 }
 
-// ============================================================
 // Form inputs
-// ============================================================
 
 .form-group {
   display: flex;
@@ -206,9 +192,7 @@ a {
   color: var(--color-on-surface-variant);
 }
 
-// ============================================================
 // Badges / Chips
-// ============================================================
 
 .badge {
   display: inline-flex;
@@ -225,9 +209,7 @@ a {
   &--error    { background: var(--color-error-container); color: var(--color-error); }
 }
 
-// ============================================================
 // Alert banners
-// ============================================================
 
 .alert {
   display: flex;
@@ -247,9 +229,7 @@ a {
   &__title { font-weight: var(--font-weight-semibold); margin-bottom: var(--space-1); }
 }
 
-// ============================================================
 // Tables — no dividers, tonal rows
-// ============================================================
 
 .data-table {
   width: 100%;
@@ -295,9 +275,7 @@ a {
   }
 }
 
-// ============================================================
 // Drop zone (document attachments)
-// ============================================================
 
 .drop-zone {
   display: flex;
@@ -321,9 +299,7 @@ a {
   &__subtext { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); }
 }
 
-// ============================================================
 // Computation summary (stacked paper aesthetic)
-// ============================================================
 
 .computation-total {
   background: var(--color-primary-container);
@@ -346,9 +322,7 @@ a {
   }
 }
 
-// ============================================================
 // Progress strip stepper (vertical)
-// ============================================================
 
 .progress-strip {
   display: flex;
@@ -406,9 +380,7 @@ a {
   }
 }
 
-// ============================================================
 // Utility classes
-// ============================================================
 
 .sr-only {
   position: absolute; width: 1px; height: 1px;
