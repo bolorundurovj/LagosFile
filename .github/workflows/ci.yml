@@ -80,25 +80,27 @@ jobs:
       - name: Sync version across all files
         run: node scripts/sync-version.mjs
 
-      - name: Commit synced version files
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: 'chore(release): sync version files to ${{ needs.check-version.outputs.version }} [skip ci]'
-          file_pattern: |
-            VERSION.ini
-            package.json
-            src-tauri/tauri.conf.json
-            src-tauri/Cargo.toml
-            extension/chrome/manifest.json
-            extension/firefox/manifest.json
-          skip_dirty_check: false
-          push_options: '--force-with-lease'
-
-      - name: Create and push git tag
+      - name: Commit synced versions and cut tag
         run: |
+          set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}
+
+          # Only commit if the sync script actually changed files
+          if ! git diff --quiet; then
+            git add \
+              package.json \
+              src-tauri/tauri.conf.json \
+              src-tauri/Cargo.toml \
+              src-tauri/Cargo.lock \
+              extension/chrome/manifest.json \
+              extension/firefox/manifest.json
+            git commit -m 'chore(release): sync version files to ${{ needs.check-version.outputs.version }} [skip ci]'
+            git push origin HEAD:master
+          fi
+
+          # Tag the current HEAD (guaranteed to include the synced versions)
           git tag "v${{ needs.check-version.outputs.version }}"
           git push origin "v${{ needs.check-version.outputs.version }}"
 
