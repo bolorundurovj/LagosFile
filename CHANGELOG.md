@@ -4,7 +4,15 @@ All notable changes to LagosFile are documented here.
 Versions follow [Semantic Versioning](https://semver.org/).
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## [1.1.1] - 2026-05-31
+
+### Bug Fixes
+
+- Release Versioning ([`76d7ddc`](https://github.com/bolorundurovj/LagosFile/commit/76d7ddcc249ce370536c3e56c419d35a053580e5))
+
+
+
+## [1.1.0] - 2026-05-30
 
 ### Bug Fixes
 
@@ -23,10 +31,136 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 - **rust:** Remove needless borrow on naira() call in export.rs ([`26dbba8`](https://github.com/bolorundurovj/LagosFile/commit/26dbba8c65204495a16b979cd4dc53ae331355ce))
 
 
+- **ui:** Move toast outlet to app root for correct fixed positioning ([`19543d1`](https://github.com/bolorundurovj/LagosFile/commit/19543d1dd39190a839bab1c35de55c1db50d9b08))
+
+
+- **rust:** Correct Cargo version from 2.0.0 to 1.0.0 ([`6c8d485`](https://github.com/bolorundurovj/LagosFile/commit/6c8d4855444dabc829c2d90dc83e6d19a92ae9bf))
+
+
+- **ui:** Rewrite filing history with imperative state, fix action button alignment ([`7f71b84`](https://github.com/bolorundurovj/LagosFile/commit/7f71b8461979df7e0119c9a69f38add80822d048))
+
+
+- **brand:** Correct SVG viewBox to 200x84 and update LogoMark aspect ratio ([`c44b654`](https://github.com/bolorundurovj/LagosFile/commit/c44b654fcb17850de13d6100da696cfa7e17ab11))
+
+
+- **brand:** Add missing closing svg tag in mark-tile.svg ([`d944e4d`](https://github.com/bolorundurovj/LagosFile/commit/d944e4deabd95a089dead3c4977e185d07251db4))
+
+
+- **extension:** Add proxy fetch logic and enhance Firefox MV2 compatibility ([`991369c`](https://github.com/bolorundurovj/LagosFile/commit/991369cf68c4f27d3d7eb62d91472d18d075267f))
+
+
+- **deps:** Regenerate package-lock.json to sync with license-checker addition ([`f81ef3c`](https://github.com/bolorundurovj/LagosFile/commit/f81ef3c221855cf14b28d1926ff96a2f48dc8c7b))
+
+
+- **ci:** Bust stale rust-cache; add cache-on-failure and explicit key ([`950a43a`](https://github.com/bolorundurovj/LagosFile/commit/950a43a836a340f8092691c64571461c58fb5cfc))
+
+
+- **deps:** Regenerate package-lock.json to sync with latest dependencies ([`25edf17`](https://github.com/bolorundurovj/LagosFile/commit/25edf17fecb578820c1f6b71f65253e334d64187))
+
+
+- **ci:** Bust rust-cache key to v3 and remove cache-on-failure ([`9f5d2bb`](https://github.com/bolorundurovj/LagosFile/commit/9f5d2bb278de423ba93d842250e7d670a1afdffa))
+
+
+- **frontend:** Use  param in HostListener to satisfy Angular v21 strict checks ([`bccb4d2`](https://github.com/bolorundurovj/LagosFile/commit/bccb4d2f6cfbb83c7811aaa2c8da0512c0389c57))
+
+
+- **rust:** Move printpdf, image, lopdf out of windows-only deps section ([`67c6d47`](https://github.com/bolorundurovj/LagosFile/commit/67c6d47a4402a07dbb597a4a85554af999abd159))
+
+
+- Release Versioning ([`1e1f3c4`](https://github.com/bolorundurovj/LagosFile/commit/1e1f3c43fa8b85b0161aedd1a8ac33182139fa0b))
+
+
+
+### Documentation
+
+- **extension:** Add extension README with install guide and usage screenshots ([`03893aa`](https://github.com/bolorundurovj/LagosFile/commit/03893aac6e5e73779af3f27da6949d30a8f87ae6))
+
+
+- **readme:** Add release, CI, SonarCloud, license and stars badges ([`d8ac968`](https://github.com/bolorundurovj/LagosFile/commit/d8ac968321d7c686029228f2c8e019608d401e20))
+
+
+- **readme:** Replace static screenshots with interactive accordion showcase ([`3bddeea`](https://github.com/bolorundurovj/LagosFile/commit/3bddeeab57133379460ab123b267991d903d6283))
+
+
+- **github:** Add structured bug report and feature request issue templates ([`ea1be81`](https://github.com/bolorundurovj/LagosFile/commit/ea1be816539feb456797678712e3642738d3de88))
+
+
+
+### Features
+
+- **brand:** Add logo mark SVG assets and LogoMark/ArchLoader components ([`98efa09`](https://github.com/bolorundurovj/LagosFile/commit/98efa09922fd5eda5f08d1a98da7c74bcdec89dd))
+
+
+- **splash:** Inline splash in index.html, drop separate Tauri splash window ([`e959807`](https://github.com/bolorundurovj/LagosFile/commit/e9598076e444753317fa2a0d5338af401f58da55))
+
+
+- **ui:** Replace LF monogram with logo mark, add encrypted tagline to auth screens ([`915ff06`](https://github.com/bolorundurovj/LagosFile/commit/915ff0686c55855923d0ec874d9d35694235a703))
+
+
+- **extension:** Rebrand popup and content-script with logo mark and brand colours ([`77435c3`](https://github.com/bolorundurovj/LagosFile/commit/77435c3056f48e655a1ec22d7f1a0f4e7c839a1c))
+
+
+- **filing:** Restrict new filings to past years only, add duplicate check ([`f8c3b87`](https://github.com/bolorundurovj/LagosFile/commit/f8c3b87596e71596c92e34cad3be25639b9df65e))
+
+
+- **ui:** Add theme cycle switcher and calendar icon to topbar ([`9bac171`](https://github.com/bolorundurovj/LagosFile/commit/9bac17135eef2fcd03aa33a2863c066e31db288d))
+
+
+- **settings:** Derive version from package.json, add live changelog modal and update check ([`cbccc2b`](https://github.com/bolorundurovj/LagosFile/commit/cbccc2bfd8a3838ee33e52ed82150f3dbdb7d588))
+
+
+- **auth:** Add biometric authentication backend with keyring and Windows Hello support ([`e13ed02`](https://github.com/bolorundurovj/LagosFile/commit/e13ed02573f2f9b1ed93768dd7d0b285c19f4df0))
+
+
+- **ui:** Add biometric unlock button and settings toggle, improve lock() error handling ([`b38e839`](https://github.com/bolorundurovj/LagosFile/commit/b38e839f40cb7888df941aeea407d16a0937299e))
+
+
+- **export:** Add branded cover page with SVG letterhead and alt-fills style selector ([`2bd4bbe`](https://github.com/bolorundurovj/LagosFile/commit/2bd4bbeeaded4b405c44fb8fa243c58faf8f0c88))
+
+
 
 ### Miscellaneous
 
 - **ci:** Disable macOS (Intel) build configuration ([`dfd3352`](https://github.com/bolorundurovj/LagosFile/commit/dfd33520d07cd6fc73b88c48627ca79a9516dfcf))
+
+
+- Clean up code and add linting scripts ([`b68cfc8`](https://github.com/bolorundurovj/LagosFile/commit/b68cfc8be5b547c4a665586e25d78c1ef3436ed3))
+
+
+- Setup Makefile, husky pre-push hooks, and CI linting ([`3d09f82`](https://github.com/bolorundurovj/LagosFile/commit/3d09f82c2a8cc12aadb2c85befe69ee1943001d8))
+
+
+- **brand:** Replace all extension and Tauri app icons with new branded assets ([`205e886`](https://github.com/bolorundurovj/LagosFile/commit/205e886019c89ec6d3fcfd70421cf2b12d854c79))
+
+
+- Remove commented-out code and clean up SCSS and JS files ([`dc23339`](https://github.com/bolorundurovj/LagosFile/commit/dc233396a08e914bd943d94993d8266663948b5e))
+
+
+- Bump minor version to 1.1.0 ([`1ef8d41`](https://github.com/bolorundurovj/LagosFile/commit/1ef8d41f902af1d59925138812cf663331a8bacf))
+
+
+- Upgrade Angular dependencies to version 20 and update build configurations ([`d1f985a`](https://github.com/bolorundurovj/LagosFile/commit/d1f985ab7533085b0c1870651257e686c3203b74))
+
+
+- Upgrade Angular dependencies to version 21 and update tsconfig ([`6af17d9`](https://github.com/bolorundurovj/LagosFile/commit/6af17d9a37bba3e662e805ba241f3cb97b50c60c))
+
+
+- Update package-lock.json after Angular v21 upgrade ([`cbd1490`](https://github.com/bolorundurovj/LagosFile/commit/cbd14908d8ddfb0d1a49c87fcd9c3272c6f7126b))
+
+
+
+### Refactoring
+
+- **rust:** Extract business logic from commands into dedicated services ([`8518b80`](https://github.com/bolorundurovj/LagosFile/commit/8518b8096661f405bfae7c60498e3a280b077568))
+
+
+
+### Testing
+
+- **rust:** Add unit tests for computation, config, db, filing, fx, profile and security services ([`030da3d`](https://github.com/bolorundurovj/LagosFile/commit/030da3d7ffddea21132eda6e3629d3f31c003d1d))
+
+
+- **angular:** Add unit tests for auth, config, document, filing, profile and theme services ([`a714f2f`](https://github.com/bolorundurovj/LagosFile/commit/a714f2f267b3bf362ca5a1ac2adededa141fa732))
 
 
 
