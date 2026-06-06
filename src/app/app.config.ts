@@ -1,5 +1,6 @@
 import { ApplicationConfig, provideZoneChangeDetection, APP_INITIALIZER } from '@angular/core';
 import { provideRouter, withViewTransitions } from '@angular/router';
+import { provideHttpClient } from '@angular/common/http';
 import { routes } from './app.routes';
 import { AuthService } from './core/services/auth.service';
 import { ConfigService } from './core/services/config.service';
@@ -30,6 +31,7 @@ function initApp(auth: AuthService, config: ConfigService, theme: ThemeService) 
 export const appConfig: ApplicationConfig = {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
+    provideHttpClient(),
     provideRouter(routes, withViewTransitions()),
     {
       provide: APP_INITIALIZER,

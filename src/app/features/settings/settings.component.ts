@@ -5,6 +5,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { ProfileService } from '../../core/services/profile.service';
 import { ThemeService } from '../../core/services/theme.service';
 import { ToastService } from '../../core/services/toast.service';
+import { UpdateService } from '../../core/services/update.service';
 import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -441,8 +442,16 @@ export class SettingsComponent {
     return entries;
   }
 
-  checkForUpdates(): void {
-    this.toast.info('Check for updates is work in progress and will be available in a future release.');
+  update = inject(UpdateService);
+
+  async checkForUpdates(): Promise<void> {
+    await this.update.checkForUpdates();
+    const latest = this.update.updateAvailable();
+    if (latest) {
+      window.open(this.update.updateUrl()!, '_blank');
+    } else {
+      this.toast.success('You are running the latest version.');
+    }
   }
 
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
