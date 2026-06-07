@@ -48,6 +48,39 @@ describe('ProfileService', () => {
     });
   });
 
+  describe('get', () => {
+    it('should invoke get_profile and return taxpayer', async () => {
+      tauriSpy.invoke.and.resolveTo(mockTaxpayer);
+
+      const result = await service.get();
+
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('get_profile');
+      expect(result).toEqual(mockTaxpayer);
+    });
+
+    it('should return null when no profile exists', async () => {
+      tauriSpy.invoke.and.resolveTo(null);
+
+      const result = await service.get();
+
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('get_profile');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('update', () => {
+    it('should invoke update_profile and return updated taxpayer', async () => {
+      const updatedTaxpayer = { ...mockTaxpayer, fullName: 'Jane Doe' };
+      tauriSpy.invoke.and.resolveTo(updatedTaxpayer);
+      const input = { fullName: 'Jane Doe' };
+
+      const result = await service.update(input);
+
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('update_profile', { profile: input });
+      expect(result).toEqual(updatedTaxpayer);
+    });
+  });
+
   describe('validateTin', () => {
     it('should return null for valid 13-digit TIN', () => {
       expect(service.validateTin('1234567890123')).toBeNull();
