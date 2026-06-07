@@ -51,7 +51,7 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
     )
 }
 
-fn format_payer_id(tin: &str) -> String {
+pub fn format_payer_id(tin: &str) -> String {
     if tin.starts_with("N-") || tin.starts_with("C-") {
         tin.to_string()
     } else {
@@ -398,7 +398,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
     })
 }
 
-fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
+pub fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
         404 => "Not Found",
