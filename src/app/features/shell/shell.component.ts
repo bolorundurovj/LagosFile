@@ -74,7 +74,7 @@ export class ShellComponent implements OnInit {
   async ngOnInit(): Promise<void> {
     try {
       await this.config.loadActive();
-    } catch (_) { /* new install; seed data will be created on unlock */ }
+    } catch { /* new install; seed data will be created on unlock */ }
     this.update.checkForUpdates();
   }
 }

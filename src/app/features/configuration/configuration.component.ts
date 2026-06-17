@@ -302,7 +302,7 @@ export class ConfigurationComponent implements OnInit {
     try {
       const cfg = await this.configService.loadActive();
       this.populate(cfg);
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
   }
 
   private populate(cfg: TaxConfig): void {

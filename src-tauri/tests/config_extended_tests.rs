@@ -157,7 +157,7 @@ fn test_config_serialization_with_bands() {
         {"lower": 0, "upper": 300000, "rate": 0.07},
         {"lower": 300000, "upper": 600000, "rate": 0.11}
     ]);
-    let saved = ConfigService::save(
+    let _saved = ConfigService::save(
         &db,
         json!({
             "versionLabel": "with-bands",
@@ -183,7 +183,7 @@ fn test_config_serialization_with_bands() {
 fn test_config_with_relief_caps() {
     let db = AppDb::open_in_memory().unwrap();
 
-    let saved = ConfigService::save(
+    let _saved = ConfigService::save(
         &db,
         json!({
             "versionLabel": "with-relief",

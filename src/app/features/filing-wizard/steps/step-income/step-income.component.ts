@@ -436,7 +436,7 @@ export class StepIncomeComponent implements OnInit {
         else this.liveRateEntries.add(entry.id);
         this.applyRate(entry);
       }
-    } catch (_) {
+    } catch {
       // silently leave any previously fetched rate intact
     } finally {
       this.fetchingRate[entry.id] = false;

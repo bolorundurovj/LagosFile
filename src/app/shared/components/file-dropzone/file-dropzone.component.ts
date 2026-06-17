@@ -49,7 +49,7 @@ export class FileDropzoneComponent {
         const ext = name.split('.').pop()?.toLowerCase() ?? '';
         this.fileSelected.emit({ path: selected, name, size: 0, type: ext });
       }
-    } catch (_) { /* user cancelled */ }
+    } catch { /* user cancelled */ }
   }
 
   onDragOver(e: DragEvent): void {
