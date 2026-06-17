@@ -61,3 +61,7 @@ screen.png
 .opencode
 extension/lirs_screenshots
 dist-ext/
+
+# Custom installer (PolyInstall) build output
+dist-installer/
+installer/polyinstall*

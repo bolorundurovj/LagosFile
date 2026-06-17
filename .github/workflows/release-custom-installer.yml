@@ -1,0 +1,112 @@
+name: Release (custom installer - beta)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BETA: wraps the built Windows Tauri binary in a custom PolyInstall wizard
+# (welcome -> EULA -> destination -> progress -> finish) with Start Menu /
+# Desktop shortcuts and Add/Remove Programs + Uninstall.exe.
+#
+# Isolated on purpose so it is easy to drop:
+#   - It is a SEPARATE workflow from release.yml and never blocks it.
+#   - On the feat/new-installer branch it only uploads a workflow artifact
+#     (no GitHub Release is touched), so you can test it without cutting a tag.
+#   - On a real version tag it ALSO attaches the setup .exe to that release.
+#
+# To remove the experiment: delete this file and the installer/ folder.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches:
+      - feat/new-installer        # branch testing — artifact only, no release
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  custom-installer:
+    name: Build custom Windows installer (beta)
+    runs-on: windows-latest
+    # Non-blocking: a failure here must never fail a release.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: custom-installer-windows
+
+      # Compiles the Angular frontend (via beforeBuildCommand) and the Tauri
+      # binary, skipping the native bundlers — we only need LagosFile.exe.
+      - name: Build Tauri binary (no bundle)
+        run: npm run tauri -- build --no-bundle
+
+      - name: Resolve app version
+        id: ver
+        shell: bash
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "LAGOSFILE_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VER"
+
+      # Keep the bundled EULA in sync with the canonical LICENSE.
+      - name: Stage license into payload
+        shell: bash
+        run: cp LICENSE installer/payload/LICENSE.txt
+
+      - name: Set up PolyInstall
+        uses: bolorundurowb/PolyInstall/.github/actions/setup-polyinstall@v2.0.0
+        with:
+          version: v2.0.0
+          rid: win-x64
+
+      - name: Build custom installer
+        shell: bash
+        run: |
+          polyinstall build installer/lagosfile.polyinstall.yaml \
+            --base . \
+            --output-manifest build-manifest.json
+          cat build-manifest.json
+
+      - name: Rename output
+        id: rename
+        shell: bash
+        run: |
+          SRC="dist-installer/LagosFile-windows-x64.exe"
+          OUT="dist-installer/LagosFile-${LAGOSFILE_VERSION}-custom-setup-beta.exe"
+          mv "$SRC" "$OUT"
+          echo "asset=$OUT" >> "$GITHUB_OUTPUT"
+          ls -la dist-installer
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lagosfile-custom-setup-beta
+          path: ${{ steps.rename.outputs.asset }}
+          if-no-files-found: error
+
+      # Only attach to a GitHub Release when this run is for a version tag.
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ steps.rename.outputs.asset }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://bolorundurowb.github.io/PolyInstall/schema/v1.json
+# ─────────────────────────────────────────────────────────────────────────────
+# LagosFile — custom install experience (BETA, Windows)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Produces a self-contained Windows setup .exe with a guided wizard:
+#   welcome -> EULA -> destination -> progress -> finish
+# plus Start Menu / Desktop shortcuts and Add/Remove Programs + Uninstall.exe.
+#
+# This wraps the already-built Tauri binary; it does NOT replace the native
+# .msi / NSIS installers produced by the main release pipeline. It ships as an
+# extra, clearly-marked "custom setup (beta)" asset.
+#
+# Build (CI sets LAGOSFILE_VERSION; locally export it yourself):
+#   polyinstall build installer/lagosfile.polyinstall.yaml --base .
+#
+# To DROP this experiment entirely, delete the `installer/` folder and the
+# `.github/workflows/release-custom-installer.yml` workflow. Nothing else
+# depends on it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+metadata:
+  name: LagosFile
+  version: ${LAGOSFILE_VERSION:-0.0.0}
+  id: ng.lagosfile.app
+  publisher: Bolorunduro Valiant-Joshua
+
+build:
+  output_dir: dist-installer
+  compression: brotli
+  targets:
+    - windows-x64
+  windows:
+    # Per-user install (no UAC). Switch to `machine` for an all-users install
+    # under Program Files + HKLM (requires elevation).
+    install_scope: user
+    # Register in Add/Remove Programs and deploy a real Uninstall.exe.
+    register_arp: true
+
+ui:
+  theme: system
+  # Branding shown in the wizard header. Resolved from the extracted payload,
+  # so it is staged under installer/payload/branding (see files below).
+  logo_path: branding/wordmark.svg
+  wizard_steps:
+    - type: welcome
+      title: Welcome to LagosFile
+    - type: eula
+      title: License Agreement
+      # LICENSE is copied into the payload at build time as LICENSE.txt.
+      source: LICENSE.txt
+    - type: destination
+      title: Choose Install Location
+    - type: progress
+      title: Installing LagosFile
+    - type: finish
+      title: Installation Complete
+
+files:
+  # 1) The compiled Tauri application binary (single self-contained exe).
+  - source_dir: src-tauri/target/release
+    include:
+      - LagosFile.exe
+  # 2) Installer-only assets (branding + license) staged under installer/payload.
+  - source_dir: installer/payload
+    include:
+      - "**/*"
+
+tasks:
+  post_install:
+    - action: create_shortcut
+      require: os.isWindows
+      parameters:
+        target_path: "{AppDir}\\LagosFile.exe"
+        name: LagosFile
+        location: start_menu
+        description: LagosFile — Lagos State Direct Assessment Tax Filing
+    - action: create_shortcut
+      require: os.isWindows
+      parameters:
+        target_path: "{AppDir}\\LagosFile.exe"
+        name: LagosFile
+        location: desktop
+        description: LagosFile — Lagos State Direct Assessment Tax Filing
