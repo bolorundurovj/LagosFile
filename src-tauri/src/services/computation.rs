@@ -46,7 +46,19 @@ impl ComputationEngine {
             .iter()
             .map(|ca| ca.annual_allowance_amount)
             .sum();
-        let prorated_ca = total_ca;
+
+        // if non-taxable income (CGT-exempt gains) is ≥ 10% of total gross
+        // receipts, prorate capital allowances by the taxable fraction.
+        // "Total income" for this rule = taxable gross + CGT-exempt gross (digital
+        // losses are not income so they don't enter the denominator).
+        let total_receipts = total_gross + cgt_exempt_amount;
+        let prorated_ca = if total_receipts > 0.0
+            && (cgt_exempt_amount / total_receipts) >= 0.10
+        {
+            total_ca * (total_gross / total_receipts)
+        } else {
+            total_ca
+        };
 
         let mut pension = 0.0f64;
         let mut nhis = 0.0f64;

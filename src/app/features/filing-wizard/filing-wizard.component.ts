@@ -118,6 +118,7 @@ const STEPS = [
               @case (2) {
                 <lf-step-allowances
                   [filingId]="filingId()!"
+                  [yearOfAssessment]="yearOfAssessment()"
                   (next)="goNext($event)"
                   (back)="goBack()"
                 />

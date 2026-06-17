@@ -197,6 +197,33 @@ interface FilingRowAction {
         }
       </div>
 
+      <!-- Export Analysis panel -->
+      <div class="export-analysis card">
+        <div class="export-analysis__header">
+          <lucide-icon name="bar-chart-2" [size]="20" [strokeWidth]="1.5" style="color:var(--color-primary)"></lucide-icon>
+          <h3 class="title-md">Export Analysis</h3>
+        </div>
+        <div class="export-analysis__grid">
+          <div class="export-stat">
+            <div class="export-stat__value">{{ confirmedCount + submittedCount }}</div>
+            <div class="export-stat__label">Filings ready to export</div>
+          </div>
+          <div class="export-stat">
+            <div class="export-stat__value">{{ draftCount }}</div>
+            <div class="export-stat__label">Drafts (not exportable)</div>
+          </div>
+          <div class="export-stat">
+            <div class="export-stat__value">{{ submittedCount }}</div>
+            <div class="export-stat__label">Submitted to LIRS</div>
+          </div>
+        </div>
+        <p class="body-sm text-muted" style="margin-top:var(--space-3)">
+          Use the <strong>Export</strong> button on any Confirmed or Submitted filing to download
+          a PDF statement, CSV line-item report, or JSON data package.
+          PDFs include your taxpayer name, TIN, Year of Assessment, and the full tax computation.
+        </p>
+      </div>
+
       <!-- Compliance note -->
       <div class="alert alert--info">
         <span class="alert__icon">ℹ</span>
@@ -426,7 +453,7 @@ interface FilingRowAction {
     .metric-card--submitted .metric-card__value { color: var(--color-success); }
     .metric-card--confirmed .metric-card__value { color: var(--color-secondary); }
     .metric-card--draft .metric-card__value { color: var(--color-on-surface-variant); }
-    .metric-card__value { font-family: var(--font-display); }
+    .metric-card__value { font-family: var(--font-display),serif; }
     .metric-card__label { font-size: var(--text-label-md); color: var(--color-on-surface-variant); }
 
     .history-filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
@@ -507,7 +534,7 @@ interface FilingRowAction {
       border-radius: var(--radius-md);
       background: transparent;
       font-size: var(--text-body-sm);
-      font-family: var(--font-body);
+      font-family: var(--font-body),serif;
       color: var(--color-on-surface);
       cursor: pointer;
       transition: background var(--transition-fast);
@@ -602,6 +629,26 @@ interface FilingRowAction {
     .lh-logo__sub { font-size: 6px; letter-spacing: 0.04em; color: #1a2e5a; text-transform: uppercase; line-height: 1; }
     .lh-divider { height: 1px; background: #1a2e5a; opacity: 0.3; }
     .lh-title { font-size: 9px; font-weight: 700; color: #1a2e5a; line-height: 1.3; }
+    .export-analysis {
+      padding: var(--space-5);
+    }
+    .export-analysis__header {
+      display: flex; align-items: center; gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+    .export-analysis__grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4);
+    }
+    .export-stat {
+      display: flex; flex-direction: column; align-items: center;
+      padding: var(--space-3); background: var(--color-surface-container-low);
+      border-radius: var(--radius-lg); text-align: center;
+    }
+    .export-stat__value {
+      font-size: var(--text-headline-sm); font-family: var(--font-display),serif;
+      font-weight: var(--font-weight-bold); color: var(--color-primary);
+    }
+    .export-stat__label { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
   `],
 })
 export class FilingHistoryComponent implements OnInit {

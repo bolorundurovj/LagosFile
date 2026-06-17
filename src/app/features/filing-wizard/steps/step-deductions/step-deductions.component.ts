@@ -1,4 +1,5 @@
 import { Component, input, output, inject, OnInit, signal, computed } from '@angular/core';
+import { LucideAngularModule } from 'lucide-angular';
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
@@ -11,7 +12,7 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
 @Component({
   selector: 'lf-step-deductions',
   standalone: true,
-  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective, HelpTooltipComponent],
+  imports: [FormsModule, NairaPipe, FileDropzoneComponent, NumericFormatDirective, HelpTooltipComponent, LucideAngularModule],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -146,6 +147,33 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
         }
       </div>
 
+      <!-- Foreign tax paid (reference only) -->
+      <div class="card">
+        <h3 class="title-md" style="margin-bottom:var(--space-2)">Foreign Tax Paid <span class="badge badge--draft" style="font-size:10px;vertical-align:middle">Reference only</span></h3>
+        <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
+          Tax deducted or paid in the country of source on foreign income. Recorded for reference only in v1 —
+          formal double-taxation treaty relief requires a tax advisor.
+        </p>
+        <div class="relief-row">
+          <div class="relief-row__info">
+            <div class="relief-row__label">Foreign Tax Paid (₦ equivalent)<lf-help text="Convert the foreign tax paid to Naira at the same rate used for the income entry. Attach the foreign tax certificate or withholding notice as a supporting document."></lf-help></div>
+            <div class="relief-row__sub">Attach supporting documentation below</div>
+          </div>
+          <div class="relief-row__input">
+            <input type="number" class="form-input" [(ngModel)]="fields.foreignTaxPaid"
+              name="foreignTaxPaid" min="0" placeholder="₦ 0.00" />
+          </div>
+        </div>
+        @if (fields.foreignTaxPaid > 0) {
+          <lf-file-dropzone label="Attach foreign tax certificate" (fileSelected)="onForeignTaxFileSelected($event)" style="margin-top:var(--space-3);display:block" />
+          @for (doc of foreignTaxDocs(); track doc.id) {
+            <div class="doc-chip" style="display:flex;align-items:center;gap:4px;font-size:var(--text-label-sm);color:var(--color-on-surface-variant);padding:var(--space-1) var(--space-2)">
+              <lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}
+            </div>
+          }
+        }
+      </div>
+
       <!-- Other approved deductions -->
       <div class="card">
         <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
@@ -221,9 +249,10 @@ export class StepDeductionsComponent implements OnInit {
   private filingService = inject(FilingService);
   private configService = inject(ConfigService);
 
-  fields = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0 };
+  fields = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, foreignTaxPaid: 0 };
   whtEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
+  foreignTaxDocs = signal<ReliefEntry['documents']>([]);
   saving = signal(false);
 
   async ngOnInit(): Promise<void> {
@@ -234,9 +263,13 @@ export class StepDeductionsComponent implements OnInit {
         case 'nhis':          this.fields.nhis          = r.claimedAmount; break;
         case 'nhf':           this.fields.nhf           = r.claimedAmount; break;
         case 'life_assurance':this.fields.lifeAssurance = r.claimedAmount; break;
-        case 'rent':          this.fields.annualRent    = r.claimedAmount; break;
+        case 'rent':          this.fields.annualRent      = r.claimedAmount; break;
         case 'wht':           this.whtEntries.update(e => [...e, r]); break;
         case 'other_approved':this.otherEntries.update(e => [...e, r]); break;
+        case 'foreign_tax':
+          this.fields.foreignTaxPaid = r.claimedAmount;
+          if (r.documents?.length) this.foreignTaxDocs.set(r.documents);
+          break;
       }
     }
   }
@@ -253,6 +286,14 @@ export class StepDeductionsComponent implements OnInit {
     return this.fields.pension + this.fields.nhis + this.fields.nhf
       + this.fields.lifeAssurance + this.rentRelief() + this.totalWht() + others;
   });
+
+  onForeignTaxFileSelected(file: { path: string; name: string; size: number; type: string }): void {
+    this.foreignTaxDocs.update(docs => [...docs, {
+      id: crypto.randomUUID(), parentEntryId: 'foreign_tax_' + this.filingId(),
+      parentEntryType: 'relief_entry', filePath: file.path, fileName: file.name,
+      fileType: file.type, fileSizeBytes: file.size, uploadedAt: new Date().toISOString(),
+    }]);
+  }
 
   addWht(): void {
     this.whtEntries.update(e => [...e, {
@@ -290,6 +331,8 @@ export class StepDeductionsComponent implements OnInit {
       await this.filingService.upsertReliefEntry(makeRelief('nhf', this.fields.nhf) as ReliefEntry & { filingId: string });
       await this.filingService.upsertReliefEntry(makeRelief('life_assurance', this.fields.lifeAssurance) as ReliefEntry & { filingId: string });
       await this.filingService.upsertReliefEntry(makeRelief('rent', this.fields.annualRent) as ReliefEntry & { filingId: string });
+      // foreign tax paid (reference only)
+      await this.filingService.upsertReliefEntry(makeRelief('foreign_tax', this.fields.foreignTaxPaid) as ReliefEntry & { filingId: string });
       for (const w of this.whtEntries()) await this.filingService.upsertReliefEntry({ ...w, filingId: fid });
       for (const o of this.otherEntries()) await this.filingService.upsertReliefEntry({ ...o, filingId: fid });
 

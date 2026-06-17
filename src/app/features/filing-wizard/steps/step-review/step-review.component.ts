@@ -1,4 +1,4 @@
-import { Component, input, output, inject, OnInit, signal } from '@angular/core';
+import { Component, input, output, inject, OnInit, signal, computed } from '@angular/core';
 import { FilingService } from '../../../../core/services/filing.service';
 import { LIRSService } from '../../../../core/services/lirs.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -47,7 +47,7 @@ import { LucideAngularModule } from 'lucide-angular';
             The extension will read your filing data from <code>~/LagosFile/pending_filing.json</code>.
           </p>
 
-          <div class="flex gap-3 justify-center" style="flex-wrap:wrap">
+          <div class="flex gap-3 justify-center" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
             <button class="btn btn--ghost" (click)="onGoToHistory()">Go to History</button>
             <button
               class="btn btn--primary btn--lg"
@@ -187,6 +187,23 @@ import { LucideAngularModule } from 'lucide-angular';
         </div>
       }
 
+      <!-- incomplete filing validation warning -->
+      @if (!confirmedFiling() && !loading() && validationIssues().length > 0) {
+        <div class="alert alert--warning">
+          <span class="alert__icon">
+            <lucide-icon name="triangle-alert" [size]="18" [strokeWidth]="2"></lucide-icon>
+          </span>
+          <div class="alert__content">
+            <strong>Filing is incomplete — please resolve the following before confirming:</strong>
+            <ul style="margin:var(--space-2) 0 0 var(--space-4);display:flex;flex-direction:column;gap:var(--space-1)">
+              @for (issue of validationIssues(); track issue) {
+                <li style="font-size:var(--text-body-sm)">{{ issue }}</li>
+              }
+            </ul>
+          </div>
+        </div>
+      }
+
       <!-- Nav buttons (pre-confirmation) -->
       @if (!confirmedFiling()) {
         <div class="step-nav">
@@ -195,7 +212,9 @@ import { LucideAngularModule } from 'lucide-angular';
             <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
               Save for Later
             </button>
-            <button class="btn btn--primary btn--lg" (click)="confirm()" [disabled]="confirming() || loading()">
+            <button class="btn btn--primary btn--lg" (click)="confirm()"
+              [disabled]="confirming() || loading() || validationIssues().length > 0"
+              [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
               @if (confirming()) { Confirming… } @else {
                 <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
               }
@@ -216,17 +235,36 @@ import { LucideAngularModule } from 'lucide-angular';
     </div>
   `,
   styles: [`
-    .step-page { display: flex; flex-direction: column; gap: var(--space-6); }
-    .step-page__header { display: flex; flex-direction: column; gap: var(--space-2); }
+    .step-page {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-6);
+    }
 
-    .breakdown-table { display: flex; flex-direction: column; }
+    .step-page__header {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .breakdown-table {
+      display: flex;
+      flex-direction: column;
+    }
+
     .breakdown-row {
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: var(--space-3) 0;
       border-bottom: 1px solid var(--color-surface-container);
       font-size: var(--text-body-md);
     }
-    .breakdown-row--deduct { color: var(--color-on-surface-variant); }
+
+    .breakdown-row--deduct {
+      color: var(--color-on-surface-variant);
+    }
+
     .breakdown-row--subtotal {
       font-weight: var(--font-weight-semibold);
       font-size: var(--text-title-sm);
@@ -234,16 +272,35 @@ import { LucideAngularModule } from 'lucide-angular';
     }
 
     .band-row {
-      display: flex; align-items: center; gap: var(--space-3);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
       padding: var(--space-2) 0;
     }
-    .band-label { min-width: 220px; font-size: var(--text-body-sm); }
-    .band-bar-wrapper {
-      flex: 1; height: 8px; background: var(--color-surface-container);
-      border-radius: var(--radius-full); overflow: hidden;
+
+    .band-label {
+      min-width: 220px;
+      font-size: var(--text-body-sm);
     }
-    .band-bar { height: 100%; border-radius: var(--radius-full); transition: width 0.4s ease; }
-    .band-amount { min-width: 140px; font-size: var(--text-body-sm); }
+
+    .band-bar-wrapper {
+      flex: 1;
+      height: 8px;
+      background: var(--color-surface-container);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+    }
+
+    .band-bar {
+      height: 100%;
+      border-radius: var(--radius-full);
+      transition: width 0.4s ease;
+    }
+
+    .band-amount {
+      min-width: 140px;
+      font-size: var(--text-body-sm);
+    }
 
     .min-tax-panel {
       margin-top: var(--space-5);
@@ -251,17 +308,36 @@ import { LucideAngularModule } from 'lucide-angular';
       border-radius: var(--radius-lg);
       padding: var(--space-4);
     }
-    .min-tax-panel__title { font-size: var(--text-label-lg); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-3); }
-    .min-tax-panel__row {
-      display: flex; justify-content: space-between;
-      font-size: var(--text-body-md); padding: var(--space-2) 0;
+
+    .min-tax-panel__title {
+      font-size: var(--text-label-lg);
+      font-weight: var(--font-weight-semibold);
+      margin-bottom: var(--space-3);
     }
-    .highlighted { font-weight: var(--font-weight-bold); color: var(--color-primary); }
 
-    .step-nav { display: flex; justify-content: space-between; align-items: center; padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+    .min-tax-panel__row {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--text-body-md);
+      padding: var(--space-2) 0;
+    }
 
-    .justify-center { justify-content: center; }
-    .flex-1 { flex: 1; }
+    .highlighted {
+      font-weight: var(--font-weight-bold);
+      color: var(--color-primary);
+    }
+
+    .step-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: var(--space-4);
+      border-top: 1px solid var(--color-surface-container);
+    }
+
+    .justify-center {
+      justify-content: center;
+    }
   `],
 })
 export class StepReviewComponent implements OnInit {
@@ -276,6 +352,20 @@ export class StepReviewComponent implements OnInit {
   result = signal<ComputationResult | null>(null);
   loading = signal(true);
   confirming = signal(false);
+
+  // Validation — list of human-readable issues before user can confirm
+  validationIssues = computed<string[]>(() => {
+    const r = this.result();
+    if (!r) return ['Tax computation has not been loaded yet.'];
+    const issues: string[] = [];
+    if (r.totalGrossIncome <= 0) {
+      issues.push('No income entries found. Add at least one income source in Step 1.');
+    }
+    if (r.chargeableIncome < 0) {
+      issues.push('Chargeable income is negative — please review your allowances and deductions.');
+    }
+    return issues;
+  });
 
   confirmedFiling = signal<Filing | null>(null);
   filingWithLirs = signal(false);

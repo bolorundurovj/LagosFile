@@ -2,6 +2,7 @@ import { Component, input, output, inject, OnInit, signal } from '@angular/core'
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
+import { ToastService } from '../../../../core/services/toast.service';
 import { CapitalAllowance, AssetType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
@@ -33,6 +34,31 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
           Only annual allowances are supported under NTA 2025 — no initial allowance.
         </p>
       </div>
+
+      <!-- Load from prior year -->
+      @if (entries().length === 0) {
+        <div class="prior-year-banner card">
+          <div style="display:flex;align-items:center;gap:var(--space-3)">
+            <lucide-icon name="history" [size]="20" [strokeWidth]="1.5" style="color:var(--color-primary);flex-shrink:0"></lucide-icon>
+            <div>
+              <div class="title-sm" style="margin-bottom:2px">Have assets from a prior year?</div>
+              <div class="body-sm text-muted">
+                Load your capital allowances from your prior year's confirmed filing.
+                Written-down values are automatically carried forward.
+              </div>
+            </div>
+          </div>
+          <button class="btn btn--secondary btn--sm"
+            (click)="loadFromPriorYear()"
+            [disabled]="loadingPrior()">
+            @if (loadingPrior()) {
+              <lucide-icon name="loader-circle" [size]="14" [strokeWidth]="2" style="animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></lucide-icon>Loading…
+            } @else {
+              <lucide-icon name="download" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>Load from Prior Year (YOA {{ yearOfAssessment() - 1 }})
+            }
+          </button>
+        </div>
+      }
 
       <div class="entries-list">
         @for (entry of entries(); track entry.id; let i = $index) {
@@ -94,12 +120,20 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
             </div>
 
             <div class="form-group">
-              <label class="form-label">Tax Written-Down Value (₦)<lf-help text="The remaining tax book value of the asset. For new acquisitions this year, enter the cost. For assets carried forward, enter the closing WDV from your prior year filing." align="left"></lf-help></label>
+              <label class="form-label">
+                Tax Written-Down Value (₦)
+                <lf-help text="The remaining tax book value of the asset. For new acquisitions this year, enter the cost. For assets carried forward, enter the closing WDV from your prior year filing (or use 'Load from Prior Year' above)." align="left"></lf-help>
+                @if (isFromPriorYear(entry)) {
+                  <span class="badge badge--confirmed" style="margin-left:4px;font-size:10px">Carried forward</span>
+                }
+              </label>
               <input type="number" class="form-input" [(ngModel)]="entry.taxWrittenDownValue"
                 [name]="'twdv_' + i" min="0"
-                placeholder="Auto-populated from prior year if available" />
+                placeholder="Auto-populated from prior year if available"
+                (change)="recalculateOnWdv(entry)" />
               <span class="form-hint">
-                For new assets, enter the cost. For carried-forward assets, enter the closing WDV from the prior year's filing.
+                For new assets enter the cost. For carried-forward assets, the WDV is the
+                prior closing balance (cost − cumulative allowances claimed).
               </span>
             </div>
 
@@ -114,9 +148,18 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
         }
       </div>
 
-      <button class="btn btn--secondary" (click)="addEntry()" style="align-self:flex-start">
-        + Add Asset
-      </button>
+      <div style="display:flex;gap:var(--space-3);align-items:center">
+        <button class="btn btn--secondary" (click)="addEntry()" style="align-self:flex-start">
+          + Add Asset
+        </button>
+        @if (entries().length > 0) {
+          <button class="btn btn--ghost btn--sm" (click)="loadFromPriorYear()" [disabled]="loadingPrior()">
+            @if (loadingPrior()) { Loading… } @else {
+              <lucide-icon name="history" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon>Load from Prior Year
+            }
+          </button>
+        }
+      </div>
 
       @if (totalAllowance() > 0) {
         <div class="computation-total">
@@ -137,6 +180,14 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
     .step-page { display: flex; flex-direction: column; gap: var(--space-6); }
     .step-page__header { display: flex; flex-direction: column; gap: var(--space-2); }
     .entries-list { display: flex; flex-direction: column; gap: var(--space-4); }
+    .prior-year-banner {
+      display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+      padding: var(--space-4) var(--space-5);
+      background: var(--color-surface-container-low);
+      border: 1px solid var(--color-primary);
+      border-radius: var(--radius-xl);
+      flex-wrap: wrap;
+    }
     .entry-card {
       background: var(--color-surface-container-lowest);
       border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
@@ -147,18 +198,22 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
     .entry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
     .doc-chip { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); padding: var(--space-1) var(--space-2); }
     .step-nav { display: flex; justify-content: space-between; align-items: center; padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+    @keyframes spin { to { transform: rotate(360deg); } }
   `],
 })
 export class StepAllowancesComponent implements OnInit {
   filingId = input.required<string>();
+  yearOfAssessment = input.required<number>();
   next = output<void>();
   back = output<void>();
 
   private filingService = inject(FilingService);
   private configService = inject(ConfigService);
+  private toast = inject(ToastService);
 
   entries = signal<CapitalAllowance[]>([]);
   saving = signal(false);
+  loadingPrior = signal(false);
 
   readonly assetTypes = ASSET_TYPES;
 
@@ -200,6 +255,46 @@ export class StepAllowancesComponent implements OnInit {
     const rate = this.rateFor(entry.assetType);
     entry.annualAllowanceRate = rate;
     entry.annualAllowanceAmount = entry.assetCost * rate;
+  }
+
+  isFromPriorYear(entry: CapitalAllowance): boolean {
+    return !!(entry as any)._fromPriorYear;
+  }
+
+  recalculateOnWdv(entry: CapitalAllowance): void {
+    // When WDV is edited manually, recompute the allowance amount from WDV × rate
+    entry.annualAllowanceAmount = entry.taxWrittenDownValue * entry.annualAllowanceRate;
+  }
+
+  /** Fetch closing WDV entries from the prior confirmed filing. */
+  async loadFromPriorYear(): Promise<void> {
+    this.loadingPrior.set(true);
+    try {
+      const prior = await this.filingService.getPriorYearAllowances(this.yearOfAssessment());
+      if (!prior || prior.length === 0) {
+        this.toast.info(`No confirmed capital allowances found for YOA ${this.yearOfAssessment() - 1}.`);
+        return;
+      }
+      const newEntries: CapitalAllowance[] = prior.map(p => ({
+        id: crypto.randomUUID(),
+        filingId: this.filingId(),
+        assetType: (p.assetType ?? 'other') as AssetType,
+        assetDescription: p.assetDescription ?? '',
+        assetCost: p.assetCost ?? 0,
+        acquisitionDate: p.acquisitionDate ?? '',
+        taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
+        annualAllowanceRate: p.annualAllowanceRate ?? 0,
+        annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
+        documents: [],
+        _fromPriorYear: true,
+      } as CapitalAllowance & { _fromPriorYear: boolean }));
+      this.entries.update(e => [...e, ...newEntries]);
+      this.toast.success(`Loaded ${newEntries.length} asset(s) from YOA ${this.yearOfAssessment() - 1} with updated WDVs.`);
+    } catch (err) {
+      this.toast.error('Could not load prior year allowances: ' + String(err));
+    } finally {
+      this.loadingPrior.set(false);
+    }
   }
 
   onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: CapitalAllowance): void {

@@ -398,6 +398,21 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
     })
 }
 
+/// Append an automation failure event to ~/LagosFile/automation-errors.log.
+/// Never panics — errors are swallowed so a logging failure never crashes the command.
+pub fn log_automation_failure(filing_id: &str, reason: &str) {
+    let dir = lirs_data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let log_path = dir.join("automation-errors.log");
+    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let line = format!("[{}] filing_id={} reason={}\n", timestamp, filing_id, reason);
+    // Append to log file (create if absent)
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 pub fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
@@ -529,7 +544,11 @@ pub async fn open_lirs_portal(
     start_bridge_server(filings_json, primary_json);
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    open::that(portal_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+    if let Err(e) = open::that(portal_url) {
+        let reason = format!("Failed to open browser: {}", e);
+        log_automation_failure(&id, &reason);
+        return Err(reason);
+    }
 
     Ok(LIRSAutomationResult {
         success: true,
@@ -582,7 +601,11 @@ pub async fn open_lirs_portal_all(
     start_bridge_server(filings_json, primary_json);
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    open::that(portal_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+    if let Err(e) = open::that(portal_url) {
+        let reason = format!("Failed to open browser: {}", e);
+        log_automation_failure("batch", &reason);
+        return Err(reason);
+    }
 
     Ok(LIRSAutomationResult {
         success: true,

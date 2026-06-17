@@ -32,6 +32,7 @@ export interface Filing {
 
 export type IncomeType =
   | 'employment'
+  | 'benefits_in_kind'
   | 'business'
   | 'rental'
   | 'dividend'

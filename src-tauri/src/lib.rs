@@ -63,6 +63,7 @@ pub fn run() {
             commands::filing::list_allowances,
             commands::filing::upsert_allowance,
             commands::filing::delete_allowance,
+            commands::filing::get_prior_year_allowances,
             // Relief entries
             commands::filing::list_relief_entries,
             commands::filing::upsert_relief_entry,

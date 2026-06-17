@@ -68,6 +68,14 @@ export class FilingService {
     return this.tauri.invoke('delete_allowance', { id });
   }
 
+  /** Returns CA entries from the most recent confirmed filing for yearOfAssessment-1,
+   *  with WDV already advanced to the closing balance. */
+  async getPriorYearAllowances(yearOfAssessment: number): Promise<Partial<CapitalAllowance>[]> {
+    return this.tauri.invoke<Partial<CapitalAllowance>[]>(
+      'get_prior_year_allowances', { yearOfAssessment }
+    );
+  }
+
   async listReliefEntries(filingId: string): Promise<ReliefEntry[]> {
     return this.tauri.invoke<ReliefEntry[]>('list_relief_entries', { filingId });
   }

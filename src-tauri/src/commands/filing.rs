@@ -318,6 +318,23 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
             params![new_id.to_string(), id],
         )
         .map_err(|e| e.to_string())?;
+
+        // copy capital allowances, carrying forward the closing WDV
+        // (tax_written_down_value - annual_allowance_amount) as the new opening WDV.
+        conn.execute(
+            "INSERT INTO capital_allowance
+               (id,filing_id,asset_description,asset_type,cost_ngn,acquisition_date,
+                tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
+             SELECT hex(randomblob(16)),?1,asset_description,asset_type,cost_ngn,acquisition_date,
+                -- new WDV = prior closing WDV (i.e. opening_wdv - allowance claimed last year)
+                max(tax_written_down_value - annual_allowance_amount, 0.0),
+                annual_allowance_rate,
+                -- recompute allowance on the new WDV
+                max(tax_written_down_value - annual_allowance_amount, 0.0) * annual_allowance_rate
+             FROM capital_allowance WHERE filing_id=?2",
+            params![new_id.to_string(), id],
+        )
+        .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await?;
     get_filing(new_id.to_string(), state).await
@@ -548,6 +565,74 @@ pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<
             .map_err(|e| e.to_string())?;
     }
     persist_db(&state).await
+}
+
+/// Return capital allowances from the most recent *Confirmed* filing
+/// for (year_of_assessment - 1), with the WDV already advanced to the closing
+/// balance (tax_written_down_value - annual_allowance_amount). The Angular
+/// allowances step uses these to pre-populate the "prior-year WDV" field when
+/// the user clicks "Load from prior year".
+#[tauri::command]
+pub async fn get_prior_year_allowances(
+    year_of_assessment: i32,
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Find the most recent confirmed filing for YOA-1
+    let prior_yoa = year_of_assessment - 1;
+    let filing_id_result: rusqlite::Result<String> = conn.query_row(
+        "SELECT id FROM filing
+         WHERE year_of_assessment=?1 AND status IN ('Confirmed','Submitted')
+         ORDER BY confirmed_at DESC LIMIT 1",
+        params![prior_yoa],
+        |r| r.get(0),
+    );
+
+    let filing_id = match filing_id_result {
+        Ok(id) => id,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(vec![]),
+        Err(e) => return Err(e.to_string()),
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT asset_description,asset_type,cost_ngn,acquisition_date,
+                    tax_written_down_value,annual_allowance_rate,annual_allowance_amount
+             FROM capital_allowance WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map(params![filing_id], |row| {
+            let desc: String = row.get(0)?;
+            let asset_type: String = row.get(1)?;
+            let cost: f64 = row.get(2)?;
+            let acq_date: String = row.get(3)?;
+            let prior_wdv: f64 = row.get(4)?;
+            let rate: f64 = row.get(5)?;
+            let prior_allowance: f64 = row.get(6)?;
+            // Closing WDV = opening_wdv - allowance claimed in prior year
+            let closing_wdv = (prior_wdv - prior_allowance).max(0.0);
+            let new_allowance = closing_wdv * rate;
+            Ok(serde_json::json!({
+                "assetDescription": desc,
+                "assetType": asset_type,
+                "costNgn": cost,
+                "acquisitionDate": acq_date,
+                "taxWrittenDownValue": closing_wdv,
+                "annualAllowanceRate": rate,
+                "annualAllowanceAmount": new_allowance,
+                "priorYoa": prior_yoa,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
 }
 
 #[tauri::command]

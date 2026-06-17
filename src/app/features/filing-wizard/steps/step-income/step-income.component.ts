@@ -10,7 +10,8 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
-  { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
+  { value: 'employment',          label: 'Employment (salary & bonuses)' },
+  { value: 'benefits_in_kind',    label: 'Benefits-in-Kind (employer-provided benefits)' },
   { value: 'business',            label: 'Business / Trade Income' },
   { value: 'rental',              label: 'Rental Income' },
   { value: 'dividend',            label: 'Dividend Income' },
@@ -72,7 +73,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </label>
             </div>
 
-            @if (!entry.isForeign) {
+            @if (!entry.isForeign && entry.incomeType !== 'benefits_in_kind') {
               <div class="form-group">
                 <label class="form-label">Amount (₦ NGN)</label>
                 <input type="number" class="form-input" [(ngModel)]="entry.grossAmountNgn"
@@ -176,11 +177,30 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               }
             }
 
-            <!-- BIK for employment -->
-            @if (entry.incomeType === 'employment') {
-              <div class="form-hint" style="padding:var(--space-3);background:var(--color-surface-container-low);border-radius:var(--radius-md)">
-                <lucide-icon name="info" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon> Benefits-in-kind are taxable at <strong>5% of the cost</strong> of the benefit (NTA 2025).
-                Include the assessed BIK value in the amount above.
+            <!-- BIK auto-calculation -->
+            @if (entry.incomeType === 'benefits_in_kind') {
+              <div class="bik-section">
+                <div class="alert alert--info" style="margin-bottom:var(--space-3)">
+                  <span class="alert__icon">ℹ</span>
+                  <div class="alert__content">
+                    Under NTA 2025, benefits-in-kind are taxable at <strong>5% of the employer's cost</strong>
+                    of providing the benefit. Enter the cost below — the taxable value is auto-calculated.
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Employer's Cost of Benefit (₦)<lf-help text="The cost to the employer of providing the benefit (e.g. cost of company car, accommodation, etc.). The taxable BIK value = 5% of this cost (NTA 2025)."></lf-help></label>
+                  <input type="number" class="form-input"
+                    [value]="getBikCost(entry)"
+                    (input)="onBikCostChange(entry, $event)"
+                    [name]="'bikcost_' + i"
+                    min="0" placeholder="0.00" />
+                </div>
+                @if (getBikCost(entry) > 0) {
+                  <div class="bik-computed">
+                    <span class="bik-computed__label">Taxable BIK Value (5% × {{ getBikCost(entry) | naira }})</span>
+                    <span class="bik-computed__value">= <strong>{{ entry.grossAmountNgn | naira }}</strong></span>
+                  </div>
+                }
               </div>
             }
 
@@ -305,6 +325,16 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
       padding-top: var(--space-4);
       border-top: 1px solid var(--color-surface-container);
     }
+    .bik-section { display: flex; flex-direction: column; gap: var(--space-3); }
+    .bik-computed {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-surface-container-low);
+      border-radius: var(--radius-md);
+      font-size: var(--text-label-lg);
+    }
+    .bik-computed__label { color: var(--color-on-surface-variant); }
+    .bik-computed__value { color: var(--color-primary); }
   `],
 })
 export class StepIncomeComponent implements OnInit {
@@ -352,6 +382,25 @@ export class StepIncomeComponent implements OnInit {
       entry.cgtProceeds = undefined;
       entry.cgtGain = undefined;
     }
+    // Reset BIK cost if type changes away from benefits_in_kind
+    if (entry.incomeType !== 'benefits_in_kind') {
+      (entry as any)._bikCost = undefined;
+    } else {
+      // Reset grossAmountNgn so it's driven by the BIK cost field
+      entry.grossAmountNgn = 0;
+    }
+  }
+
+  /** Returns the stored BIK cost for an entry (UI-only field, not persisted separately). */
+  getBikCost(entry: IncomeEntry): number {
+    return (entry as any)._bikCost ?? 0;
+  }
+
+  /** When BIK cost changes, auto-compute grossAmountNgn = cost × 5%. */
+  onBikCostChange(entry: IncomeEntry, event: Event): void {
+    const cost = parseFloat((event.target as HTMLInputElement).value) || 0;
+    (entry as any)._bikCost = cost;
+    entry.grossAmountNgn = cost * 0.05;
   }
 
   onForeignToggle(entry: IncomeEntry): void {
