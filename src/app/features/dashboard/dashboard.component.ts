@@ -72,7 +72,7 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
           <div class="module-card__icon"><lucide-icon name="calculator" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Tax Calculator</div>
           <div class="module-card__desc">Estimate your tax liability before filing.</div>
-          <a routerLink="/filing/new" class="btn btn--ghost btn--sm" style="margin-top:auto">Start Filing →</a>
+          <a routerLink="/calculator" class="btn btn--ghost btn--sm" style="margin-top:auto">Open Calculator →</a>
         </div>
         <div class="module-card">
           <div class="module-card__icon"><lucide-icon name="check-circle" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>

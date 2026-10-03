@@ -49,6 +49,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/filing-history/filing-history.component').then(m => m.FilingHistoryComponent),
       },
       {
+        path: 'calculator',
+        loadComponent: () => import('./features/tax-calculator/tax-calculator.component').then(m => m.TaxCalculatorComponent),
+      },
+      {
         path: 'configuration',
         loadComponent: () => import('./features/configuration/configuration.component').then(m => m.ConfigurationComponent),
       },

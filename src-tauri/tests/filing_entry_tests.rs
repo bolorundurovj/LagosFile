@@ -637,3 +637,34 @@ fn test_migration_adds_columns_to_existing_database() {
     }
 }
 
+#[test]
+fn test_estimate_entries_use_config_allowance_rate() {
+    use lagosfile_lib::commands::filing::{
+        build_estimate_entries, EstimateAllowance, EstimateIncome, EstimateRelief,
+    };
+    use lagosfile_lib::services::computation::ComputationEngine;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    let (income, allowances, reliefs) = build_estimate_entries(
+        vec![EstimateIncome {
+            income_type: "business".into(),
+            gross_amount_ngn: 10_000_000.0,
+            cgt_proceeds: None,
+            cgt_gain: None,
+        }],
+        vec![EstimateAllowance {
+            asset_type: "software_licence".into(),
+            asset_cost: 300_000.0,
+            tax_written_down_value: None,
+        }],
+        vec![EstimateRelief {
+            relief_type: "pension".into(),
+            claimed_amount: 800_000.0,
+        }],
+        &config,
+    );
+    let r = ComputationEngine::compute(&income, &allowances, &reliefs, &config).unwrap();
+    assert!((r.total_capital_allowances - 99_000.0).abs() < 1e-6);
+    assert_eq!(r.total_deductions, 800_000.0);
+}

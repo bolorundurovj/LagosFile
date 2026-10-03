@@ -901,3 +901,97 @@ pub async fn compute_filing(
     ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateIncome {
+    pub income_type: String,
+    pub gross_amount_ngn: f64,
+    pub cgt_proceeds: Option<f64>,
+    pub cgt_gain: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateAllowance {
+    pub asset_type: String,
+    pub asset_cost: f64,
+    pub tax_written_down_value: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateRelief {
+    pub relief_type: String,
+    pub claimed_amount: f64,
+}
+
+/// Runs the engine on unsaved figures so the calculator can give an estimate
+/// without creating a draft filing.
+#[tauri::command]
+pub async fn estimate_tax(
+    income_entries: Vec<EstimateIncome>,
+    capital_allowances: Vec<EstimateAllowance>,
+    relief_entries: Vec<EstimateRelief>,
+    state: State<'_, AppState>,
+) -> Result<ComputationResult, String> {
+    let config = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        load_active_config(&conn).map_err(|e| e.to_string())?
+    };
+    let (income, allowances, reliefs) =
+        build_estimate_entries(income_entries, capital_allowances, relief_entries, &config);
+    ComputationEngine::compute(&income, &allowances, &reliefs, &config).map_err(|e| e.to_string())
+}
+
+pub fn build_estimate_entries(
+    income_entries: Vec<EstimateIncome>,
+    capital_allowances: Vec<EstimateAllowance>,
+    relief_entries: Vec<EstimateRelief>,
+    config: &TaxConfig,
+) -> (Vec<IncomeEntry>, Vec<CapitalAllowance>, Vec<ReliefEntry>) {
+    let income = income_entries
+        .into_iter()
+        .map(|e| IncomeEntry {
+            income_type: e.income_type,
+            gross_amount_ngn: e.gross_amount_ngn,
+            cgt_proceeds: e.cgt_proceeds,
+            cgt_gain: e.cgt_gain,
+            ..Default::default()
+        })
+        .collect();
+    let allowances = capital_allowances
+        .into_iter()
+        .map(|a| {
+            let rate = config
+                .allowance_rates
+                .get(&a.asset_type)
+                .copied()
+                .unwrap_or(0.25);
+            CapitalAllowance {
+                id: Uuid::nil(),
+                filing_id: Uuid::nil(),
+                asset_description: String::new(),
+                asset_type: a.asset_type,
+                asset_cost: a.asset_cost,
+                acquisition_date: chrono::NaiveDate::default(),
+                tax_written_down_value: a.tax_written_down_value.unwrap_or(0.0),
+                annual_allowance_rate: rate,
+                annual_allowance_amount: 0.0,
+                documents: vec![],
+            }
+        })
+        .collect();
+    let reliefs = relief_entries
+        .into_iter()
+        .map(|r| ReliefEntry {
+            relief_type: r.relief_type,
+            claimed_amount: r.claimed_amount,
+            approved_amount: r.claimed_amount,
+            ..Default::default()
+        })
+        .collect();
+    (income, allowances, reliefs)
+}

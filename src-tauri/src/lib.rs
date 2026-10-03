@@ -71,6 +71,7 @@ pub fn run() {
             commands::filing::delete_relief_entry,
             // Computation
             commands::filing::compute_filing,
+            commands::filing::estimate_tax,
             // Config
             commands::config::get_active_config,
             commands::config::list_configs,
