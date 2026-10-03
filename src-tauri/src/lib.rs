@@ -17,6 +17,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState {
             db: Mutex::new(None),
@@ -52,6 +53,7 @@ pub fn run() {
             commands::filing::create_draft_filing,
             commands::filing::confirm_filing,
             commands::filing::mark_filing_submitted,
+            commands::filing::record_payment,
             commands::filing::delete_filing,
             commands::filing::duplicate_filing,
             commands::filing::amend_filing,
@@ -70,6 +72,7 @@ pub fn run() {
             commands::filing::delete_relief_entry,
             // Computation
             commands::filing::compute_filing,
+            commands::filing::estimate_tax,
             // Config
             commands::config::get_active_config,
             commands::config::list_configs,
@@ -92,6 +95,7 @@ pub fn run() {
             commands::export::export_filing_csv,
             commands::export::export_filing_json,
             commands::export::open_file,
+            commands::export::print_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -524,3 +524,147 @@ fn test_capital_allowance_upsert_via_replace() {
         .unwrap();
     assert_eq!(desc, "Updated Laptop");
 }
+
+#[test]
+fn test_copy_entries_to_next_year_carries_forward_straight_line() {
+    use lagosfile_lib::commands::filing::copy_entries_to_next_year;
+
+    let (db, taxpayer_id, filing) = setup();
+    let next = FilingService::create_draft(&db, taxpayer_id, 2025, "v1").unwrap();
+    let from = filing.id.to_string();
+    let to = next.id.to_string();
+
+    let conn = db.conn.lock().unwrap();
+    conn.execute(
+        "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn, is_foreign)
+         VALUES (?1, ?2, 'employment', 5000000, 0)",
+        rusqlite::params![Uuid::new_v4().to_string(), from],
+    )
+    .unwrap();
+    // opening WDV 750k on a 1M asset at 25%: claims 250k, closes at 500k
+    conn.execute(
+        "INSERT INTO capital_allowance (id, filing_id, asset_description, asset_type, asset_cost, acquisition_date, tax_written_down_value, annual_allowance_rate, annual_allowance_amount)
+         VALUES (?1, ?2, 'Laptop', 'computer_laptop', 1000000, '2023-01-01', 750000, 0.25, 250000)",
+        rusqlite::params![Uuid::new_v4().to_string(), from],
+    )
+    .unwrap();
+    // fully written down: should not be carried forward
+    conn.execute(
+        "INSERT INTO capital_allowance (id, filing_id, asset_description, asset_type, asset_cost, acquisition_date, tax_written_down_value, annual_allowance_rate, annual_allowance_amount)
+         VALUES (?1, ?2, 'Old monitor', 'monitor', 100000, '2020-01-01', 25000, 0.25, 25000)",
+        rusqlite::params![Uuid::new_v4().to_string(), from],
+    )
+    .unwrap();
+    for (kind, amount) in [
+        ("pension", 400000.0),
+        ("wht", 50000.0),
+        ("foreign_tax", 10000.0),
+    ] {
+        conn.execute(
+            "INSERT INTO relief_entry (id, filing_id, relief_type, claimed_amount, approved_amount)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            rusqlite::params![Uuid::new_v4().to_string(), from, kind, amount],
+        )
+        .unwrap();
+    }
+
+    copy_entries_to_next_year(&conn, &from, &to).unwrap();
+
+    let (wdv, allowance): (f64, f64) = conn
+        .query_row(
+            "SELECT tax_written_down_value, annual_allowance_amount FROM capital_allowance WHERE filing_id=?1",
+            rusqlite::params![to],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(wdv, 500_000.0);
+    assert_eq!(allowance, 250_000.0);
+
+    let reliefs: Vec<String> = conn
+        .prepare("SELECT relief_type FROM relief_entry WHERE filing_id=?1")
+        .unwrap()
+        .query_map(rusqlite::params![to], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(reliefs, vec!["pension".to_string()]);
+
+    // copied ids must round-trip through Uuid so later upserts hit the same row
+    let ids: Vec<String> = conn
+        .prepare("SELECT id FROM income_entry WHERE filing_id=?1 UNION ALL SELECT id FROM capital_allowance WHERE filing_id=?1")
+        .unwrap()
+        .query_map(rusqlite::params![to], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    for id in ids {
+        assert_eq!(Uuid::parse_str(&id).unwrap().to_string(), id);
+    }
+}
+
+#[test]
+fn test_migration_adds_columns_to_existing_database() {
+    let db = AppDb::open_in_memory().unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(
+            "DROP TABLE relief_entry;
+             CREATE TABLE relief_entry (id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, relief_type TEXT NOT NULL,
+               claimed_amount REAL NOT NULL DEFAULT 0, approved_amount REAL NOT NULL DEFAULT 0,
+               wht_ref TEXT, wht_income_type TEXT, wht_date TEXT);",
+        )
+        .unwrap();
+    }
+    let bytes = db.serialize().unwrap();
+    let reopened = AppDb::open_in_memory().unwrap();
+    reopened.load_from_bytes(&bytes).unwrap();
+
+    let conn = reopened.conn.lock().unwrap();
+    for (table, column) in [
+        ("relief_entry", "description"),
+        ("filing", "payment_date"),
+        ("filing", "payment_reference"),
+        ("filing", "amount_paid"),
+    ] {
+        let stmt = conn
+            .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
+            .unwrap();
+        assert!(
+            stmt.column_names().contains(&column),
+            "{table}.{column} missing"
+        );
+    }
+}
+
+#[test]
+fn test_estimate_entries_use_config_allowance_rate() {
+    use lagosfile_lib::commands::filing::{
+        build_estimate_entries, EstimateAllowance, EstimateIncome, EstimateRelief,
+    };
+    use lagosfile_lib::services::computation::ComputationEngine;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    let (income, allowances, reliefs) = build_estimate_entries(
+        vec![EstimateIncome {
+            income_type: "business".into(),
+            gross_amount_ngn: 10_000_000.0,
+            cgt_proceeds: None,
+            cgt_gain: None,
+        }],
+        vec![EstimateAllowance {
+            asset_type: "software_licence".into(),
+            asset_cost: 300_000.0,
+            tax_written_down_value: None,
+        }],
+        vec![EstimateRelief {
+            relief_type: "pension".into(),
+            claimed_amount: 800_000.0,
+        }],
+        &config,
+    );
+    let r = ComputationEngine::compute(&income, &allowances, &reliefs, &config).unwrap();
+    assert!((r.total_capital_allowances - 99_000.0).abs() < 1e-6);
+    assert_eq!(r.total_deductions, 800_000.0);
+}

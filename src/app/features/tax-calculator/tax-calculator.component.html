@@ -1,0 +1,77 @@
+<div class="calc">
+  <div>
+    <h1 class="headline-md">Tax Calculator<lf-help text="A quick what-if estimate using the active tax configuration. Nothing is saved." align="left"></lf-help></h1>
+    <p class="body-md text-muted mt-2">Estimate your liability before you file. Figures are not saved.</p>
+  </div>
+
+  <div class="calc__grid">
+    <div class="card calc__inputs">
+      <h2 class="title-md">Income</h2>
+      @for (line of income; track $index; let i = $index) {
+        <div class="calc__row">
+          <select class="form-input" [(ngModel)]="line.incomeType" [name]="'t' + i" (change)="recompute()">
+            @for (t of incomeTypes; track t.value) { <option [value]="t.value">{{ t.label }}</option> }
+          </select>
+          <input type="number" class="form-input" min="0" [(ngModel)]="line.grossAmountNgn" [name]="'a' + i"
+            (input)="recompute()" [placeholder]="line.incomeType === 'capital_gain_shares' ? 'Gain (₦)' : 'Amount (₦)'" />
+          @if (line.incomeType === 'capital_gain_shares') {
+            <input type="number" class="form-input" min="0" [(ngModel)]="line.cgtProceeds" [name]="'p' + i"
+              (input)="recompute()" placeholder="Proceeds (₦)" />
+          }
+          @if (income.length > 1) {
+            <button class="btn btn--ghost btn--sm" (click)="removeIncome(i)" aria-label="Remove income line">
+              <lucide-icon name="trash-2" [size]="14" [strokeWidth]="2"></lucide-icon>
+            </button>
+          }
+        </div>
+      }
+      <button class="btn btn--secondary btn--sm calc__add" (click)="addIncome()">+ Add Income</button>
+
+      <h2 class="title-md">Deductions & Credits</h2>
+      <div class="calc__fields">
+        <label class="form-group"><span class="form-label">Pension (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.pension" name="pension" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">NHIS (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.nhis" name="nhis" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">NHF (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.nhf" name="nhf" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">Life Assurance (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.life_assurance" name="life" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">Annual Rent Paid (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.rent" name="rent" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">WHT Credits (₦)</span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="reliefs.wht" name="wht" (input)="recompute()" /></label>
+        <label class="form-group"><span class="form-label">Equipment Cost (₦)<lf-help text="Cost of professional equipment bought this year. Estimated at the computer/laptop allowance rate."></lf-help></span>
+          <input type="number" class="form-input" min="0" [(ngModel)]="assetCost" name="asset" (input)="recompute()" /></label>
+      </div>
+    </div>
+
+    <div class="card calc__result">
+      @if (error()) {
+        <div class="alert alert--error"><div class="alert__content">{{ error() }}</div></div>
+      } @else if (result(); as r) {
+        <div class="calc__line"><span>Gross income</span><span>{{ r.totalGrossIncome | naira }}</span></div>
+        <div class="calc__line"><span>Capital allowances</span><span>− {{ r.proratedCapitalAllowances | naira }}</span></div>
+        <div class="calc__line"><span>Deductions & reliefs</span><span>− {{ r.totalDeductions | naira }}</span></div>
+        <div class="calc__line calc__line--strong"><span>Chargeable income</span><span>{{ r.chargeableIncome | naira }}</span></div>
+        @for (b of r.bandBreakdown; track b.lower) {
+          <div class="calc__line calc__line--band"><span>{{ b.rate * 100 }}% on {{ b.taxableAmount | naira }}</span><span>{{ b.taxAmount | naira }}</span></div>
+        }
+        <div class="calc__line"><span>Graduated tax</span><span>{{ r.graduatedTax | naira }}</span></div>
+        <div class="calc__line"><span>WHT credits</span><span>− {{ r.whtCredits | naira }}</span></div>
+        <div class="calc__line"><span>Minimum tax</span><span>{{ r.minimumTax | naira }}</span></div>
+        @if (r.cgtExemptAmount > 0) {
+          <div class="calc__note">{{ r.cgtExemptAmount | naira }} of share gains is CGT-exempt.</div>
+        }
+        <div class="computation-total">
+          <div class="total-label">Estimated Tax Payable</div>
+          <div class="total-value">{{ r.finalTaxPayable | naira }}</div>
+          <div class="calc__rate">Effective rate {{ (effectiveRate() * 100).toFixed(2) }}%</div>
+        </div>
+        <a routerLink="/filing/new" class="btn btn--primary">Start a Filing →</a>
+      } @else {
+        <p class="body-md text-muted">Enter your income to see an estimate.</p>
+      }
+    </div>
+  </div>
+</div>

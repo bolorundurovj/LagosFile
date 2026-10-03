@@ -9,6 +9,11 @@ import {
   LucideAngularModule,
 } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
+import { invoke } from '@tauri-apps/api/core';
+import { homeDir, join } from '@tauri-apps/api/path';
+import { mkdir, writeTextFile } from '@tauri-apps/plugin-fs';
+import { ToastService } from '../../core/services/toast.service';
+import { buildDeadlineIcs } from '../../core/services/deadline-reminder.service';
 
 @Component({
   selector: 'lf-dashboard',
@@ -25,6 +30,7 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
             <div class="alert__title">Filing Deadline Approaching</div>
             <div>{{ daysLeft() }} days until March 31 — the Direct Assessment filing deadline.</div>
           </div>
+          <button class="btn btn--ghost btn--sm" (click)="addDeadlineToCalendar()">Add to Calendar</button>
         </div>
       }
 
@@ -57,7 +63,13 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
             Here is your tax overview.
           </p>
         </div>
-        <a routerLink="/filing/new" class="btn btn--primary btn--lg">+ Start New Filing</a>
+        <div class="flex gap-3">
+          <button class="btn btn--ghost btn--lg" (click)="addDeadlineToCalendar()"
+            title="Saves a calendar event for 31 March with reminders 30, 7 and 1 day before">
+            <lucide-icon name="clock" [size]="16" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>Add Deadline to Calendar
+          </button>
+          <a routerLink="/filing/new" class="btn btn--primary btn--lg">+ Start New Filing</a>
+        </div>
       </div>
 
       <!-- Quick-access module cards -->
@@ -72,7 +84,7 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
           <div class="module-card__icon"><lucide-icon name="calculator" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Tax Calculator</div>
           <div class="module-card__desc">Estimate your tax liability before filing.</div>
-          <a routerLink="/filing/new" class="btn btn--ghost btn--sm" style="margin-top:auto">Start Filing →</a>
+          <a routerLink="/calculator" class="btn btn--ghost btn--sm" style="margin-top:auto">Open Calculator →</a>
         </div>
         <div class="module-card">
           <div class="module-card__icon"><lucide-icon name="check-circle" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
@@ -89,7 +101,7 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
           <div class="module-card__icon"><lucide-icon name="book-open" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Help & Guides</div>
           <div class="module-card__desc">NTA 2025 guidance, LIRS notices, and FAQs.</div>
-          <a href="https://lirs.gov.ng" target="_blank" class="btn btn--ghost btn--sm" style="margin-top:auto">LIRS Website ↗</a>
+          <a routerLink="/help" class="btn btn--ghost btn--sm" style="margin-top:auto">Open Guides →</a>
         </div>
       </div>
 
@@ -274,6 +286,8 @@ export class DashboardComponent implements OnInit {
   readonly currentYear = new Date().getFullYear();
   readonly taxpayer = this.auth.taxpayer;
 
+  private toast = inject(ToastService);
+
   daysLeft = signal(0);
   showDeadlineBanner = signal(false);
   missingCurrentYear = signal(false);
@@ -320,6 +334,22 @@ export class DashboardComponent implements OnInit {
       }
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /** Writes an .ics for the next deadline and opens it in the default calendar app. */
+  async addDeadlineToCalendar(): Promise<void> {
+    const today = new Date();
+    const deadlinePassed = today > new Date(today.getFullYear(), 2, 31, 23, 59, 59);
+    const yoa = deadlinePassed ? today.getFullYear() : today.getFullYear() - 1;
+    try {
+      const dir = await join(await homeDir(), 'LagosFile', 'exports');
+      await mkdir(dir, { recursive: true });
+      const path = await join(dir, `LagosFile_Deadline_YOA${yoa}.ics`);
+      await writeTextFile(path, buildDeadlineIcs(yoa));
+      await invoke('open_file', { path });
+    } catch (err) {
+      this.toast.error('Could not create calendar event: ' + String(err));
     }
   }
 }

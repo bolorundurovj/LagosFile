@@ -2,12 +2,16 @@ import { Component, input, output, inject, OnInit, signal } from '@angular/core'
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
+import { ConfigService } from '../../../../core/services/config.service';
+import { ToastService } from '../../../../core/services/toast.service';
 import { IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
+import { DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { queueDocument, flushDocuments } from '../pending-documents';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
   { value: 'employment',          label: 'Employment (salary & bonuses)' },
@@ -169,10 +173,15 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                     [name]="'gain_' + i" min="0" />
                 </div>
               </div>
-              @if (isCgtExempt(entry)) {
+              @if (cgtSummary().exempt) {
                 <div class="alert alert--success">
                   <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
-                  <div class="alert__content">CGT Exemption applies — proceeds &lt; ₦150M and gain ≤ ₦10M. This entry will be excluded from chargeable income.</div>
+                  <div class="alert__content">CGT exemption applies: total proceeds this year ({{ cgtSummary().proceeds | naira }}) are below {{ cgtSummary().proceedsLimit | naira }} and total gains ({{ cgtSummary().gain | naira }}) do not exceed {{ cgtSummary().gainLimit | naira }}. Share gains will be excluded from chargeable income.</div>
+                </div>
+              } @else {
+                <div class="alert alert--warning">
+                  <span class="alert__icon">!</span>
+                  <div class="alert__content">CGT exemption does not apply: the limits are tested on all share disposals within 12 consecutive months, and this year's totals are {{ cgtSummary().proceeds | naira }} proceeds and {{ cgtSummary().gain | naira }} gains. Share gains will be taxed.</div>
                 </div>
               }
             }
@@ -343,6 +352,9 @@ export class StepIncomeComponent implements OnInit {
 
   private filingService = inject(FilingService);
   private fxService = inject(FxService);
+  private configService = inject(ConfigService);
+  private toast = inject(ToastService);
+  private removedIds: string[] = [];
 
   entries = signal<IncomeEntry[]>([]);
   saving = signal(false);
@@ -373,6 +385,7 @@ export class StepIncomeComponent implements OnInit {
   }
 
   removeEntry(id: string): void {
+    this.removedIds.push(id);
     this.entries.update(e => e.filter(x => x.id !== id));
   }
 
@@ -452,37 +465,24 @@ export class StepIncomeComponent implements OnInit {
     }
   }
 
-  isCgtExempt(entry: IncomeEntry): boolean {
-    const proceeds = entry.cgtProceeds ?? 0;
-    const gain = entry.cgtGain ?? 0;
-    return proceeds < 150_000_000 && gain <= 10_000_000;
+  /** Mirrors the engine: the exemption is tested on aggregate share disposals for the year. */
+  cgtSummary(): { exempt: boolean; proceeds: number; gain: number; proceedsLimit: number; gainLimit: number } {
+    const limits = this.configService.activeConfig()?.cgtThresholds;
+    const proceedsLimit = limits?.proceedsThreshold ?? 150_000_000;
+    const gainLimit = limits?.gainThreshold ?? 10_000_000;
+    let proceeds = 0;
+    let gain = 0;
+    for (const e of this.entries()) {
+      if (e.incomeType !== 'capital_gain_shares') continue;
+      proceeds += e.cgtProceeds ?? 0;
+      gain += e.cgtGain ?? 0;
+    }
+    return { exempt: proceeds < proceedsLimit && gain <= gainLimit, proceeds, gain, proceedsLimit, gainLimit };
   }
 
-  onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: IncomeEntry): void {
-    if (!file.path) {
-      alert('Drag-and-drop is not yet supported. Please use the "Attach" button to pick a file.');
-      return;
-    }
-    if (file.size > 100 * 1024 * 1024) {
-      alert('File exceeds the 100MB limit. Please attach a smaller file.');
-      return;
-    }
-    // Mark with _pending so saveAndNext knows to call attach_document
-    (entry as any)._pendingDocs = [
-      ...((entry as any)._pendingDocs ?? []),
-      { path: file.path, name: file.name, type: file.type, size: file.size },
-    ];
-    // Show it in the UI immediately (will get a real id after save)
-    entry.documents = [...(entry.documents ?? []), {
-      id: crypto.randomUUID(),
-      parentEntryId: entry.id,
-      parentEntryType: 'income_entry',
-      filePath: file.path,
-      fileName: file.name,
-      fileType: file.type,
-      fileSizeBytes: file.size,
-      uploadedAt: new Date().toISOString(),
-    }];
+  onFileSelected(file: DropzoneFile, entry: IncomeEntry): void {
+    const error = queueDocument(entry, file, 'income_entry');
+    if (error) this.toast.error(error);
   }
 
   readonly totalNgn = () =>
@@ -491,23 +491,19 @@ export class StepIncomeComponent implements OnInit {
   async saveAndNext(): Promise<void> {
     this.saving.set(true);
     try {
+      for (const id of this.removedIds) await this.filingService.deleteIncomeEntry(id);
+      this.removedIds = [];
+      const exempt = this.cgtSummary().exempt;
+      const failed: string[] = [];
       for (const entry of this.entries()) {
+        if (entry.incomeType === 'capital_gain_shares') entry.isCgtExempt = exempt;
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
-        const pending: { path: string; name: string; type: string; size: number }[] =
-          (entry as any)._pendingDocs ?? [];
-        for (const doc of pending) {
-          try {
-            await this.filingService.attachDocument(
-              entry.id, 'income_entry', doc.path, doc.name, doc.type, doc.size,
-            );
-          } catch (err) {
-            console.error('Failed to attach document:', doc.name, err);
-            alert(`Could not attach "${doc.name}": ${err}`);
-          }
-        }
-        (entry as any)._pendingDocs = [];
+        failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }
+      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
       this.next.emit();
+    } catch (err) {
+      this.toast.error('Could not save income: ' + String(err));
     } finally {
       this.saving.set(false);
     }

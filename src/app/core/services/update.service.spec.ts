@@ -1,6 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
 import { UpdateService } from './update.service';
+import pkg from '../../../../package.json';
+
+const pkgVersion = pkg.version;
 
 describe('UpdateService', () => {
   let service: UpdateService;
@@ -67,5 +70,29 @@ describe('UpdateService', () => {
 
     await new Promise(r => setTimeout(r, 0));
     expect(service.updateAvailable()).toBeNull();
+  });
+
+  it('should not flag a prerelease with the same numeric version', async () => {
+    service.checkForUpdates();
+    const req = httpMock.expectOne('https://api.github.com/repos/bolorundurovj/LagosFile/releases/latest');
+    req.flush({ tag_name: 'v' + pkg.version + '-rc.1', html_url: 'https://example.com', prerelease: true });
+
+    await new Promise(r => setTimeout(r, 0));
+    expect(service.updateAvailable()).toBeNull();
+  });
+
+  it('should flag a stable release when running a prerelease', async () => {
+    const currentWithPre = pkg.version.includes('-') ? pkg.version : pkg.version + '-beta.1';
+    Object.defineProperty(pkg, 'version', { value: currentWithPre, writable: true, configurable: true });
+    try {
+      service.checkForUpdates();
+      const req = httpMock.expectOne('https://api.github.com/repos/bolorundurovj/LagosFile/releases/latest');
+      req.flush({ tag_name: 'v' + currentWithPre.split('-')[0], html_url: 'https://example.com', prerelease: false });
+
+      await new Promise(r => setTimeout(r, 0));
+      expect(service.updateAvailable()).toBe(currentWithPre.split('-')[0]);
+    } finally {
+      Object.defineProperty(pkg, 'version', { value: pkgVersion, writable: true, configurable: true });
+    }
   });
 });

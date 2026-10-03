@@ -1007,3 +1007,30 @@ pub async fn open_file(path: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Sends a file to the system's default printer handler.
+#[tauri::command]
+pub async fn print_file(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("File not found: {path}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let script = format!(
+            "Start-Process -FilePath '{}' -Verb Print",
+            path.replace('\'', "''")
+        );
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        std::process::Command::new("lpr")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}

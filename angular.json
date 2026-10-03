@@ -118,7 +118,8 @@
   "cli": {
     "schematicCollections": [
       "angular-eslint"
-    ]
+    ],
+    "analytics": false
   },
   "schematics": {
     "@schematics/angular:component": {

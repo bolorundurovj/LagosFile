@@ -78,8 +78,33 @@ impl AppDb {
     fn create_schema(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(include_str!("schema.sql"))?;
+        migrate(&conn)?;
         Ok(())
     }
+}
+
+/// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` leaves
+/// existing databases untouched, so they are added here when missing.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("relief_entry", "description", "TEXT"),
+    ("filing", "payment_date", "TEXT"),
+    ("filing", "payment_reference", "TEXT"),
+    ("filing", "amount_paid", "REAL"),
+];
+
+fn migrate(conn: &Connection) -> Result<()> {
+    for (table, column, ty) in ADDED_COLUMNS {
+        // pragma_table_info crashes on a freshly deserialized connection, so
+        // read the column list from a prepared statement instead.
+        let exists = conn
+            .prepare(&format!("SELECT * FROM {table} LIMIT 0"))?
+            .column_names()
+            .contains(column);
+        if !exists {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn db_path() -> PathBuf {
