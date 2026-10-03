@@ -225,3 +225,49 @@ fn test_relief_caps_applied_when_configured() {
     assert_eq!(result.total_deductions, 375_000.0);
 }
 
+#[test]
+fn test_cgt_exemption_aggregates_disposals() {
+    let config = mock_config();
+    // each disposal is under the 1M gain threshold, but together they exceed it
+    let disposal = |gain: f64| IncomeEntry {
+        income_type: "capital_gain_shares".to_string(),
+        gross_amount_ngn: gain,
+        cgt_proceeds: Some(5_000_000.0),
+        cgt_gain: Some(gain),
+        ..Default::default()
+    };
+    let income = vec![disposal(600_000.0), disposal(600_000.0)];
+    let result = ComputationEngine::compute(&income, &[], &[], &config).unwrap();
+    assert_eq!(result.cgt_exempt_amount, 0.0);
+    assert_eq!(result.total_gross_income, 1_200_000.0);
+}
+
+#[test]
+fn test_capital_allowance_is_straight_line_capped_at_wdv() {
+    let config = mock_config();
+    let asset = |wdv: f64| CapitalAllowance {
+        id: Uuid::new_v4(),
+        filing_id: Uuid::new_v4(),
+        asset_description: "Laptop".to_string(),
+        asset_type: "computer_laptop".to_string(),
+        asset_cost: 1_000_000.0,
+        acquisition_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        tax_written_down_value: wdv,
+        annual_allowance_rate: 0.25,
+        annual_allowance_amount: 0.0,
+        documents: vec![],
+    };
+    let income = vec![IncomeEntry {
+        income_type: "business".to_string(),
+        gross_amount_ngn: 5_000_000.0,
+        ..Default::default()
+    }];
+
+    // allowance is on cost regardless of the remaining WDV
+    let r = ComputationEngine::compute(&income, &[asset(750_000.0)], &[], &config).unwrap();
+    assert_eq!(r.total_capital_allowances, 250_000.0);
+
+    // final year: only the remaining WDV can be claimed
+    let r = ComputationEngine::compute(&income, &[asset(100_000.0)], &[], &config).unwrap();
+    assert_eq!(r.total_capital_allowances, 100_000.0);
+}

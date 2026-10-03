@@ -8,6 +8,35 @@ fn cap(amount: f64, cap: Option<f64>) -> f64 {
     }
 }
 
+/// The share-disposal exemption is tested on aggregate proceeds and gains over
+/// 12 consecutive months, not per disposal. A filing covers one year of
+/// assessment, so every share disposal in it falls in the same window.
+pub fn cgt_shares_exempt(income_entries: &[IncomeEntry], thresholds: &CgtThresholds) -> bool {
+    let (proceeds, gain) = income_entries
+        .iter()
+        .filter(|e| e.income_type == "capital_gain_shares")
+        .fold((0.0, 0.0), |(p, g), e| {
+            (
+                p + e.cgt_proceeds.unwrap_or(0.0),
+                g + e.cgt_gain.unwrap_or(0.0),
+            )
+        });
+    proceeds < thresholds.proceeds_threshold && gain <= thresholds.gain_threshold
+}
+
+/// Straight-line allowance on cost, never exceeding the opening written-down
+/// value (an asset with no recorded WDV is treated as newly acquired).
+pub fn straight_line_allowance(ca: &CapitalAllowance) -> f64 {
+    let opening_wdv = if ca.tax_written_down_value > 0.0 {
+        ca.tax_written_down_value
+    } else {
+        ca.asset_cost
+    };
+    (ca.asset_cost * ca.annual_allowance_rate)
+        .min(opening_wdv)
+        .max(0.0)
+}
+
 pub struct ComputationEngine;
 
 impl ComputationEngine {
@@ -30,38 +59,29 @@ impl ComputationEngine {
         let digital_net = digital_gross.max(0.0);
         let digital_asset_loss_ringfenced = (-digital_gross).max(0.0);
 
+        let share_disposals_exempt = cgt_shares_exempt(income_entries, &config.cgt_thresholds);
+
         let mut cgt_exempt_amount = 0.0;
         let mut effective_other_income = 0.0;
 
         for entry in &other_entries {
-            if entry.income_type == "capital_gain_shares" {
-                let proceeds = entry.cgt_proceeds.unwrap_or(0.0);
-                let gain = entry.cgt_gain.unwrap_or(0.0);
-                if proceeds < config.cgt_thresholds.proceeds_threshold
-                    && gain <= config.cgt_thresholds.gain_threshold
-                {
-                    cgt_exempt_amount += entry.gross_amount_ngn;
-                    continue; // excluded from chargeable income
-                }
+            if entry.income_type == "capital_gain_shares" && share_disposals_exempt {
+                cgt_exempt_amount += entry.gross_amount_ngn;
+                continue;
             }
             effective_other_income += entry.gross_amount_ngn;
         }
 
         let total_gross = effective_other_income + digital_net;
 
-        let total_ca: f64 = capital_allowances
-            .iter()
-            .map(|ca| ca.annual_allowance_amount)
-            .sum();
+        let total_ca: f64 = capital_allowances.iter().map(straight_line_allowance).sum();
 
         // if non-taxable income (CGT-exempt gains) is ≥ 10% of total gross
         // receipts, prorate capital allowances by the taxable fraction.
         // "Total income" for this rule = taxable gross + CGT-exempt gross (digital
         // losses are not income so they don't enter the denominator).
         let total_receipts = total_gross + cgt_exempt_amount;
-        let prorated_ca = if total_receipts > 0.0
-            && (cgt_exempt_amount / total_receipts) >= 0.10
-        {
+        let prorated_ca = if total_receipts > 0.0 && (cgt_exempt_amount / total_receipts) >= 0.10 {
             total_ca * (total_gross / total_receipts)
         } else {
             total_ca
