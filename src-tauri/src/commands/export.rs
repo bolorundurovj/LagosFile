@@ -1034,3 +1034,40 @@ pub async fn print_file(path: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_pdf(path: &std::path::Path, pages: usize) {
+        let (doc, _, _) = PdfDocument::new("test", Mm(210.0), Mm(297.0), "Layer 1");
+        for _ in 1..pages {
+            doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+        }
+        doc.save(&mut BufWriter::new(std::fs::File::create(path).unwrap()))
+            .unwrap();
+    }
+
+    #[test]
+    fn appends_attachment_pages_to_generated_pdf() {
+        let dir = std::env::temp_dir().join(format!("lagosfile-merge-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("main.pdf");
+        let att = dir.join("att.pdf");
+        write_pdf(&main, 1);
+        write_pdf(&att, 2);
+
+        append_pdf_attachments(
+            main.to_str().unwrap(),
+            &[
+                att.to_string_lossy().to_string(),
+                dir.join("missing.pdf").to_string_lossy().to_string(),
+            ],
+        )
+        .unwrap();
+
+        let merged = lopdf::Document::load(&main).unwrap();
+        assert_eq!(merged.get_pages().len(), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
