@@ -84,10 +84,7 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
                 version_label: row.get(1)?,
                 governed_by: row.get(2)?,
                 bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or(ReliefCaps {
-                    rent_relief_cap: 500_000.0,
-                    rent_relief_rate: 0.20,
-                }),
+                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
                 cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
                     proceeds_threshold: 150_000_000.0,
                     gain_threshold: 10_000_000.0,

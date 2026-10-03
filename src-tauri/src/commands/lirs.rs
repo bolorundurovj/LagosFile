@@ -29,10 +29,7 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
                 version_label: row.get(1)?,
                 governed_by: row.get(2)?,
                 bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or(ReliefCaps {
-                    rent_relief_cap: 500_000.0,
-                    rent_relief_rate: 0.20,
-                }),
+                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
                 cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
                     proceeds_threshold: 150_000_000.0,
                     gain_threshold: 10_000_000.0,
@@ -405,10 +402,17 @@ pub fn log_automation_failure(filing_id: &str, reason: &str) {
     let _ = std::fs::create_dir_all(&dir);
     let log_path = dir.join("automation-errors.log");
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-    let line = format!("[{}] filing_id={} reason={}\n", timestamp, filing_id, reason);
+    let line = format!(
+        "[{}] filing_id={} reason={}\n",
+        timestamp, filing_id, reason
+    );
     // Append to log file (create if absent)
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }

@@ -156,6 +156,24 @@ pub struct TaxBand {
 pub struct ReliefCaps {
     pub rent_relief_cap: f64,
     pub rent_relief_rate: f64,
+    #[serde(default)]
+    pub pension_cap: Option<f64>,
+    #[serde(default)]
+    pub nhis_cap: Option<f64>,
+    #[serde(default)]
+    pub nhf_cap: Option<f64>,
+}
+
+impl Default for ReliefCaps {
+    fn default() -> Self {
+        Self {
+            rent_relief_cap: 500_000.0,
+            rent_relief_rate: 0.20,
+            pension_cap: None,
+            nhis_cap: None,
+            nhf_cap: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

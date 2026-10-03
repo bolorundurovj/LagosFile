@@ -27,6 +27,7 @@ fn mock_config() -> TaxConfig {
         relief_caps: ReliefCaps {
             rent_relief_rate: 0.10,
             rent_relief_cap: 100_000.0,
+            ..Default::default()
         },
         cgt_thresholds: CgtThresholds {
             proceeds_threshold: 25_000_000.0,
@@ -187,3 +188,40 @@ fn test_wht_credits_application() {
     assert_eq!(result.wht_credits, 50_000.0);
     assert_eq!(result.net_tax_payable, 64_000.0);
 }
+
+#[test]
+fn test_relief_caps_applied_when_configured() {
+    let mut config = mock_config();
+    config.relief_caps.pension_cap = Some(200_000.0);
+    config.relief_caps.nhis_cap = Some(50_000.0);
+    config.relief_caps.nhf_cap = None;
+
+    let income = vec![IncomeEntry {
+        income_type: "employment".to_string(),
+        gross_amount_ngn: 5_000_000.0,
+        ..Default::default()
+    }];
+
+    let reliefs = vec![
+        ReliefEntry {
+            relief_type: "pension".to_string(),
+            approved_amount: 350_000.0,
+            ..Default::default()
+        },
+        ReliefEntry {
+            relief_type: "nhis".to_string(),
+            approved_amount: 80_000.0,
+            ..Default::default()
+        },
+        ReliefEntry {
+            relief_type: "nhf".to_string(),
+            approved_amount: 125_000.0,
+            ..Default::default()
+        },
+    ];
+
+    let result = ComputationEngine::compute(&income, &[], &reliefs, &config).unwrap();
+    // pension capped at 200k, NHIS capped at 50k, NHF uncapped at 125k
+    assert_eq!(result.total_deductions, 375_000.0);
+}
+

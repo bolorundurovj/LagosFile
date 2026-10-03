@@ -145,6 +145,9 @@ export interface TaxConfig {
   reliefCaps: {
     rentReliefCap: number;
     rentReliefRate: number;
+    pensionCap?: number | null;
+    nhisCap?: number | null;
+    nhfCap?: number | null;
   };
   cgtThresholds: {
     proceedsThreshold: number;

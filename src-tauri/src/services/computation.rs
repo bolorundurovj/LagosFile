@@ -1,6 +1,13 @@
 use crate::models::*;
 use anyhow::Result;
 
+fn cap(amount: f64, cap: Option<f64>) -> f64 {
+    match cap {
+        Some(c) if c.is_finite() && c >= 0.0 => amount.min(c),
+        _ => amount,
+    }
+}
+
 pub struct ComputationEngine;
 
 impl ComputationEngine {
@@ -85,12 +92,16 @@ impl ComputationEngine {
         let rent_relief = (annual_rent * config.relief_caps.rent_relief_rate)
             .min(config.relief_caps.rent_relief_cap);
 
+        let pension = cap(pension, config.relief_caps.pension_cap);
+        let nhis = cap(nhis, config.relief_caps.nhis_cap);
+        let nhf = cap(nhf, config.relief_caps.nhf_cap);
+
         let total_deductions = pension + nhis + nhf + life_assurance + rent_relief + other_approved;
 
         let chargeable_income = (total_gross - prorated_ca - total_deductions).max(0.0);
 
         let mut sorted_bands = config.bands.clone();
-        sorted_bands.sort_by(|a, b| a.lower.partial_cmp(&b.lower).unwrap());
+        sorted_bands.sort_by(|a, b| a.lower.total_cmp(&b.lower));
 
         let mut graduated_tax = 0.0f64;
         let mut band_breakdown = Vec::new();
