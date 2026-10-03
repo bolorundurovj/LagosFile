@@ -11,6 +11,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test --browsers=ChromeHeadlessCI",
     "test:watch": "ng test --browsers=Chrome",
+    "test:ci": "ng test --no-watch --browsers=ChromeHeadlessCI",
     "test:coverage": "ng test --no-watch --code-coverage --browsers=ChromeHeadlessCI",
     "test:rust": "cd src-tauri && cargo test",
     "test:rust:coverage": "cd src-tauri && cargo llvm-cov --html",
