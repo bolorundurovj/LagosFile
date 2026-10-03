@@ -16,7 +16,7 @@ import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.c
 import { LucideAngularModule } from 'lucide-angular';
 
 type ExportFormat = 'pdf' | 'csv' | 'json';
-type FilingActionId = 'export' | 'duplicate' | 'amend' | 'fileWithLirs' | 'markSubmitted' | 'delete';
+type FilingActionId = 'export' | 'duplicate' | 'amend' | 'fileWithLirs' | 'markSubmitted' | 'recordPayment' | 'delete';
 type FilingActionVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 interface FilingRowAction {
@@ -126,7 +126,12 @@ interface FilingRowAction {
                   >
                     <td><strong>YOA {{ f.yearOfAssessment }}</strong></td>
                     <td class="text-muted cell-truncate">{{ f.filingReference ?? '—' }}</td>
-                    <td><span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span></td>
+                    <td>
+                      <span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span>
+                      @if (f.paymentDate) {
+                        <span class="badge badge--submitted" style="margin-left:4px" [title]="'Paid ' + f.paymentDate + (f.paymentReference ? ' · ' + f.paymentReference : '')">Paid</span>
+                      }
+                    </td>
                     <td class="text-muted cell-truncate">
                       {{ f.confirmedAt ? (f.confirmedAt | date) : (f.createdAt | date) }}
                     </td>
@@ -197,6 +202,33 @@ interface FilingRowAction {
         }
       </div>
 
+      <!-- Export Analysis panel -->
+      <div class="export-analysis card">
+        <div class="export-analysis__header">
+          <lucide-icon name="bar-chart-2" [size]="20" [strokeWidth]="1.5" style="color:var(--color-primary)"></lucide-icon>
+          <h3 class="title-md">Export Analysis</h3>
+        </div>
+        <div class="export-analysis__grid">
+          <div class="export-stat">
+            <div class="export-stat__value">{{ confirmedCount + submittedCount }}</div>
+            <div class="export-stat__label">Filings ready to export</div>
+          </div>
+          <div class="export-stat">
+            <div class="export-stat__value">{{ draftCount }}</div>
+            <div class="export-stat__label">Drafts (not exportable)</div>
+          </div>
+          <div class="export-stat">
+            <div class="export-stat__value">{{ submittedCount }}</div>
+            <div class="export-stat__label">Submitted to LIRS</div>
+          </div>
+        </div>
+        <p class="body-sm text-muted" style="margin-top:var(--space-3)">
+          Use the <strong>Export</strong> button on any Confirmed or Submitted filing to download
+          a PDF statement, CSV line-item report, or JSON data package.
+          PDFs include your taxpayer name, TIN, Year of Assessment, and the full tax computation.
+        </p>
+      </div>
+
       <!-- Compliance note -->
       <div class="alert alert--info">
         <span class="alert__icon">ℹ</span>
@@ -206,6 +238,37 @@ interface FilingRowAction {
         </div>
       </div>
     </div>
+
+    <!-- Record payment modal -->
+    @if (paymentFiling(); as pf) {
+      <div class="modal-overlay" (click)="paymentFiling.set(null)">
+        <div class="modal modal--sm" style="text-align:left" (click)="$event.stopPropagation()">
+          <h3 class="title-lg" style="margin-bottom:var(--space-2)">Record Payment</h3>
+          <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
+            YOA {{ pf.yearOfAssessment }} · Tax payable {{ (pf.finalTaxPayable ?? 0) | naira }}
+          </p>
+          <div class="form-group" style="margin-bottom:var(--space-3)">
+            <label class="form-label">Payment Date</label>
+            <input type="date" class="form-input" [value]="paymentForm.date" (input)="paymentForm.date = $any($event.target).value" />
+          </div>
+          <div class="form-group" style="margin-bottom:var(--space-3)">
+            <label class="form-label">Receipt / RRR Reference</label>
+            <input type="text" class="form-input" [value]="paymentForm.reference" (input)="paymentForm.reference = $any($event.target).value" placeholder="e.g. 2901-2345-6789" />
+          </div>
+          <div class="form-group" style="margin-bottom:var(--space-5)">
+            <label class="form-label">Amount Paid (₦)</label>
+            <input type="number" min="0" class="form-input" [value]="paymentForm.amount ?? ''" (input)="paymentForm.amount = $any($event.target).valueAsNumber" />
+          </div>
+          <div class="flex gap-3">
+            @if (pf.paymentDate) {
+              <button class="btn btn--ghost" (click)="clearPayment()" [disabled]="savingPayment()">Clear</button>
+            }
+            <button class="btn btn--ghost flex-1" (click)="paymentFiling.set(null)">Cancel</button>
+            <button class="btn btn--primary flex-1" (click)="savePayment()" [disabled]="savingPayment() || !paymentForm.date">Save</button>
+          </div>
+        </div>
+      </div>
+    }
 
     <!-- Delete confirmation modal -->
     @if (deletingFiling()) {
@@ -396,6 +459,10 @@ interface FilingRowAction {
 
           <div class="flex gap-3" style="margin-top:var(--space-6)">
             <button class="btn btn--ghost flex-1" (click)="closeExport()">Cancel</button>
+            <button class="btn btn--secondary flex-1" (click)="doPrint()" [disabled]="exporting()"
+              title="Generates the PDF statement and sends it to your printer">
+              Print
+            </button>
             <button class="btn btn--primary flex-1" (click)="doExport()" [disabled]="exporting()">
               @if (exporting()) { Exporting… } @else { Download Export }
             </button>
@@ -426,7 +493,7 @@ interface FilingRowAction {
     .metric-card--submitted .metric-card__value { color: var(--color-success); }
     .metric-card--confirmed .metric-card__value { color: var(--color-secondary); }
     .metric-card--draft .metric-card__value { color: var(--color-on-surface-variant); }
-    .metric-card__value { font-family: var(--font-display); }
+    .metric-card__value { font-family: var(--font-display),serif; }
     .metric-card__label { font-size: var(--text-label-md); color: var(--color-on-surface-variant); }
 
     .history-filters { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
@@ -507,7 +574,7 @@ interface FilingRowAction {
       border-radius: var(--radius-md);
       background: transparent;
       font-size: var(--text-body-sm);
-      font-family: var(--font-body);
+      font-family: var(--font-body),serif;
       color: var(--color-on-surface);
       cursor: pointer;
       transition: background var(--transition-fast);
@@ -602,6 +669,26 @@ interface FilingRowAction {
     .lh-logo__sub { font-size: 6px; letter-spacing: 0.04em; color: #1a2e5a; text-transform: uppercase; line-height: 1; }
     .lh-divider { height: 1px; background: #1a2e5a; opacity: 0.3; }
     .lh-title { font-size: 9px; font-weight: 700; color: #1a2e5a; line-height: 1.3; }
+    .export-analysis {
+      padding: var(--space-5);
+    }
+    .export-analysis__header {
+      display: flex; align-items: center; gap: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+    .export-analysis__grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4);
+    }
+    .export-stat {
+      display: flex; flex-direction: column; align-items: center;
+      padding: var(--space-3); background: var(--color-surface-container-low);
+      border-radius: var(--radius-lg); text-align: center;
+    }
+    .export-stat__value {
+      font-size: var(--text-headline-sm); font-family: var(--font-display),serif;
+      font-weight: var(--font-weight-bold); color: var(--color-primary);
+    }
+    .export-stat__label { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
   `],
 })
 export class FilingHistoryComponent implements OnInit {
@@ -621,6 +708,9 @@ export class FilingHistoryComponent implements OnInit {
   deletingFiling = signal<Filing | null>(null);
   deleting = signal(false);
   previewFiling = signal<Filing | null>(null);
+  paymentFiling = signal<Filing | null>(null);
+  savingPayment = signal(false);
+  paymentForm: { date: string; reference: string; amount: number | null } = { date: '', reference: '', amount: null };
   previewCounts = signal({ income: 0, allowances: 0, reliefs: 0, documents: 0 });
 
   searchQuery = '';
@@ -685,12 +775,14 @@ export class FilingHistoryComponent implements OnInit {
           { id: 'fileWithLirs', label: 'File with LIRS', variant: 'primary', icon: 'send' },
           { id: 'markSubmitted', label: 'Mark Submitted', variant: 'ghost', icon: 'check' },
           { id: 'export', label: 'Export', variant: 'secondary' },
+          { id: 'recordPayment', label: 'Record Payment', variant: 'ghost' },
           { id: 'duplicate', label: 'Duplicate', variant: 'ghost' },
           { id: 'amend', label: 'Amend', variant: 'ghost' },
         ];
       case 'Submitted':
         return [
           { id: 'export', label: 'Export', variant: 'secondary' },
+          { id: 'recordPayment', label: 'Record Payment', variant: 'ghost' },
           { id: 'amend', label: 'Amend', variant: 'ghost' },
           { id: 'duplicate', label: 'Duplicate', variant: 'ghost' },
         ];
@@ -712,6 +804,7 @@ export class FilingHistoryComponent implements OnInit {
       case 'amend': void this.amend(f.id); break;
       case 'fileWithLirs': void this.fileWithLirs(f); break;
       case 'markSubmitted': void this.markSubmitted(f.id); break;
+      case 'recordPayment': this.openPayment(f); break;
       case 'delete': this.openDelete(f); break;
     }
   }
@@ -890,6 +983,63 @@ export class FilingHistoryComponent implements OnInit {
       this.toast.success('Filing marked as Submitted.');
     } catch (err: unknown) {
       this.toast.error('Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  openPayment(f: Filing): void {
+    this.paymentForm = {
+      date: f.paymentDate ?? new Date().toISOString().slice(0, 10),
+      reference: f.paymentReference ?? '',
+      amount: f.amountPaid ?? f.finalTaxPayable ?? null,
+    };
+    this.paymentFiling.set(f);
+  }
+
+  async savePayment(): Promise<void> {
+    await this.writePayment({
+      paymentDate: this.paymentForm.date || null,
+      paymentReference: this.paymentForm.reference || null,
+      amountPaid: Number.isFinite(this.paymentForm.amount) ? this.paymentForm.amount : null,
+    }, 'Payment recorded.');
+  }
+
+  async clearPayment(): Promise<void> {
+    await this.writePayment({ paymentDate: null, paymentReference: null, amountPaid: null }, 'Payment cleared.');
+  }
+
+  private async writePayment(
+    payment: { paymentDate: string | null; paymentReference: string | null; amountPaid: number | null },
+    message: string,
+  ): Promise<void> {
+    const f = this.paymentFiling();
+    if (!f) return;
+    this.savingPayment.set(true);
+    try {
+      await this.filingService.recordPayment(f.id, payment);
+      this.paymentFiling.set(null);
+      await this.refreshAll();
+      this.toast.success(message);
+    } catch (err) {
+      this.toast.error('Could not save payment: ' + String(err));
+    } finally {
+      this.savingPayment.set(false);
+    }
+  }
+
+  async doPrint(): Promise<void> {
+    const f = this.exportFiling();
+    if (!f) return;
+    this.exporting.set(true);
+    try {
+      const home = await homeDir();
+      const path = await join(home, 'LagosFile', 'exports', 'print', `LagosFile_${f.yearOfAssessment}_${f.id}.pdf`);
+      const saved = await this.filingService.exportPdf(f.id, path, this.includeAttachments, this.letterheadStyle);
+      await invoke('print_file', { path: saved });
+      this.toast.success('Sent to printer.');
+    } catch (err) {
+      this.toast.error(`Print failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.exporting.set(false);
     }
   }
 

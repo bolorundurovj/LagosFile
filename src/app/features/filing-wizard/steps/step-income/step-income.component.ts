@@ -2,15 +2,20 @@ import { Component, input, output, inject, OnInit, signal } from '@angular/core'
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
+import { ConfigService } from '../../../../core/services/config.service';
+import { ToastService } from '../../../../core/services/toast.service';
 import { IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
+import { DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { queueDocument, flushDocuments } from '../pending-documents';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
-  { value: 'employment',          label: 'Employment (salary, bonuses, BIK)' },
+  { value: 'employment',          label: 'Employment (salary & bonuses)' },
+  { value: 'benefits_in_kind',    label: 'Benefits-in-Kind (employer-provided benefits)' },
   { value: 'business',            label: 'Business / Trade Income' },
   { value: 'rental',              label: 'Rental Income' },
   { value: 'dividend',            label: 'Dividend Income' },
@@ -72,7 +77,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </label>
             </div>
 
-            @if (!entry.isForeign) {
+            @if (!entry.isForeign && entry.incomeType !== 'benefits_in_kind') {
               <div class="form-group">
                 <label class="form-label">Amount (₦ NGN)</label>
                 <input type="number" class="form-input" [(ngModel)]="entry.grossAmountNgn"
@@ -168,19 +173,43 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                     [name]="'gain_' + i" min="0" />
                 </div>
               </div>
-              @if (isCgtExempt(entry)) {
+              @if (cgtSummary().exempt) {
                 <div class="alert alert--success">
                   <span class="alert__icon"><lucide-icon name="check" [size]="16" [strokeWidth]="2.5"></lucide-icon></span>
-                  <div class="alert__content">CGT Exemption applies — proceeds &lt; ₦150M and gain ≤ ₦10M. This entry will be excluded from chargeable income.</div>
+                  <div class="alert__content">CGT exemption applies: total proceeds this year ({{ cgtSummary().proceeds | naira }}) are below {{ cgtSummary().proceedsLimit | naira }} and total gains ({{ cgtSummary().gain | naira }}) do not exceed {{ cgtSummary().gainLimit | naira }}. Share gains will be excluded from chargeable income.</div>
+                </div>
+              } @else {
+                <div class="alert alert--warning">
+                  <span class="alert__icon">!</span>
+                  <div class="alert__content">CGT exemption does not apply: the limits are tested on all share disposals within 12 consecutive months, and this year's totals are {{ cgtSummary().proceeds | naira }} proceeds and {{ cgtSummary().gain | naira }} gains. Share gains will be taxed.</div>
                 </div>
               }
             }
 
-            <!-- BIK for employment -->
-            @if (entry.incomeType === 'employment') {
-              <div class="form-hint" style="padding:var(--space-3);background:var(--color-surface-container-low);border-radius:var(--radius-md)">
-                <lucide-icon name="info" [size]="14" [strokeWidth]="2" style="vertical-align:middle;margin-right:4px"></lucide-icon> Benefits-in-kind are taxable at <strong>5% of the cost</strong> of the benefit (NTA 2025).
-                Include the assessed BIK value in the amount above.
+            <!-- BIK auto-calculation -->
+            @if (entry.incomeType === 'benefits_in_kind') {
+              <div class="bik-section">
+                <div class="alert alert--info" style="margin-bottom:var(--space-3)">
+                  <span class="alert__icon">ℹ</span>
+                  <div class="alert__content">
+                    Under NTA 2025, benefits-in-kind are taxable at <strong>5% of the employer's cost</strong>
+                    of providing the benefit. Enter the cost below — the taxable value is auto-calculated.
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Employer's Cost of Benefit (₦)<lf-help text="The cost to the employer of providing the benefit (e.g. cost of company car, accommodation, etc.). The taxable BIK value = 5% of this cost (NTA 2025)."></lf-help></label>
+                  <input type="number" class="form-input"
+                    [value]="getBikCost(entry)"
+                    (input)="onBikCostChange(entry, $event)"
+                    [name]="'bikcost_' + i"
+                    min="0" placeholder="0.00" />
+                </div>
+                @if (getBikCost(entry) > 0) {
+                  <div class="bik-computed">
+                    <span class="bik-computed__label">Taxable BIK Value (5% × {{ getBikCost(entry) | naira }})</span>
+                    <span class="bik-computed__value">= <strong>{{ entry.grossAmountNgn | naira }}</strong></span>
+                  </div>
+                }
               </div>
             }
 
@@ -305,6 +334,16 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
       padding-top: var(--space-4);
       border-top: 1px solid var(--color-surface-container);
     }
+    .bik-section { display: flex; flex-direction: column; gap: var(--space-3); }
+    .bik-computed {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-surface-container-low);
+      border-radius: var(--radius-md);
+      font-size: var(--text-label-lg);
+    }
+    .bik-computed__label { color: var(--color-on-surface-variant); }
+    .bik-computed__value { color: var(--color-primary); }
   `],
 })
 export class StepIncomeComponent implements OnInit {
@@ -313,6 +352,9 @@ export class StepIncomeComponent implements OnInit {
 
   private filingService = inject(FilingService);
   private fxService = inject(FxService);
+  private configService = inject(ConfigService);
+  private toast = inject(ToastService);
+  private removedIds: string[] = [];
 
   entries = signal<IncomeEntry[]>([]);
   saving = signal(false);
@@ -343,6 +385,7 @@ export class StepIncomeComponent implements OnInit {
   }
 
   removeEntry(id: string): void {
+    this.removedIds.push(id);
     this.entries.update(e => e.filter(x => x.id !== id));
   }
 
@@ -352,6 +395,25 @@ export class StepIncomeComponent implements OnInit {
       entry.cgtProceeds = undefined;
       entry.cgtGain = undefined;
     }
+    // Reset BIK cost if type changes away from benefits_in_kind
+    if (entry.incomeType !== 'benefits_in_kind') {
+      (entry as any)._bikCost = undefined;
+    } else {
+      // Reset grossAmountNgn so it's driven by the BIK cost field
+      entry.grossAmountNgn = 0;
+    }
+  }
+
+  /** Returns the stored BIK cost for an entry (UI-only field, not persisted separately). */
+  getBikCost(entry: IncomeEntry): number {
+    return (entry as any)._bikCost ?? 0;
+  }
+
+  /** When BIK cost changes, auto-compute grossAmountNgn = cost × 5%. */
+  onBikCostChange(entry: IncomeEntry, event: Event): void {
+    const cost = parseFloat((event.target as HTMLInputElement).value) || 0;
+    (entry as any)._bikCost = cost;
+    entry.grossAmountNgn = cost * 0.05;
   }
 
   onForeignToggle(entry: IncomeEntry): void {
@@ -387,7 +449,7 @@ export class StepIncomeComponent implements OnInit {
         else this.liveRateEntries.add(entry.id);
         this.applyRate(entry);
       }
-    } catch (_) {
+    } catch {
       // silently leave any previously fetched rate intact
     } finally {
       this.fetchingRate[entry.id] = false;
@@ -403,37 +465,24 @@ export class StepIncomeComponent implements OnInit {
     }
   }
 
-  isCgtExempt(entry: IncomeEntry): boolean {
-    const proceeds = entry.cgtProceeds ?? 0;
-    const gain = entry.cgtGain ?? 0;
-    return proceeds < 150_000_000 && gain <= 10_000_000;
+  /** Mirrors the engine: the exemption is tested on aggregate share disposals for the year. */
+  cgtSummary(): { exempt: boolean; proceeds: number; gain: number; proceedsLimit: number; gainLimit: number } {
+    const limits = this.configService.activeConfig()?.cgtThresholds;
+    const proceedsLimit = limits?.proceedsThreshold ?? 150_000_000;
+    const gainLimit = limits?.gainThreshold ?? 10_000_000;
+    let proceeds = 0;
+    let gain = 0;
+    for (const e of this.entries()) {
+      if (e.incomeType !== 'capital_gain_shares') continue;
+      proceeds += e.cgtProceeds ?? 0;
+      gain += e.cgtGain ?? 0;
+    }
+    return { exempt: proceeds < proceedsLimit && gain <= gainLimit, proceeds, gain, proceedsLimit, gainLimit };
   }
 
-  onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: IncomeEntry): void {
-    if (!file.path) {
-      alert('Drag-and-drop is not yet supported. Please use the "Attach" button to pick a file.');
-      return;
-    }
-    if (file.size > 100 * 1024 * 1024) {
-      alert('File exceeds the 100MB limit. Please attach a smaller file.');
-      return;
-    }
-    // Mark with _pending so saveAndNext knows to call attach_document
-    (entry as any)._pendingDocs = [
-      ...((entry as any)._pendingDocs ?? []),
-      { path: file.path, name: file.name, type: file.type, size: file.size },
-    ];
-    // Show it in the UI immediately (will get a real id after save)
-    entry.documents = [...(entry.documents ?? []), {
-      id: crypto.randomUUID(),
-      parentEntryId: entry.id,
-      parentEntryType: 'income_entry',
-      filePath: file.path,
-      fileName: file.name,
-      fileType: file.type,
-      fileSizeBytes: file.size,
-      uploadedAt: new Date().toISOString(),
-    }];
+  onFileSelected(file: DropzoneFile, entry: IncomeEntry): void {
+    const error = queueDocument(entry, file, 'income_entry');
+    if (error) this.toast.error(error);
   }
 
   readonly totalNgn = () =>
@@ -442,23 +491,19 @@ export class StepIncomeComponent implements OnInit {
   async saveAndNext(): Promise<void> {
     this.saving.set(true);
     try {
+      for (const id of this.removedIds) await this.filingService.deleteIncomeEntry(id);
+      this.removedIds = [];
+      const exempt = this.cgtSummary().exempt;
+      const failed: string[] = [];
       for (const entry of this.entries()) {
+        if (entry.incomeType === 'capital_gain_shares') entry.isCgtExempt = exempt;
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
-        const pending: { path: string; name: string; type: string; size: number }[] =
-          (entry as any)._pendingDocs ?? [];
-        for (const doc of pending) {
-          try {
-            await this.filingService.attachDocument(
-              entry.id, 'income_entry', doc.path, doc.name, doc.type, doc.size,
-            );
-          } catch (err) {
-            console.error('Failed to attach document:', doc.name, err);
-            alert(`Could not attach "${doc.name}": ${err}`);
-          }
-        }
-        (entry as any)._pendingDocs = [];
+        failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }
+      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
       this.next.emit();
+    } catch (err) {
+      this.toast.error('Could not save income: ' + String(err));
     } finally {
       this.saving.set(false);
     }

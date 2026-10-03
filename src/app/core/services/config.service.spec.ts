@@ -56,7 +56,7 @@ describe('ConfigService', () => {
 
   it('should save config', async () => {
     tauriSpy.invoke.and.resolveTo(mockConfig);
-    const result = await service.save(mockConfig as any);
+    await service.save(mockConfig as any);
     expect(tauriSpy.invoke).toHaveBeenCalledWith('save_config', { config: mockConfig as any });
     expect(service.activeConfig()).toEqual(mockConfig);
   });
@@ -70,7 +70,7 @@ describe('ConfigService', () => {
 
   it('should import json', async () => {
     tauriSpy.invoke.and.resolveTo(mockConfig);
-    const result = await service.importJson('{}');
+    await service.importJson('{}');
     expect(tauriSpy.invoke).toHaveBeenCalledWith('import_config_json', { json: '{}' });
     expect(service.activeConfig()).toEqual(mockConfig);
   });

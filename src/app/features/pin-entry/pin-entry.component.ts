@@ -1,6 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { LucideAngularModule } from 'lucide-angular';
 import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.component';
@@ -25,6 +25,11 @@ import { LogoMarkComponent } from '../../shared/components/logo-mark/logo-mark.c
 
         <h2 class="auth-card__title">Unlock your data</h2>
         <p class="auth-card__subtitle">Enter your PIN to access your filings.</p>
+        @if (lockedForIdle) {
+          <div class="alert alert--info" style="margin-bottom:var(--space-4)">
+            <div class="alert__content">Locked after a period of inactivity.</div>
+          </div>
+        }
 
         <form class="auth-card__form" (ngSubmit)="submit()">
           <div class="form-group">
@@ -108,6 +113,7 @@ export class PinEntryComponent {
 
   auth = inject(AuthService);
   private router = inject(Router);
+  readonly lockedForIdle = inject(ActivatedRoute).snapshot.queryParamMap.get('reason') === 'idle';
 
   async submit(): Promise<void> {
     if (!this.pin) { this.errorMsg = 'PIN is required.'; return; }

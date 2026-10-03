@@ -14,11 +14,15 @@ fn copy_to_store(
     file_name: &str,
 ) -> Result<std::path::PathBuf, String> {
     if source_path.is_empty() {
-        return Err("No file path provided — drag-and-drop is not yet supported. Please use the file picker.".to_string());
+        return Err("No file path provided. Please use the file picker.".to_string());
     }
     let src = std::path::Path::new(source_path);
     if !src.exists() {
         return Err(format!("Source file not found: {}", source_path));
+    }
+    let size = std::fs::metadata(src).map_err(|e| e.to_string())?.len();
+    if size > MAX_FILE_BYTES as u64 {
+        return Err("File exceeds the 100MB limit. Please attach a smaller file.".to_string());
     }
 
     let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));

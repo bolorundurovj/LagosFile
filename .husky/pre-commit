@@ -1,1 +1,4 @@
 npm run lint:fix
+echo "🚀 Running pre-commit checks..."
+npm run lint && npm run lint:rust
+echo "✅ Pre-commit checks passed!"

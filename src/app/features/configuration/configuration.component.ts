@@ -137,6 +137,27 @@ const NTA_SECTIONS: Record<string, string> = {
                 <span class="label-md">{{ (reliefCaps.rentReliefRate * 100).toFixed(0) }}%</span>
               </div>
             </div>
+            <div class="config-row">
+              <div class="config-row__info">
+                <div class="config-row__label">Pension Contribution Cap (₦)<lf-help text="Maximum pension contribution deductible per annum. Leave empty for no cap."></lf-help></div>
+              </div>
+              <input type="number" class="form-input config-row__input"
+                [(ngModel)]="reliefCaps.pensionCap" name="pensionCap" min="0" placeholder="No cap" />
+            </div>
+            <div class="config-row">
+              <div class="config-row__info">
+                <div class="config-row__label">NHIS Contribution Cap (₦)<lf-help text="Maximum health insurance contribution deductible per annum. Leave empty for no cap."></lf-help></div>
+              </div>
+              <input type="number" class="form-input config-row__input"
+                [(ngModel)]="reliefCaps.nhisCap" name="nhisCap" min="0" placeholder="No cap" />
+            </div>
+            <div class="config-row">
+              <div class="config-row__info">
+                <div class="config-row__label">NHF Contribution Cap (₦)<lf-help text="Maximum National Housing Fund contribution deductible per annum. Leave empty for no cap."></lf-help></div>
+              </div>
+              <input type="number" class="form-input config-row__input"
+                [(ngModel)]="reliefCaps.nhfCap" name="nhfCap" min="0" placeholder="No cap" />
+            </div>
           </div>
         </div>
 
@@ -273,7 +294,7 @@ export class ConfigurationComponent implements OnInit {
 
   config = signal<TaxConfig | null>(null);
   bands = signal<TaxBand[]>([]);
-  reliefCaps = { rentReliefCap: 500_000, rentReliefRate: 0.20 };
+  reliefCaps: TaxConfig['reliefCaps'] = { rentReliefCap: 500_000, rentReliefRate: 0.20, pensionCap: null, nhisCap: null, nhfCap: null };
   cgtThresholds = { proceedsThreshold: 150_000_000, gainThreshold: 10_000_000 };
   minimumTaxRate = 0.01;
   allowanceRateEntries = signal<{ key: string; label: string; rate: number }[]>([]);
@@ -302,13 +323,13 @@ export class ConfigurationComponent implements OnInit {
     try {
       const cfg = await this.configService.loadActive();
       this.populate(cfg);
-    } catch (_) { /* ignore */ }
+    } catch { /* ignore */ }
   }
 
   private populate(cfg: TaxConfig): void {
     this.config.set(cfg);
     this.bands.set(cfg.bands.map(b => ({ ...b })));
-    this.reliefCaps = { ...cfg.reliefCaps };
+    this.reliefCaps = { pensionCap: null, nhisCap: null, nhfCap: null, ...cfg.reliefCaps };
     this.cgtThresholds = { ...cfg.cgtThresholds };
     this.minimumTaxRate = cfg.minimumTaxRate;
     this.allowanceRateEntries.set(

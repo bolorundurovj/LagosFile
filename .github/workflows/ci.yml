@@ -96,7 +96,7 @@ jobs:
               src-tauri/Cargo.lock \
               extension/chrome/manifest.json \
               extension/firefox/manifest.json
-            git commit -m 'chore(release): sync version files to ${{ needs.check-version.outputs.version }} [skip ci]'
+            git commit -m 'chore(release): sync version files to ${{ needs.check-version.outputs.version }}'
             git push origin HEAD:master
           fi
 

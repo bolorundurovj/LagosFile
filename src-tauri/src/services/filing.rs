@@ -31,6 +31,9 @@ impl FilingService {
             minimum_tax: None,
             final_tax_payable: None,
             tax_config_version: config_version.to_string(),
+            payment_date: None,
+            payment_reference: None,
+            amount_paid: None,
         };
 
         let conn = db.conn.lock().unwrap();
@@ -84,6 +87,9 @@ impl FilingService {
                 minimum_tax: row.get(13)?,
                 final_tax_payable: row.get(14)?,
                 tax_config_version: row.get(15)?,
+                payment_date: None,
+                payment_reference: None,
+                amount_paid: None,
             })
         })?;
 

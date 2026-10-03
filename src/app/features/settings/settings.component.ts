@@ -4,7 +4,9 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ProfileService } from '../../core/services/profile.service';
 import { ThemeService } from '../../core/services/theme.service';
+import { IdleLockService } from '../../core/services/idle-lock.service';
 import { ToastService } from '../../core/services/toast.service';
+import { UpdateService } from '../../core/services/update.service';
 import { Router } from '@angular/router';
 import { LucideAngularModule } from 'lucide-angular';
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -180,6 +182,19 @@ interface ChangelogEntry {
             </div>
           </div>
         }
+
+        <div class="backup-row" style="margin-bottom:var(--space-5)">
+          <div class="backup-item">
+            <div class="backup-item__title">Auto-lock</div>
+            <div class="backup-item__sub">Lock the vault after a period with no activity</div>
+          </div>
+          <select class="form-input" style="width:auto" [value]="idleLock.minutes()"
+            (change)="idleLock.setMinutes(+$any($event.target).value)" aria-label="Auto-lock timeout">
+            @for (o of idleOptions; track o.value) {
+              <option [value]="o.value" [selected]="o.value === idleLock.minutes()">{{ o.label }}</option>
+            }
+          </select>
+        </div>
 
         <div class="security-badges">
           <div class="security-badge">
@@ -372,6 +387,15 @@ export class SettingsComponent {
   readonly pkg = pkg;
   auth = inject(AuthService);
   themeService = inject(ThemeService);
+  idleLock = inject(IdleLockService);
+  readonly idleOptions = [
+    { value: 5, label: 'After 5 minutes' },
+    { value: 10, label: 'After 10 minutes' },
+    { value: 15, label: 'After 15 minutes' },
+    { value: 30, label: 'After 30 minutes' },
+    { value: 60, label: 'After 1 hour' },
+    { value: 0, label: 'Never' },
+  ];
   private profileService = inject(ProfileService);
   private toast = inject(ToastService);
   private router = inject(Router);
@@ -441,8 +465,16 @@ export class SettingsComponent {
     return entries;
   }
 
-  checkForUpdates(): void {
-    this.toast.info('Check for updates is work in progress and will be available in a future release.');
+  update = inject(UpdateService);
+
+  async checkForUpdates(): Promise<void> {
+    await this.update.checkForUpdates();
+    const latest = this.update.updateAvailable();
+    if (latest) {
+      window.open(this.update.updateUrl()!, '_blank');
+    } else {
+      this.toast.success('You are running the latest version.');
+    }
   }
 
   editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };

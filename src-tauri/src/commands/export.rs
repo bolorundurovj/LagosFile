@@ -1007,3 +1007,67 @@ pub async fn open_file(path: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Sends a file to the system's default printer handler.
+#[tauri::command]
+pub async fn print_file(path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).is_file() {
+        return Err(format!("File not found: {path}"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let script = format!(
+            "Start-Process -FilePath '{}' -Verb Print",
+            path.replace('\'', "''")
+        );
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        std::process::Command::new("lpr")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_pdf(path: &std::path::Path, pages: usize) {
+        let (doc, _, _) = PdfDocument::new("test", Mm(210.0), Mm(297.0), "Layer 1");
+        for _ in 1..pages {
+            doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
+        }
+        doc.save(&mut BufWriter::new(std::fs::File::create(path).unwrap()))
+            .unwrap();
+    }
+
+    #[test]
+    fn appends_attachment_pages_to_generated_pdf() {
+        let dir = std::env::temp_dir().join(format!("lagosfile-merge-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("main.pdf");
+        let att = dir.join("att.pdf");
+        write_pdf(&main, 1);
+        write_pdf(&att, 2);
+
+        append_pdf_attachments(
+            main.to_str().unwrap(),
+            &[
+                att.to_string_lossy().to_string(),
+                dir.join("missing.pdf").to_string_lossy().to_string(),
+            ],
+        )
+        .unwrap();
+
+        let merged = lopdf::Document::load(&main).unwrap();
+        assert_eq!(merged.get_pages().len(), 3);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

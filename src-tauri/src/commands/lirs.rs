@@ -29,10 +29,7 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
                 version_label: row.get(1)?,
                 governed_by: row.get(2)?,
                 bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or(ReliefCaps {
-                    rent_relief_cap: 500_000.0,
-                    rent_relief_rate: 0.20,
-                }),
+                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
                 cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
                     proceeds_threshold: 150_000_000.0,
                     gain_threshold: 10_000_000.0,
@@ -51,7 +48,7 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
     )
 }
 
-fn format_payer_id(tin: &str) -> String {
+pub fn format_payer_id(tin: &str) -> String {
     if tin.starts_with("N-") || tin.starts_with("C-") {
         tin.to_string()
     } else {
@@ -102,6 +99,9 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                     minimum_tax: row.get(13)?,
                     final_tax_payable: row.get(14)?,
                     tax_config_version: row.get(15)?,
+                    payment_date: None,
+                    payment_reference: None,
+                    amount_paid: None,
                 })
             },
         )
@@ -316,6 +316,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                 wht_date: row
                     .get::<_, Option<String>>(7)?
                     .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                description: None,
                 documents: vec![],
             })
         })
@@ -398,7 +399,29 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
     })
 }
 
-fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
+/// Append an automation failure event to ~/LagosFile/automation-errors.log.
+/// Never panics — errors are swallowed so a logging failure never crashes the command.
+pub fn log_automation_failure(filing_id: &str, reason: &str) {
+    let dir = lirs_data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let log_path = dir.join("automation-errors.log");
+    let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let line = format!(
+        "[{}] filing_id={} reason={}\n",
+        timestamp, filing_id, reason
+    );
+    // Append to log file (create if absent)
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+pub fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
     let status_text = match status {
         200 => "OK",
         404 => "Not Found",
@@ -529,7 +552,11 @@ pub async fn open_lirs_portal(
     start_bridge_server(filings_json, primary_json);
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    open::that(portal_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+    if let Err(e) = open::that(portal_url) {
+        let reason = format!("Failed to open browser: {}", e);
+        log_automation_failure(&id, &reason);
+        return Err(reason);
+    }
 
     Ok(LIRSAutomationResult {
         success: true,
@@ -582,7 +609,11 @@ pub async fn open_lirs_portal_all(
     start_bridge_server(filings_json, primary_json);
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    open::that(portal_url).map_err(|e| format!("Failed to open browser: {}", e))?;
+    if let Err(e) = open::that(portal_url) {
+        let reason = format!("Failed to open browser: {}", e);
+        log_automation_failure("batch", &reason);
+        return Err(reason);
+    }
 
     Ok(LIRSAutomationResult {
         success: true,

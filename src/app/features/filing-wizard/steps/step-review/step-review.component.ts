@@ -1,4 +1,4 @@
-import { Component, input, output, inject, OnInit, signal } from '@angular/core';
+import { Component, input, output, inject, OnInit, signal, computed } from '@angular/core';
 import { FilingService } from '../../../../core/services/filing.service';
 import { LIRSService } from '../../../../core/services/lirs.service';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -47,7 +47,7 @@ import { LucideAngularModule } from 'lucide-angular';
             The extension will read your filing data from <code>~/LagosFile/pending_filing.json</code>.
           </p>
 
-          <div class="flex gap-3 justify-center" style="flex-wrap:wrap">
+          <div class="flex gap-3 justify-center" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
             <button class="btn btn--ghost" (click)="onGoToHistory()">Go to History</button>
             <button
               class="btn btn--primary btn--lg"
@@ -177,12 +177,54 @@ import { LucideAngularModule } from 'lucide-angular';
           </div>
         </div>
 
+        @if (comparison(); as cmp) {
+          <div class="card yoy">
+            <h3 class="title-md">Compared with YOA {{ cmp.priorYoa }}<lf-help text="Checks this return against last year's confirmed filing. Large swings are not errors, but they are worth double-checking before you confirm." align="left"></lf-help></h3>
+            <table class="yoy__table">
+              <thead><tr><th></th><th class="align-right">YOA {{ cmp.priorYoa }}</th><th class="align-right">This return</th><th class="align-right">Change</th></tr></thead>
+              <tbody>
+                @for (row of cmp.rows; track row.label) {
+                  <tr [class.yoy__flag]="row.flagged">
+                    <td>{{ row.label }}</td>
+                    <td class="align-right">{{ row.prior | naira }}</td>
+                    <td class="align-right">{{ row.current | naira }}</td>
+                    <td class="align-right">
+                      {{ row.delta >= 0 ? '+' : '−' }}{{ (row.delta < 0 ? -row.delta : row.delta) | naira }}
+                      @if (row.pct !== null) { ({{ row.pct >= 0 ? '+' : '' }}{{ row.pct.toFixed(0) }}%) }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            @if (cmp.flagged) {
+              <p class="body-sm yoy__note">Highlighted lines moved by more than {{ flagPct }}% from last year. Check that no income or relief is missing or duplicated.</p>
+            }
+          </div>
+        }
+
         <!-- Confirm warning -->
         <div class="alert alert--warning">
           <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <strong>Once confirmed, this filing is immutable.</strong>
             You may file an amendment separately but the original record will not be altered.
+          </div>
+        </div>
+      }
+
+      <!-- incomplete filing validation warning -->
+      @if (!confirmedFiling() && !loading() && validationIssues().length > 0) {
+        <div class="alert alert--warning">
+          <span class="alert__icon">
+            <lucide-icon name="triangle-alert" [size]="18" [strokeWidth]="2"></lucide-icon>
+          </span>
+          <div class="alert__content">
+            <strong>Filing is incomplete — please resolve the following before confirming:</strong>
+            <ul style="margin:var(--space-2) 0 0 var(--space-4);display:flex;flex-direction:column;gap:var(--space-1)">
+              @for (issue of validationIssues(); track issue) {
+                <li style="font-size:var(--text-body-sm)">{{ issue }}</li>
+              }
+            </ul>
           </div>
         </div>
       }
@@ -195,7 +237,9 @@ import { LucideAngularModule } from 'lucide-angular';
             <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
               Save for Later
             </button>
-            <button class="btn btn--primary btn--lg" (click)="confirm()" [disabled]="confirming() || loading()">
+            <button class="btn btn--primary btn--lg" (click)="confirm()"
+              [disabled]="confirming() || loading() || validationIssues().length > 0"
+              [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
               @if (confirming()) { Confirming… } @else {
                 <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
               }
@@ -216,17 +260,44 @@ import { LucideAngularModule } from 'lucide-angular';
     </div>
   `,
   styles: [`
-    .step-page { display: flex; flex-direction: column; gap: var(--space-6); }
-    .step-page__header { display: flex; flex-direction: column; gap: var(--space-2); }
+    .yoy { display: flex; flex-direction: column; gap: var(--space-3); }
+    .yoy__table { width: 100%; border-collapse: collapse; font-size: var(--text-body-sm); font-variant-numeric: tabular-nums; }
+    .yoy__table th { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); font-weight: var(--font-weight-medium); padding: var(--space-2); text-align: left; }
+    .yoy__table td { padding: var(--space-2); }
+    .yoy__table .align-right { text-align: right; }
+    .yoy__flag td { background: var(--color-warning-container); color: var(--color-warning); }
+    .yoy__note { color: var(--color-warning); }
 
-    .breakdown-table { display: flex; flex-direction: column; }
+    .step-page {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-6);
+    }
+
+    .step-page__header {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .breakdown-table {
+      display: flex;
+      flex-direction: column;
+    }
+
     .breakdown-row {
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: var(--space-3) 0;
       border-bottom: 1px solid var(--color-surface-container);
       font-size: var(--text-body-md);
     }
-    .breakdown-row--deduct { color: var(--color-on-surface-variant); }
+
+    .breakdown-row--deduct {
+      color: var(--color-on-surface-variant);
+    }
+
     .breakdown-row--subtotal {
       font-weight: var(--font-weight-semibold);
       font-size: var(--text-title-sm);
@@ -234,16 +305,35 @@ import { LucideAngularModule } from 'lucide-angular';
     }
 
     .band-row {
-      display: flex; align-items: center; gap: var(--space-3);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
       padding: var(--space-2) 0;
     }
-    .band-label { min-width: 220px; font-size: var(--text-body-sm); }
-    .band-bar-wrapper {
-      flex: 1; height: 8px; background: var(--color-surface-container);
-      border-radius: var(--radius-full); overflow: hidden;
+
+    .band-label {
+      min-width: 220px;
+      font-size: var(--text-body-sm);
     }
-    .band-bar { height: 100%; border-radius: var(--radius-full); transition: width 0.4s ease; }
-    .band-amount { min-width: 140px; font-size: var(--text-body-sm); }
+
+    .band-bar-wrapper {
+      flex: 1;
+      height: 8px;
+      background: var(--color-surface-container);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+    }
+
+    .band-bar {
+      height: 100%;
+      border-radius: var(--radius-full);
+      transition: width 0.4s ease;
+    }
+
+    .band-amount {
+      min-width: 140px;
+      font-size: var(--text-body-sm);
+    }
 
     .min-tax-panel {
       margin-top: var(--space-5);
@@ -251,17 +341,36 @@ import { LucideAngularModule } from 'lucide-angular';
       border-radius: var(--radius-lg);
       padding: var(--space-4);
     }
-    .min-tax-panel__title { font-size: var(--text-label-lg); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-3); }
-    .min-tax-panel__row {
-      display: flex; justify-content: space-between;
-      font-size: var(--text-body-md); padding: var(--space-2) 0;
+
+    .min-tax-panel__title {
+      font-size: var(--text-label-lg);
+      font-weight: var(--font-weight-semibold);
+      margin-bottom: var(--space-3);
     }
-    .highlighted { font-weight: var(--font-weight-bold); color: var(--color-primary); }
 
-    .step-nav { display: flex; justify-content: space-between; align-items: center; padding-top: var(--space-4); border-top: 1px solid var(--color-surface-container); }
+    .min-tax-panel__row {
+      display: flex;
+      justify-content: space-between;
+      font-size: var(--text-body-md);
+      padding: var(--space-2) 0;
+    }
 
-    .justify-center { justify-content: center; }
-    .flex-1 { flex: 1; }
+    .highlighted {
+      font-weight: var(--font-weight-bold);
+      color: var(--color-primary);
+    }
+
+    .step-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: var(--space-4);
+      border-top: 1px solid var(--color-surface-container);
+    }
+
+    .justify-center {
+      justify-content: center;
+    }
   `],
 })
 export class StepReviewComponent implements OnInit {
@@ -277,6 +386,41 @@ export class StepReviewComponent implements OnInit {
   loading = signal(true);
   confirming = signal(false);
 
+  // Validation — list of human-readable issues before user can confirm
+  validationIssues = computed<string[]>(() => {
+    const r = this.result();
+    if (!r) return ['Tax computation has not been loaded yet.'];
+    const issues: string[] = [];
+    if (r.totalGrossIncome <= 0) {
+      issues.push('No income entries found. Add at least one income source in Step 1.');
+    }
+    if (r.chargeableIncome < 0) {
+      issues.push('Chargeable income is negative — please review your allowances and deductions.');
+    }
+    return issues;
+  });
+
+  readonly flagPct = 25;
+  prior = signal<Filing | null>(null);
+
+  comparison = computed(() => {
+    const r = this.result();
+    const p = this.prior();
+    if (!r || !p) return null;
+    const row = (label: string, prior: number, current: number) => {
+      const delta = current - prior;
+      const pct = prior !== 0 ? (delta / prior) * 100 : null;
+      const flagged = Math.abs(delta) >= 100_000 && (pct === null || Math.abs(pct) >= this.flagPct);
+      return { label, prior, current, delta, pct, flagged };
+    };
+    const rows = [
+      row('Gross income', p.totalIncomeNgn ?? 0, r.totalGrossIncome),
+      row('Chargeable income', p.chargeableIncome ?? 0, r.chargeableIncome),
+      row('Final tax payable', p.finalTaxPayable ?? 0, r.finalTaxPayable),
+    ];
+    return { priorYoa: p.yearOfAssessment, rows, flagged: rows.some(x => x.flagged) };
+  });
+
   confirmedFiling = signal<Filing | null>(null);
   filingWithLirs = signal(false);
   showReferencePanel = signal(false);
@@ -287,8 +431,24 @@ export class StepReviewComponent implements OnInit {
     try {
       const r = await this.filingService.compute(this.filingId());
       this.result.set(r);
+      void this.loadPrior();
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /** Latest confirmed or submitted filing for the previous year, amendments included. */
+  private async loadPrior(): Promise<void> {
+    try {
+      const filings = await this.filingService.listFilings();
+      const current = filings.find(f => f.id === this.filingId());
+      if (!current) return;
+      const prior = filings
+        .filter(f => f.yearOfAssessment === current.yearOfAssessment - 1 && f.status !== 'Draft')
+        .sort((a, b) => (b.confirmedAt ?? '').localeCompare(a.confirmedAt ?? ''))[0];
+      this.prior.set(prior ?? null);
+    } catch {
+      // the comparison is informational only
     }
   }
 

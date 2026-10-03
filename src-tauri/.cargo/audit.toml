@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # lopdf: stack overflow when parsing deeply nested PDF objects.
+    # Only lopdf 0.27 is still affected, pulled in by printpdf 0.5, which uses it
+    # to write the export PDF and never parses input. Attached PDFs are parsed by
+    # the direct lopdf dependency, which is on a fixed version. Remove this once
+    # printpdf is upgraded to 0.11 or later.
+    "RUSTSEC-2026-0187",
+]
