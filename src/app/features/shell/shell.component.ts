@@ -1,8 +1,9 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ConfigService } from '../../core/services/config.service';
 import { UpdateService } from '../../core/services/update.service';
+import { IdleLockService } from '../../core/services/idle-lock.service';
 import { SidebarComponent } from '../../shared/components/sidebar/sidebar.component';
 import { TopbarComponent } from '../../shared/components/topbar/topbar.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -66,15 +67,21 @@ import { LucideAngularModule } from 'lucide-angular';
     .update-banner__dismiss:hover { opacity: 1; }
   `],
 })
-export class ShellComponent implements OnInit {
+export class ShellComponent implements OnInit, OnDestroy {
   auth = inject(AuthService);
   private config = inject(ConfigService);
   update = inject(UpdateService);
+  private idleLock = inject(IdleLockService);
 
   async ngOnInit(): Promise<void> {
     try {
       await this.config.loadActive();
     } catch { /* new install; seed data will be created on unlock */ }
     this.update.checkForUpdates();
+    this.idleLock.start();
+  }
+
+  ngOnDestroy(): void {
+    this.idleLock.stop();
   }
 }
