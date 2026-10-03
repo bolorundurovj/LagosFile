@@ -32,6 +32,13 @@ export class FilingService {
     return this.tauri.invoke<Filing>('mark_filing_submitted', { id });
   }
 
+  async recordPayment(
+    id: string,
+    payment: { paymentDate: string | null; paymentReference: string | null; amountPaid: number | null },
+  ): Promise<Filing> {
+    return this.tauri.invoke<Filing>('record_payment', { id, ...payment });
+  }
+
   async deleteFiling(id: string): Promise<void> {
     return this.tauri.invoke('delete_filing', { id });
   }

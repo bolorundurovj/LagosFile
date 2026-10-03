@@ -52,6 +52,7 @@ pub fn run() {
             commands::filing::create_draft_filing,
             commands::filing::confirm_filing,
             commands::filing::mark_filing_submitted,
+            commands::filing::record_payment,
             commands::filing::delete_filing,
             commands::filing::duplicate_filing,
             commands::filing::amend_filing,

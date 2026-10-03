@@ -270,6 +270,46 @@ pub async fn mark_filing_submitted(
 }
 
 #[tauri::command]
+pub async fn record_payment(
+    id: String,
+    payment_date: Option<String>,
+    payment_reference: Option<String>,
+    amount_paid: Option<f64>,
+    state: State<'_, AppState>,
+) -> Result<Filing, String> {
+    if let Some(d) = payment_date.as_deref() {
+        chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .map_err(|_| format!("Invalid payment date '{d}'. Use YYYY-MM-DD."))?;
+    }
+    if amount_paid.is_some_and(|a| !a.is_finite() || a < 0.0) {
+        return Err("Amount paid must be zero or more.".to_string());
+    }
+    {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let status: String = conn
+            .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
+                r.get(0)
+            })
+            .map_err(|_| format!("Filing '{id}' not found."))?;
+        if status == "Draft" {
+            return Err("Payments can only be recorded against a confirmed filing.".to_string());
+        }
+        let reference = payment_reference
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty());
+        conn.execute(
+            "UPDATE filing SET payment_date=?1,payment_reference=?2,amount_paid=?3 WHERE id=?4",
+            params![payment_date, reference, amount_paid, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    persist_db(&state).await?;
+    get_filing(id, state).await
+}
+
+#[tauri::command]
 pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
