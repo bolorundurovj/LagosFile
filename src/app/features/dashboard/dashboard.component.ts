@@ -89,7 +89,7 @@ import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-
           <div class="module-card__icon"><lucide-icon name="book-open" [size]="26" [strokeWidth]="1.5"></lucide-icon></div>
           <div class="module-card__title">Help & Guides</div>
           <div class="module-card__desc">NTA 2025 guidance, LIRS notices, and FAQs.</div>
-          <a href="https://lirs.gov.ng" target="_blank" class="btn btn--ghost btn--sm" style="margin-top:auto">LIRS Website ↗</a>
+          <a routerLink="/help" class="btn btn--ghost btn--sm" style="margin-top:auto">Open Guides →</a>
         </div>
       </div>
 
