@@ -459,6 +459,10 @@ interface FilingRowAction {
 
           <div class="flex gap-3" style="margin-top:var(--space-6)">
             <button class="btn btn--ghost flex-1" (click)="closeExport()">Cancel</button>
+            <button class="btn btn--secondary flex-1" (click)="doPrint()" [disabled]="exporting()"
+              title="Generates the PDF statement and sends it to your printer">
+              Print
+            </button>
             <button class="btn btn--primary flex-1" (click)="doExport()" [disabled]="exporting()">
               @if (exporting()) { Exporting… } @else { Download Export }
             </button>
@@ -1019,6 +1023,23 @@ export class FilingHistoryComponent implements OnInit {
       this.toast.error('Could not save payment: ' + String(err));
     } finally {
       this.savingPayment.set(false);
+    }
+  }
+
+  async doPrint(): Promise<void> {
+    const f = this.exportFiling();
+    if (!f) return;
+    this.exporting.set(true);
+    try {
+      const home = await homeDir();
+      const path = await join(home, 'LagosFile', 'exports', 'print', `LagosFile_${f.yearOfAssessment}_${f.id}.pdf`);
+      const saved = await this.filingService.exportPdf(f.id, path, this.includeAttachments, this.letterheadStyle);
+      await invoke('print_file', { path: saved });
+      this.toast.success('Sent to printer.');
+    } catch (err) {
+      this.toast.error(`Print failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this.exporting.set(false);
     }
   }
 

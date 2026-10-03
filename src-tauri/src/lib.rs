@@ -94,6 +94,7 @@ pub fn run() {
             commands::export::export_filing_csv,
             commands::export::export_filing_json,
             commands::export::open_file,
+            commands::export::print_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
