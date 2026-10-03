@@ -5,9 +5,23 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ReliefEntry, ReliefType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
-import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
+import { ToastService } from '../../../../core/services/toast.service';
+import { queueDocument, flushDocuments } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
+
+type StandardRelief = 'pension' | 'nhis' | 'nhf' | 'life_assurance' | 'rent' | 'foreign_tax';
+type FieldKey = 'pension' | 'nhis' | 'nhf' | 'lifeAssurance' | 'annualRent' | 'foreignTaxPaid';
+
+const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
+  pension: 'pension',
+  nhis: 'nhis',
+  nhf: 'nhf',
+  life_assurance: 'lifeAssurance',
+  rent: 'annualRent',
+  foreign_tax: 'foreignTaxPaid',
+};
 
 @Component({
   selector: 'lf-step-deductions',
@@ -39,6 +53,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
             <input type="number" class="form-input relief-row__input"
               [(ngModel)]="fields.pension" name="pension" min="0" placeholder="₦ 0.00" />
           </div>
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach PFA statement" (fileSelected)="onFileSelected($event, standard.pension)" />
+            @for (doc of standard.pension.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
 
           <!-- NHIS -->
           <div class="relief-row">
@@ -48,6 +68,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
             </div>
             <input type="number" class="form-input relief-row__input"
               [(ngModel)]="fields.nhis" name="nhis" min="0" placeholder="₦ 0.00" />
+          </div>
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach NHIS receipt" (fileSelected)="onFileSelected($event, standard.nhis)" />
+            @for (doc of standard.nhis.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
           </div>
 
           <!-- NHF -->
@@ -59,6 +85,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
             <input type="number" class="form-input relief-row__input"
               [(ngModel)]="fields.nhf" name="nhf" min="0" placeholder="₦ 0.00" />
           </div>
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach NHF statement" (fileSelected)="onFileSelected($event, standard.nhf)" />
+            @for (doc of standard.nhf.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
 
           <!-- Life assurance -->
           <div class="relief-row">
@@ -69,25 +101,37 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
             <input type="number" class="form-input relief-row__input"
               [(ngModel)]="fields.lifeAssurance" name="lifeAssurance" min="0" placeholder="₦ 0.00" />
           </div>
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach policy or premium receipt" (fileSelected)="onFileSelected($event, standard.life_assurance)" />
+            @for (doc of standard.life_assurance.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
 
           <!-- Rent relief -->
           <div class="relief-row">
             <div class="relief-row__info">
               <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
               <div class="relief-row__sub">
-                Rent Relief = 20% of annual rent, capped at ₦500,000.
+                Rent Relief = {{ rentReliefRate() * 100 }}% of annual rent, capped at {{ rentReliefCap() | naira }}.
                 Homeowners cannot claim this relief.
               </div>
             </div>
             <input type="number" class="form-input relief-row__input"
               [(ngModel)]="fields.annualRent" name="annualRent" min="0" placeholder="₦ 0.00" />
           </div>
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
+            @for (doc of standard.rent.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
 
           @if (fields.annualRent > 0) {
             <div class="relief-callout">
               <span>Rent Relief Applied:</span>
               <strong>{{ rentRelief() | naira }}</strong>
-              <span class="text-muted">(20% of rent, capped at ₦500,000)</span>
+              <span class="text-muted">({{ rentReliefRate() * 100 }}% of rent, capped at {{ rentReliefCap() | naira }})</span>
             </div>
           } @else {
             <div class="alert alert--info" style="grid-column:1/-1">
@@ -135,7 +179,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
               </div>
               <button class="btn btn--danger btn--sm" style="margin-top:22px" (click)="removeWht(w.id)">Remove</button>
             </div>
-            <lf-file-dropzone label="Attach WHT certificate" (fileSelected)="onFileSelected($event, w)" />
+            <div class="relief-docs">
+              <lf-file-dropzone [compact]="true" label="Attach WHT certificate" (fileSelected)="onFileSelected($event, w)" />
+              @for (doc of w.documents; track doc.id) {
+                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              }
+            </div>
           </div>
         }
 
@@ -165,12 +214,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
           </div>
         </div>
         @if (fields.foreignTaxPaid > 0) {
-          <lf-file-dropzone label="Attach foreign tax certificate" (fileSelected)="onForeignTaxFileSelected($event)" style="margin-top:var(--space-3);display:block" />
-          @for (doc of foreignTaxDocs(); track doc.id) {
-            <div class="doc-chip" style="display:flex;align-items:center;gap:4px;font-size:var(--text-label-sm);color:var(--color-on-surface-variant);padding:var(--space-1) var(--space-2)">
-              <lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}
-            </div>
-          }
+          <div class="relief-docs">
+            <lf-file-dropzone [compact]="true" label="Attach foreign tax certificate" (fileSelected)="onFileSelected($event, standard.foreign_tax)" />
+            @for (doc of standard.foreign_tax.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
         }
       </div>
 
@@ -194,12 +243,18 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
             </div>
             <button class="btn btn--danger btn--sm" style="margin-top:22px" (click)="removeOther(o.id)">Remove</button>
           </div>
+          <div class="relief-docs" style="margin-bottom:var(--space-4)">
+            <lf-file-dropzone [compact]="true" label="Attach supporting document" (fileSelected)="onFileSelected($event, o)" />
+            @for (doc of o.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            }
+          </div>
         }
       </div>
 
       <!-- Summary -->
       <div class="computation-total">
-        <div class="total-label">Estimated Total Deductions & Reliefs</div>
+        <div class="total-label">Estimated Total Deductions & Reliefs<lf-help text="Excludes WHT credits, which are set off against the tax computed rather than deducted from income." align="left"></lf-help></div>
         <div class="total-value">{{ totalDeductions() | naira }}</div>
       </div>
 
@@ -224,6 +279,12 @@ import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip
     .relief-row__label { font-size: var(--text-body-md); font-weight: var(--font-weight-medium); }
     .relief-row__sub { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); margin-top: 2px; }
     .relief-row__input { width: 200px; flex-shrink: 0; }
+    .relief-docs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+    .doc-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: var(--text-label-sm); color: var(--color-on-surface-variant);
+      padding: var(--space-1) var(--space-2);
+    }
     .relief-callout {
       display: flex; align-items: center; gap: var(--space-3);
       padding: var(--space-3) var(--space-4);
@@ -248,95 +309,111 @@ export class StepDeductionsComponent implements OnInit {
 
   private filingService = inject(FilingService);
   private configService = inject(ConfigService);
+  private toast = inject(ToastService);
 
-  fields = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, foreignTaxPaid: 0 };
+  fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, foreignTaxPaid: 0 };
+  standard = {} as Record<StandardRelief, ReliefEntry>;
   whtEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
-  foreignTaxDocs = signal<ReliefEntry['documents']>([]);
   saving = signal(false);
+  private removedIds: string[] = [];
 
   async ngOnInit(): Promise<void> {
+    for (const type of Object.keys(STANDARD_FIELDS) as StandardRelief[]) {
+      this.standard[type] = this.newRelief(type);
+    }
     const existing = await this.filingService.listReliefEntries(this.filingId());
     for (const r of existing) {
-      switch (r.reliefType) {
-        case 'pension':       this.fields.pension       = r.claimedAmount; break;
-        case 'nhis':          this.fields.nhis          = r.claimedAmount; break;
-        case 'nhf':           this.fields.nhf           = r.claimedAmount; break;
-        case 'life_assurance':this.fields.lifeAssurance = r.claimedAmount; break;
-        case 'rent':          this.fields.annualRent      = r.claimedAmount; break;
-        case 'wht':           this.whtEntries.update(e => [...e, r]); break;
-        case 'other_approved':this.otherEntries.update(e => [...e, r]); break;
-        case 'foreign_tax':
-          this.fields.foreignTaxPaid = r.claimedAmount;
-          if (r.documents?.length) this.foreignTaxDocs.set(r.documents);
-          break;
+      if (r.reliefType in STANDARD_FIELDS) {
+        const type = r.reliefType as StandardRelief;
+        const current = this.standard[type];
+        // earlier versions saved a new row on every pass; keep the latest, drop the rest
+        if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
+        this.standard[type] = r;
+        this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
+      } else if (r.reliefType === 'wht') {
+        this.whtEntries.update(e => [...e, r]);
+      } else if (r.reliefType === 'other_approved') {
+        this.otherEntries.update(e => [...e, r]);
       }
     }
   }
 
-  rentRelief = computed(() => {
-    const cap = this.configService.activeConfig()?.reliefCaps?.rentReliefCap ?? 500_000;
-    return Math.min(this.fields.annualRent * 0.20, cap);
-  });
+  private newRelief(type: ReliefType): ReliefEntry & { description?: string } {
+    return {
+      id: crypto.randomUUID(), filingId: this.filingId(), reliefType: type,
+      claimedAmount: 0, approvedAmount: 0, documents: [],
+    };
+  }
+
+  private caps = computed(() => this.configService.activeConfig()?.reliefCaps);
+
+  rentReliefRate = computed(() => this.caps()?.rentReliefRate ?? 0.20);
+  rentReliefCap = computed(() => this.caps()?.rentReliefCap ?? 500_000);
+
+  rentRelief(): number {
+    return Math.min(this.fields.annualRent * this.rentReliefRate(), this.rentReliefCap());
+  }
+
+  capped(amount: number, cap: number | null | undefined): number {
+    return cap != null && cap >= 0 ? Math.min(amount, cap) : amount;
+  }
 
   totalWht = computed(() => this.whtEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0));
 
-  totalDeductions = computed(() => {
+  /** Mirrors the engine; WHT is a credit against tax, not a deduction from income. */
+  totalDeductions(): number {
+    const caps = this.caps();
     const others = this.otherEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0);
-    return this.fields.pension + this.fields.nhis + this.fields.nhf
-      + this.fields.lifeAssurance + this.rentRelief() + this.totalWht() + others;
-  });
-
-  onForeignTaxFileSelected(file: { path: string; name: string; size: number; type: string }): void {
-    this.foreignTaxDocs.update(docs => [...docs, {
-      id: crypto.randomUUID(), parentEntryId: 'foreign_tax_' + this.filingId(),
-      parentEntryType: 'relief_entry', filePath: file.path, fileName: file.name,
-      fileType: file.type, fileSizeBytes: file.size, uploadedAt: new Date().toISOString(),
-    }]);
+    return this.capped(this.fields.pension, caps?.pensionCap)
+      + this.capped(this.fields.nhis, caps?.nhisCap)
+      + this.capped(this.fields.nhf, caps?.nhfCap)
+      + this.fields.lifeAssurance + this.rentRelief() + others;
   }
 
-  addWht(): void {
-    this.whtEntries.update(e => [...e, {
-      id: crypto.randomUUID(), filingId: this.filingId(), reliefType: 'wht',
-      claimedAmount: 0, approvedAmount: 0, documents: [],
-    }]);
+  addWht(): void { this.whtEntries.update(e => [...e, this.newRelief('wht')]); }
+  removeWht(id: string): void {
+    this.removedIds.push(id);
+    this.whtEntries.update(e => e.filter(x => x.id !== id));
   }
-  removeWht(id: string): void { this.whtEntries.update(e => e.filter(x => x.id !== id)); }
 
-  addOther(): void {
-    this.otherEntries.update(e => [...e, {
-      id: crypto.randomUUID(), filingId: this.filingId(), reliefType: 'other_approved',
-      claimedAmount: 0, approvedAmount: 0, description: '', documents: [],
-    }]);
+  addOther(): void { this.otherEntries.update(e => [...e, { ...this.newRelief('other_approved'), description: '' }]); }
+  removeOther(id: string): void {
+    this.removedIds.push(id);
+    this.otherEntries.update(e => e.filter(x => x.id !== id));
   }
-  removeOther(id: string): void { this.otherEntries.update(e => e.filter(x => x.id !== id)); }
 
-  onFileSelected(file: { path: string; name: string; size: number; type: string }, entry: ReliefEntry): void {
-    entry.documents = [...(entry.documents ?? []), {
-      id: crypto.randomUUID(), parentEntryId: entry.id, parentEntryType: 'relief_entry',
-      filePath: file.path, fileName: file.name, fileType: file.type,
-      fileSizeBytes: file.size, uploadedAt: new Date().toISOString(),
-    }];
+  onFileSelected(file: DropzoneFile, entry: ReliefEntry): void {
+    const error = queueDocument(entry, file, 'relief_entry');
+    if (error) this.toast.error(error);
   }
 
   async saveAndNext(): Promise<void> {
     this.saving.set(true);
     try {
       const fid = this.filingId();
-      const makeRelief = (type: ReliefType, amount: number): Partial<ReliefEntry> & { filingId: string } =>
-        ({ filingId: fid, reliefType: type, claimedAmount: amount, approvedAmount: amount, documents: [] });
+      for (const id of this.removedIds) await this.filingService.deleteReliefEntry(id);
+      this.removedIds = [];
 
-      await this.filingService.upsertReliefEntry(makeRelief('pension', this.fields.pension) as ReliefEntry & { filingId: string });
-      await this.filingService.upsertReliefEntry(makeRelief('nhis', this.fields.nhis) as ReliefEntry & { filingId: string });
-      await this.filingService.upsertReliefEntry(makeRelief('nhf', this.fields.nhf) as ReliefEntry & { filingId: string });
-      await this.filingService.upsertReliefEntry(makeRelief('life_assurance', this.fields.lifeAssurance) as ReliefEntry & { filingId: string });
-      await this.filingService.upsertReliefEntry(makeRelief('rent', this.fields.annualRent) as ReliefEntry & { filingId: string });
-      // foreign tax paid (reference only)
-      await this.filingService.upsertReliefEntry(makeRelief('foreign_tax', this.fields.foreignTaxPaid) as ReliefEntry & { filingId: string });
-      for (const w of this.whtEntries()) await this.filingService.upsertReliefEntry({ ...w, filingId: fid });
-      for (const o of this.otherEntries()) await this.filingService.upsertReliefEntry({ ...o, filingId: fid });
+      const entries: ReliefEntry[] = [...this.whtEntries(), ...this.otherEntries()];
+      for (const [type, key] of Object.entries(STANDARD_FIELDS) as [StandardRelief, FieldKey][]) {
+        const entry = this.standard[type];
+        entry.claimedAmount = entry.approvedAmount = this.fields[key] || 0;
+        entries.push(entry);
+      }
 
+      const failed: string[] = [];
+      for (const entry of entries) {
+        if (entry.reliefType === 'wht' || entry.reliefType === 'other_approved') {
+          entry.approvedAmount = entry.claimedAmount;
+        }
+        await this.filingService.upsertReliefEntry({ ...entry, filingId: fid });
+        failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
+      }
+      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
       this.next.emit();
+    } catch (err) {
+      this.toast.error('Could not save deductions: ' + String(err));
     } finally {
       this.saving.set(false);
     }
