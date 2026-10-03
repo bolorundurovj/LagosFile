@@ -182,10 +182,77 @@ jobs:
             src-tauri/target/**/release/bundle/**/*.AppImage
           if-no-files-found: warn
 
-  # ── 4. Publish GitHub Release ──────────────────────────────────
+  # ── 4. Build custom Windows installer (PolyInstall) ────────────
+  build-installer:
+    name: Build Windows installer (PolyInstall)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: polyinstall-windows
+
+      # Builds the Angular frontend (via beforeBuildCommand) and the Tauri
+      # binary, skipping the native bundlers; only LagosFile.exe is needed.
+      - name: Build Tauri binary (no bundle)
+        run: npm run tauri -- build --no-bundle
+
+      - name: Resolve app version
+        shell: bash
+        run: |
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          echo "LAGOSFILE_VERSION=$VER" >> "$GITHUB_ENV"
+
+      # Keep the bundled EULA in sync with the canonical LICENSE.
+      - name: Stage license into payload
+        shell: bash
+        run: cp LICENSE installer/payload/LICENSE.txt
+
+      - name: Set up PolyInstall
+        uses: bolorundurowb/PolyInstall/.github/actions/setup-polyinstall@v2.0.0
+        with:
+          version: v2.0.0
+          rid: win-x64
+
+      - name: Build installer
+        shell: bash
+        run: |
+          polyinstall build installer/lagosfile.polyinstall.yaml \
+            --base . \
+            --output-manifest build-manifest.json
+          cat build-manifest.json
+
+      - name: Rename output
+        id: rename
+        shell: bash
+        run: |
+          OUT="dist-installer/LagosFile-${LAGOSFILE_VERSION}-windows-x64-installer.exe"
+          mv dist-installer/LagosFile-windows-x64.exe "$OUT"
+          echo "asset=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: ${{ steps.rename.outputs.asset }}
+          if-no-files-found: error
+
+  # ── 5. Publish GitHub Release ──────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [changelog, build-tauri, build-extensions]
+    needs: [changelog, build-tauri, build-extensions, build-installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -240,6 +307,7 @@ jobs:
             artifacts/tauri-*/**/*.dmg
             artifacts/tauri-*/**/*.deb
             artifacts/tauri-*/**/*.AppImage
+            artifacts/windows-installer/*.exe
             artifacts/ext-chrome/chrome-lagosfile-lirs.zip
             artifacts/ext-firefox/firefox-lagosfile-lirs.xpi
             THIRD-PARTY-NOTICES.txt

@@ -1,22 +1,19 @@
 # yaml-language-server: $schema=https://bolorundurowb.github.io/PolyInstall/schema/v1.json
 # ─────────────────────────────────────────────────────────────────────────────
-# LagosFile — custom install experience (BETA, Windows)
+# LagosFile — Windows installer
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Produces a self-contained Windows setup .exe with a guided wizard:
 #   welcome -> EULA -> destination -> progress -> finish
 # plus Start Menu / Desktop shortcuts and Add/Remove Programs + Uninstall.exe.
 #
-# This wraps the already-built Tauri binary; it does NOT replace the native
-# .msi / NSIS installers produced by the main release pipeline. It ships as an
-# extra, clearly-marked "custom setup (beta)" asset.
+# This wraps the already-built Tauri binary and ships alongside the native
+# .msi / NSIS installers as LagosFile-<version>-windows-x64-installer.exe.
 #
 # Build (CI sets LAGOSFILE_VERSION; locally export it yourself):
 #   polyinstall build installer/lagosfile.polyinstall.yaml --base .
 #
-# To DROP this experiment entirely, delete the `installer/` folder and the
-# `.github/workflows/release-custom-installer.yml` workflow. Nothing else
-# depends on it.
+# Built by the `build-installer` job in .github/workflows/release.yml.
 # ─────────────────────────────────────────────────────────────────────────────
 
 metadata:
