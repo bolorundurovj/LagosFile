@@ -28,6 +28,9 @@ export interface Filing {
   minimumTax?: number;
   finalTaxPayable?: number;
   taxConfigVersion: string;
+  paymentDate?: string | null;
+  paymentReference?: string | null;
+  amountPaid?: number | null;
 }
 
 export type IncomeType =
@@ -107,6 +110,7 @@ export interface ReliefEntry {
   whtRef?: string;
   whtIncomeType?: string;
   whtDate?: string;
+  description?: string;
   documents: Document[];
 }
 

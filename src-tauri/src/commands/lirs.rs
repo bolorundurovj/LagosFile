@@ -99,6 +99,9 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                     minimum_tax: row.get(13)?,
                     final_tax_payable: row.get(14)?,
                     tax_config_version: row.get(15)?,
+                    payment_date: None,
+                    payment_reference: None,
+                    amount_paid: None,
                 })
             },
         )
@@ -313,6 +316,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                 wht_date: row
                     .get::<_, Option<String>>(7)?
                     .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                description: None,
                 documents: vec![],
             })
         })

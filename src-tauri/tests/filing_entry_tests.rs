@@ -603,3 +603,37 @@ fn test_copy_entries_to_next_year_carries_forward_straight_line() {
     }
 }
 
+#[test]
+fn test_migration_adds_columns_to_existing_database() {
+    let db = AppDb::open_in_memory().unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute_batch(
+            "DROP TABLE relief_entry;
+             CREATE TABLE relief_entry (id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, relief_type TEXT NOT NULL,
+               claimed_amount REAL NOT NULL DEFAULT 0, approved_amount REAL NOT NULL DEFAULT 0,
+               wht_ref TEXT, wht_income_type TEXT, wht_date TEXT);",
+        )
+        .unwrap();
+    }
+    let bytes = db.serialize().unwrap();
+    let reopened = AppDb::open_in_memory().unwrap();
+    reopened.load_from_bytes(&bytes).unwrap();
+
+    let conn = reopened.conn.lock().unwrap();
+    for (table, column) in [
+        ("relief_entry", "description"),
+        ("filing", "payment_date"),
+        ("filing", "payment_reference"),
+        ("filing", "amount_paid"),
+    ] {
+        let stmt = conn
+            .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
+            .unwrap();
+        assert!(
+            stmt.column_names().contains(&column),
+            "{table}.{column} missing"
+        );
+    }
+}
+

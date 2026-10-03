@@ -68,6 +68,11 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
         minimum_tax: row.get(13)?,
         final_tax_payable: row.get(14)?,
         tax_config_version: row.get(15)?,
+        payment_date: row
+            .get::<_, Option<String>>(16)?
+            .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+        payment_reference: row.get(17)?,
+        amount_paid: row.get(18)?,
     })
 }
 
@@ -117,7 +122,8 @@ pub async fn list_filings(state: State<'_, AppState>) -> Result<Vec<Filing>, Str
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
                     filing_reference,created_at,confirmed_at,total_income_ngn,
                     chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                    minimum_tax,final_tax_payable,tax_config_version
+                    minimum_tax,final_tax_payable,tax_config_version,
+                    payment_date,payment_reference,amount_paid
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -138,7 +144,8 @@ pub async fn get_filing(id: String, state: State<'_, AppState>) -> Result<Filing
         "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
                 filing_reference,created_at,confirmed_at,total_income_ngn,
                 chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                minimum_tax,final_tax_payable,tax_config_version
+                minimum_tax,final_tax_payable,tax_config_version,
+                    payment_date,payment_reference,amount_paid
          FROM filing WHERE id=?1",
         params![id],
         row_to_filing,
@@ -331,8 +338,8 @@ pub fn copy_entries_to_next_year(
     // prior year's certificates and must not be re-claimed in the new filing.
     conn.execute(
         &format!("INSERT INTO relief_entry
-           (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date)
-         SELECT {SQL_UUID},?1,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+           (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description)
+         SELECT {SQL_UUID},?1,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description
          FROM relief_entry WHERE filing_id=?2 AND relief_type NOT IN ('wht','foreign_tax')"),
         params![to_id, from_id],
     )?;
@@ -669,7 +676,7 @@ pub async fn list_relief_entries(
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+        "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description
          FROM relief_entry WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
     let mut entries: Vec<ReliefEntry> = stmt
@@ -686,6 +693,7 @@ pub async fn list_relief_entries(
                 wht_date: row
                     .get::<_, Option<String>>(7)?
                     .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                description: row.get(8)?,
                 documents: vec![],
             })
         })
@@ -713,8 +721,8 @@ pub async fn upsert_relief_entry(
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO relief_entry
-             (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+             (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 id, entry["filingId"].as_str().unwrap_or(""),
                 entry["reliefType"].as_str().unwrap_or("other_approved"),
@@ -723,6 +731,7 @@ pub async fn upsert_relief_entry(
                 entry["whtRef"].as_str(),
                 entry["whtIncomeType"].as_str(),
                 entry["whtDate"].as_str(),
+                entry["description"].as_str(),
             ],
         ).map_err(|e| e.to_string())?;
     }
@@ -824,7 +833,7 @@ pub async fn compute_filing(
         .collect();
 
     let mut re_stmt = conn.prepare(
-        "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+        "SELECT id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description
          FROM relief_entry WHERE filing_id=?1"
     ).map_err(|e| e.to_string())?;
     let reliefs: Vec<ReliefEntry> = re_stmt
@@ -841,6 +850,7 @@ pub async fn compute_filing(
                 wht_date: row
                     .get::<_, Option<String>>(7)?
                     .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                description: row.get(8)?,
                 documents: vec![],
             })
         })

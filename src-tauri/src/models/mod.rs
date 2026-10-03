@@ -64,6 +64,9 @@ pub struct Filing {
     pub minimum_tax: Option<f64>,
     pub final_tax_payable: Option<f64>,
     pub tax_config_version: String,
+    pub payment_date: Option<NaiveDate>,
+    pub payment_reference: Option<String>,
+    pub amount_paid: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -115,6 +118,8 @@ pub struct ReliefEntry {
     pub wht_ref: Option<String>,
     pub wht_income_type: Option<String>,
     pub wht_date: Option<NaiveDate>,
+    #[serde(default)]
+    pub description: Option<String>,
     pub documents: Vec<Document>,
 }
 
