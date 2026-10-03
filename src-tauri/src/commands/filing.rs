@@ -6,6 +6,10 @@ use rusqlite::params;
 use tauri::State;
 use uuid::Uuid;
 
+/// SQL expression producing a hyphenated v4 UUID, matching the ids Rust and
+/// the frontend generate, so copied rows can be upserted by id later.
+pub const SQL_UUID: &str = "lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||substr(hex(randomblob(2)),2)||'-'||substr('89ab',1+abs(random())%4,1)||substr(hex(randomblob(2)),2)||'-'||hex(randomblob(6)))";
+
 fn load_documents(conn: &rusqlite::Connection, parent_entry_id: &str) -> Vec<Document> {
     let mut stmt = match conn.prepare(
         "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
@@ -284,6 +288,57 @@ pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(),
     Ok(())
 }
 
+/// Copies a filing's entries into a new draft for the following year: income,
+/// capital allowances carried forward at their closing WDV, and recurring reliefs.
+pub fn copy_entries_to_next_year(
+    conn: &rusqlite::Connection,
+    from_id: &str,
+    to_id: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!("INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+         foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+         fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain)
+         SELECT {SQL_UUID},?1,income_type,description,gross_amount_ngn,is_foreign,
+         foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+         fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain
+         FROM income_entry WHERE filing_id=?2"),
+        params![to_id, from_id],
+    )?;
+
+    // carry assets forward on a straight-line basis: closing WDV = opening WDV
+    // less the allowance claimed (cost x rate, capped at the opening WDV).
+    conn.execute(
+        &format!(
+            "INSERT INTO capital_allowance
+               (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+                tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
+             SELECT {SQL_UUID},?1,asset_description,asset_type,asset_cost,acquisition_date,
+                closing_wdv,annual_allowance_rate,min(asset_cost * annual_allowance_rate, closing_wdv)
+             FROM (
+               SELECT *, max(opening - min(asset_cost * annual_allowance_rate, opening), 0.0) AS closing_wdv
+               FROM (
+                 SELECT *, CASE WHEN tax_written_down_value > 0 THEN tax_written_down_value ELSE asset_cost END AS opening
+                 FROM capital_allowance WHERE filing_id=?2
+               )
+             )
+             WHERE closing_wdv > 0"
+        ),
+        params![to_id, from_id],
+    )?;
+
+    // copy recurring reliefs; WHT credits and foreign tax are tied to the
+    // prior year's certificates and must not be re-claimed in the new filing.
+    conn.execute(
+        &format!("INSERT INTO relief_entry
+           (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date)
+         SELECT {SQL_UUID},?1,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+         FROM relief_entry WHERE filing_id=?2 AND relief_type NOT IN ('wht','foreign_tax')"),
+        params![to_id, from_id],
+    )?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
     let new_id = Uuid::new_v4();
@@ -304,34 +359,7 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
             params![new_id.to_string(), taxpayer_id, id, yoa + 1, config_ver],
         )
         .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
-             foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-             fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain)
-             SELECT hex(randomblob(16)),?1,income_type,description,gross_amount_ngn,is_foreign,
-             foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-             fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain
-             FROM income_entry WHERE filing_id=?2",
-            params![new_id.to_string(), id],
-        )
-        .map_err(|e| e.to_string())?;
-
-        // copy capital allowances, carrying forward the closing WDV
-        // (tax_written_down_value - annual_allowance_amount) as the new opening WDV.
-        conn.execute(
-            "INSERT INTO capital_allowance
-               (id,filing_id,asset_description,asset_type,cost_ngn,acquisition_date,
-                tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
-             SELECT hex(randomblob(16)),?1,asset_description,asset_type,cost_ngn,acquisition_date,
-                -- new WDV = prior closing WDV (i.e. opening_wdv - allowance claimed last year)
-                max(tax_written_down_value - annual_allowance_amount, 0.0),
-                annual_allowance_rate,
-                -- recompute allowance on the new WDV
-                max(tax_written_down_value - annual_allowance_amount, 0.0) * annual_allowance_rate
-             FROM capital_allowance WHERE filing_id=?2",
-            params![new_id.to_string(), id],
-        )
-        .map_err(|e| e.to_string())?;
+        copy_entries_to_next_year(&conn, &id, &new_id.to_string()).map_err(|e| e.to_string())?;
     }
     persist_db(&state).await?;
     get_filing(new_id.to_string(), state).await
@@ -596,7 +624,7 @@ pub async fn get_prior_year_allowances(
 
     let mut stmt = conn
         .prepare(
-            "SELECT asset_description,asset_type,cost_ngn,acquisition_date,
+            "SELECT asset_description,asset_type,asset_cost,acquisition_date,
                     tax_written_down_value,annual_allowance_rate,annual_allowance_amount
              FROM capital_allowance WHERE filing_id=?1",
         )
@@ -610,14 +638,13 @@ pub async fn get_prior_year_allowances(
             let acq_date: String = row.get(3)?;
             let prior_wdv: f64 = row.get(4)?;
             let rate: f64 = row.get(5)?;
-            let prior_allowance: f64 = row.get(6)?;
-            // Closing WDV = opening_wdv - allowance claimed in prior year
-            let closing_wdv = (prior_wdv - prior_allowance).max(0.0);
-            let new_allowance = closing_wdv * rate;
+            let opening = if prior_wdv > 0.0 { prior_wdv } else { cost };
+            let closing_wdv = (opening - (cost * rate).min(opening)).max(0.0);
+            let new_allowance = (cost * rate).min(closing_wdv);
             Ok(serde_json::json!({
                 "assetDescription": desc,
                 "assetType": asset_type,
-                "costNgn": cost,
+                "assetCost": cost,
                 "acquisitionDate": acq_date,
                 "taxWrittenDownValue": closing_wdv,
                 "annualAllowanceRate": rate,
@@ -627,6 +654,7 @@ pub async fn get_prior_year_allowances(
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
+        .filter(|v: &serde_json::Value| v["taxWrittenDownValue"].as_f64().unwrap_or(0.0) > 0.0)
         .collect();
 
     Ok(rows)
