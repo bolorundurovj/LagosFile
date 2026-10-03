@@ -177,6 +177,31 @@ import { LucideAngularModule } from 'lucide-angular';
           </div>
         </div>
 
+        @if (comparison(); as cmp) {
+          <div class="card yoy">
+            <h3 class="title-md">Compared with YOA {{ cmp.priorYoa }}<lf-help text="Checks this return against last year's confirmed filing. Large swings are not errors, but they are worth double-checking before you confirm." align="left"></lf-help></h3>
+            <table class="yoy__table">
+              <thead><tr><th></th><th class="align-right">YOA {{ cmp.priorYoa }}</th><th class="align-right">This return</th><th class="align-right">Change</th></tr></thead>
+              <tbody>
+                @for (row of cmp.rows; track row.label) {
+                  <tr [class.yoy__flag]="row.flagged">
+                    <td>{{ row.label }}</td>
+                    <td class="align-right">{{ row.prior | naira }}</td>
+                    <td class="align-right">{{ row.current | naira }}</td>
+                    <td class="align-right">
+                      {{ row.delta >= 0 ? '+' : '−' }}{{ (row.delta < 0 ? -row.delta : row.delta) | naira }}
+                      @if (row.pct !== null) { ({{ row.pct >= 0 ? '+' : '' }}{{ row.pct.toFixed(0) }}%) }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            @if (cmp.flagged) {
+              <p class="body-sm yoy__note">Highlighted lines moved by more than {{ flagPct }}% from last year. Check that no income or relief is missing or duplicated.</p>
+            }
+          </div>
+        }
+
         <!-- Confirm warning -->
         <div class="alert alert--warning">
           <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
@@ -235,6 +260,14 @@ import { LucideAngularModule } from 'lucide-angular';
     </div>
   `,
   styles: [`
+    .yoy { display: flex; flex-direction: column; gap: var(--space-3); }
+    .yoy__table { width: 100%; border-collapse: collapse; font-size: var(--text-body-sm); font-variant-numeric: tabular-nums; }
+    .yoy__table th { font-size: var(--text-label-sm); color: var(--color-on-surface-variant); font-weight: var(--font-weight-medium); padding: var(--space-2); text-align: left; }
+    .yoy__table td { padding: var(--space-2); }
+    .yoy__table .align-right { text-align: right; }
+    .yoy__flag td { background: var(--color-warning-container); color: var(--color-warning); }
+    .yoy__note { color: var(--color-warning); }
+
     .step-page {
       display: flex;
       flex-direction: column;
@@ -367,6 +400,27 @@ export class StepReviewComponent implements OnInit {
     return issues;
   });
 
+  readonly flagPct = 25;
+  prior = signal<Filing | null>(null);
+
+  comparison = computed(() => {
+    const r = this.result();
+    const p = this.prior();
+    if (!r || !p) return null;
+    const row = (label: string, prior: number, current: number) => {
+      const delta = current - prior;
+      const pct = prior !== 0 ? (delta / prior) * 100 : null;
+      const flagged = Math.abs(delta) >= 100_000 && (pct === null || Math.abs(pct) >= this.flagPct);
+      return { label, prior, current, delta, pct, flagged };
+    };
+    const rows = [
+      row('Gross income', p.totalIncomeNgn ?? 0, r.totalGrossIncome),
+      row('Chargeable income', p.chargeableIncome ?? 0, r.chargeableIncome),
+      row('Final tax payable', p.finalTaxPayable ?? 0, r.finalTaxPayable),
+    ];
+    return { priorYoa: p.yearOfAssessment, rows, flagged: rows.some(x => x.flagged) };
+  });
+
   confirmedFiling = signal<Filing | null>(null);
   filingWithLirs = signal(false);
   showReferencePanel = signal(false);
@@ -377,8 +431,24 @@ export class StepReviewComponent implements OnInit {
     try {
       const r = await this.filingService.compute(this.filingId());
       this.result.set(r);
+      void this.loadPrior();
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /** Latest confirmed or submitted filing for the previous year, amendments included. */
+  private async loadPrior(): Promise<void> {
+    try {
+      const filings = await this.filingService.listFilings();
+      const current = filings.find(f => f.id === this.filingId());
+      if (!current) return;
+      const prior = filings
+        .filter(f => f.yearOfAssessment === current.yearOfAssessment - 1 && f.status !== 'Draft')
+        .sort((a, b) => (b.confirmedAt ?? '').localeCompare(a.confirmedAt ?? ''))[0];
+      this.prior.set(prior ?? null);
+    } catch {
+      // the comparison is informational only
     }
   }
 
