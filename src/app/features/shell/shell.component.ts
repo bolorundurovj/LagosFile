@@ -4,6 +4,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { ConfigService } from '../../core/services/config.service';
 import { UpdateService } from '../../core/services/update.service';
 import { IdleLockService } from '../../core/services/idle-lock.service';
+import { DeadlineReminderService } from '../../core/services/deadline-reminder.service';
 import { SidebarComponent } from '../../shared/components/sidebar/sidebar.component';
 import { TopbarComponent } from '../../shared/components/topbar/topbar.component';
 import { LucideAngularModule } from 'lucide-angular';
@@ -72,6 +73,7 @@ export class ShellComponent implements OnInit, OnDestroy {
   private config = inject(ConfigService);
   update = inject(UpdateService);
   private idleLock = inject(IdleLockService);
+  private reminders = inject(DeadlineReminderService);
 
   async ngOnInit(): Promise<void> {
     try {
@@ -79,6 +81,7 @@ export class ShellComponent implements OnInit, OnDestroy {
     } catch { /* new install; seed data will be created on unlock */ }
     this.update.checkForUpdates();
     this.idleLock.start();
+    void this.reminders.check();
   }
 
   ngOnDestroy(): void {
