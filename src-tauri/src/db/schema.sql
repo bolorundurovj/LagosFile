@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS filing (
     chargeable_income   REAL,
     tax_payable         REAL,
     wht_credit          REAL,
+    paye_credit         REAL,
+    foreign_tax_credit  REAL,
     net_tax_payable     REAL,
     minimum_tax         REAL,
     final_tax_payable   REAL,

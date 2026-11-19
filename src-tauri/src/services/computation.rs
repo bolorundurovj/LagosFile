@@ -93,10 +93,11 @@ impl ComputationEngine {
         let mut life_assurance = 0.0f64;
         let mut annual_rent = 0.0f64;
         let mut wht_credits = 0.0f64;
+        let mut paye_credits = 0.0f64;
         let mut other_approved = 0.0f64;
 
         for r in relief_entries {
-            let amount = r.approved_amount;
+            let amount = r.approved_amount.max(0.0);
             match r.relief_type.as_str() {
                 "pension" => pension += amount,
                 "nhis" => nhis += amount,
@@ -104,6 +105,7 @@ impl ComputationEngine {
                 "life_assurance" => life_assurance += amount,
                 "rent" => annual_rent += amount,
                 "wht" => wht_credits += amount,
+                "paye" => paye_credits += amount,
                 "other_approved" => other_approved += amount,
                 _ => {}
             }
@@ -150,7 +152,30 @@ impl ComputationEngine {
 
         let minimum_tax = total_gross * config.minimum_tax_rate;
         let tax_before_credits = graduated_tax.max(minimum_tax);
-        let net_tax_payable = (tax_before_credits - wht_credits).max(0.0);
+
+        // Foreign tax credit is limited per income entry to the Nigerian tax attributable
+        // to that entry (tax_before_credits * entry_gross / total_gross), never the whole return.
+        let mut foreign_tax_credits = 0.0f64;
+        if total_gross > 0.0 && tax_before_credits > 0.0 {
+            for entry in income_entries {
+                if entry.income_type == "capital_gain_shares" && share_disposals_exempt {
+                    continue;
+                }
+                if entry.income_type == "digital_asset" && digital_net <= 0.0 {
+                    continue;
+                }
+                if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
+                    if ft_paid > 0.0 && entry.gross_amount_ngn > 0.0 {
+                        let attributable_tax =
+                            tax_before_credits * (entry.gross_amount_ngn / total_gross);
+                        foreign_tax_credits += ft_paid.min(attributable_tax).max(0.0);
+                    }
+                }
+            }
+        }
+
+        let total_credits = wht_credits + paye_credits + foreign_tax_credits;
+        let net_tax_payable = (tax_before_credits - total_credits).max(0.0);
         let final_tax_payable = net_tax_payable;
 
         Ok(ComputationResult {
@@ -162,6 +187,8 @@ impl ComputationEngine {
             band_breakdown,
             graduated_tax,
             wht_credits,
+            paye_credits,
+            foreign_tax_credits,
             net_tax_payable,
             minimum_tax,
             final_tax_payable,

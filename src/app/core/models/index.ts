@@ -25,6 +25,8 @@ export interface Filing {
   chargeableIncome?: number;
   taxPayable?: number;
   whtCredit?: number;
+  payeCredit?: number;
+  foreignTaxCredit?: number;
   netTaxPayable?: number;
   minimumTax?: number;
   finalTaxPayable?: number;
@@ -99,6 +101,7 @@ export type ReliefType =
   | 'nhf'
   | 'rent'
   | 'wht'
+  | 'paye'
   | 'life_assurance'
   | 'foreign_tax'
   | 'other_approved';
@@ -183,6 +186,8 @@ export interface ComputationResult {
   bandBreakdown: BandResult[];
   graduatedTax: number;
   whtCredits: number;
+  payeCredits?: number;
+  foreignTaxCredits?: number;
   netTaxPayable: number;
   minimumTax: number;
   finalTaxPayable: number;

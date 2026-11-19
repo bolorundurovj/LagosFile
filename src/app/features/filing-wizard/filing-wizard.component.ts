@@ -105,6 +105,12 @@ const STEPS = [
             <div class="readonly-row"><span>Chargeable Income</span><strong class="financial-value">{{ filing.chargeableIncome ?? 0 | naira }}</strong></div>
             <div class="readonly-row"><span>Gross Tax Payable</span><strong class="financial-value">{{ filing.taxPayable ?? 0 | naira }}</strong></div>
             <div class="readonly-row"><span>WHT Credits</span><strong class="financial-value">{{ filing.whtCredit ?? 0 | naira }}</strong></div>
+            @if ((filing.payeCredit ?? 0) > 0) {
+              <div class="readonly-row"><span>PAYE Credits</span><strong class="financial-value">{{ filing.payeCredit ?? 0 | naira }}</strong></div>
+            }
+            @if ((filing.foreignTaxCredit ?? 0) > 0) {
+              <div class="readonly-row"><span>Foreign Tax Credits</span><strong class="financial-value">{{ filing.foreignTaxCredit ?? 0 | naira }}</strong></div>
+            }
             <div class="readonly-row"><span>Net Tax Payable</span><strong class="financial-value">{{ filing.netTaxPayable ?? 0 | naira }}</strong></div>
             <div class="readonly-row"><span>Minimum Tax</span><strong class="financial-value">{{ filing.minimumTax ?? 0 | naira }}</strong></div>
             <div class="readonly-row readonly-row--total"><span>Final Tax Payable</span><strong class="financial-value">{{ filing.finalTaxPayable ?? 0 | naira }}</strong></div>

@@ -92,6 +92,7 @@ pub const NTA_2025_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000002";
 pub const PITA_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000003";
 const META_MIGRATION_NOTICES: &str = "migration_notices";
 const META_NTA_MIGRATED: &str = "nta_2025_config_migrated";
+const META_FOREIGN_TAX_MIGRATED: &str = "foreign_tax_relief_migrated";
 
 /// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` leaves
 /// existing databases untouched, so they are added here when missing.
@@ -102,6 +103,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("filing", "amount_paid", "REAL"),
     ("filing", "tax_config_id", "TEXT"),
     ("filing", "submitted_at", "TEXT"),
+    ("filing", "paye_credit", "REAL"),
+    ("filing", "foreign_tax_credit", "REAL"),
 ];
 
 pub fn get_migration_notices(conn: &Connection) -> Vec<String> {
@@ -295,6 +298,135 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
+    struct ForeignTaxRow {
+        relief_id: String,
+        filing_id: String,
+        claimed: f64,
+        approved: f64,
+        status: String,
+        yoa: i32,
+        filing_ref: Option<String>,
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.filing_id, r.claimed_amount, r.approved_amount, f.status, f.year_of_assessment, f.filing_reference
+         FROM relief_entry r
+         JOIN filing f ON f.id = r.filing_id
+         WHERE r.relief_type = 'foreign_tax'",
+    )?;
+    let rows: Vec<ForeignTaxRow> = stmt
+        .query_map([], |r| {
+            Ok(ForeignTaxRow {
+                relief_id: r.get(0)?,
+                filing_id: r.get(1)?,
+                claimed: r.get(2)?,
+                approved: r.get(3)?,
+                status: r.get(4)?,
+                yoa: r.get(5)?,
+                filing_ref: r.get(6)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut filed_returns_notice: Vec<String> = Vec::new();
+    for row in rows {
+        let ForeignTaxRow {
+            relief_id,
+            filing_id,
+            claimed,
+            approved,
+            status,
+            yoa,
+            filing_ref,
+        } = row;
+        let amount = if approved > 0.0 { approved } else { claimed };
+        if status == "Draft" {
+            if amount > 0.0 {
+                let target_entry: Option<String> = conn
+                    .query_row(
+                        "SELECT id FROM income_entry WHERE filing_id = ?1
+                         ORDER BY is_foreign DESC, gross_amount_ngn DESC LIMIT 1",
+                        rusqlite::params![filing_id],
+                        |r| r.get(0),
+                    )
+                    .ok();
+                if let Some(entry_id) = target_entry {
+                    conn.execute(
+                        "UPDATE income_entry
+                         SET foreign_tax_paid_ngn = COALESCE(foreign_tax_paid_ngn, 0.0) + ?1
+                         WHERE id = ?2",
+                        rusqlite::params![amount, entry_id],
+                    )?;
+                    conn.execute(
+                        "UPDATE document
+                         SET parent_entry_id = ?1, parent_entry_type = 'income_entry'
+                         WHERE parent_entry_id = ?2 AND parent_entry_type = 'relief_entry'",
+                        rusqlite::params![entry_id, relief_id],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM relief_entry WHERE id = ?1",
+                        rusqlite::params![relief_id],
+                    )?;
+                }
+            } else {
+                let doc_count: i32 = conn
+                    .query_row(
+                        "SELECT COUNT(1) FROM document WHERE parent_entry_id = ?1",
+                        rusqlite::params![relief_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if doc_count == 0 {
+                    conn.execute(
+                        "DELETE FROM relief_entry WHERE id = ?1",
+                        rusqlite::params![relief_id],
+                    )?;
+                }
+            }
+        } else if amount > 0.0 {
+            let desc = match filing_ref {
+                Some(ref r) => format!("{yoa} ({r})"),
+                None => format!("{yoa}"),
+            };
+            if !filed_returns_notice.contains(&desc) {
+                filed_returns_notice.push(desc);
+            }
+        }
+    }
+
+    if !filed_returns_notice.is_empty() {
+        let already: bool = conn
+            .query_row(
+                "SELECT COUNT(1) FROM app_meta WHERE key = ?1",
+                rusqlite::params![META_FOREIGN_TAX_MIGRATED],
+                |r| r.get::<_, i32>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if !already {
+            add_migration_notice(
+                conn,
+                &format!(
+                    "Filed returns ({}) recorded foreign tax paid in Step 3 for reference only. Foreign tax is now credited per income entry — create an amendment if you want to claim it.",
+                    filed_returns_notice.join(", ")
+                ),
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, '1')",
+                rusqlite::params![META_FOREIGN_TAX_MIGRATED],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -309,6 +441,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     }
     backfill_filing_tax_config_ids(conn)?;
     ensure_nta_and_pita_configs(conn)?;
+    migrate_foreign_tax_reliefs(conn)?;
     seed_filing_ref_counter(conn)?;
     Ok(())
 }

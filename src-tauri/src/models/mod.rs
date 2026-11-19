@@ -61,6 +61,8 @@ pub struct Filing {
     pub chargeable_income: Option<f64>,
     pub tax_payable: Option<f64>,
     pub wht_credit: Option<f64>,
+    pub paye_credit: Option<f64>,
+    pub foreign_tax_credit: Option<f64>,
     pub net_tax_payable: Option<f64>,
     pub minimum_tax: Option<f64>,
     pub final_tax_payable: Option<f64>,
@@ -237,6 +239,10 @@ pub struct ComputationResult {
     pub band_breakdown: Vec<BandResult>,
     pub graduated_tax: f64,
     pub wht_credits: f64,
+    #[serde(default)]
+    pub paye_credits: f64,
+    #[serde(default)]
+    pub foreign_tax_credits: f64,
     pub net_tax_payable: f64,
     pub minimum_tax: f64,
     pub final_tax_payable: f64,

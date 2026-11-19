@@ -122,6 +122,18 @@ import { LucideAngularModule } from 'lucide-angular';
               <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable after any minimum tax floor."></lf-help></span>
               <span class="financial-value">({{ result()!.whtCredits | naira }})</span>
             </div>
+            @if ((result()!.payeCredits ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: PAYE Credits<lf-help text="PAYE tax already withheld by your employer(s) during the income year. Directly reduces tax payable."></lf-help></span>
+                <span class="financial-value">({{ result()!.payeCredits | naira }})</span>
+              </div>
+            }
+            @if ((result()!.foreignTaxCredits ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: Foreign Tax Credits<lf-help text="Double-taxation credit for foreign tax paid on foreign income, capped per entry at the Nigerian tax attributable to that entry."></lf-help></span>
+                <span class="financial-value">({{ result()!.foreignTaxCredits | naira }})</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--subtotal">
               <span>Net Tax Payable<lf-help text="Tax liability after applying any minimum tax floor and subtracting tax credits (floored at zero)."></lf-help></span>
               <span class="financial-value">{{ result()!.netTaxPayable | naira }}</span>

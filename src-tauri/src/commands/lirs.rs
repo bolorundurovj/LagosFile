@@ -100,6 +100,8 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
                     chargeable_income: row.get(9)?,
                     tax_payable: row.get(10)?,
                     wht_credit: row.get(11)?,
+                    paye_credit: None,
+                    foreign_tax_credit: None,
                     net_tax_payable: row.get(12)?,
                     minimum_tax: row.get(13)?,
                     final_tax_payable: row.get(14)?,

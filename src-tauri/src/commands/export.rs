@@ -16,6 +16,8 @@ struct FilingSummary {
     chargeable_income: Option<f64>,
     tax_payable: Option<f64>,
     wht_credit: Option<f64>,
+    paye_credit: Option<f64>,
+    foreign_tax_credit: Option<f64>,
     net_tax_payable: Option<f64>,
     minimum_tax: Option<f64>,
     final_tax_payable: Option<f64>,
@@ -32,7 +34,8 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
                 f.total_income_ngn, f.chargeable_income, f.tax_payable,
                 f.wht_credit, f.net_tax_payable, f.minimum_tax, f.final_tax_payable,
                 f.tax_config_version, f.confirmed_at,
-                t.full_name, t.tin, f.submitted_at
+                t.full_name, t.tin, f.submitted_at,
+                f.paye_credit, f.foreign_tax_credit
          FROM filing f JOIN taxpayer t ON t.id = f.taxpayer_id
          WHERE f.id = ?1",
         params![filing_id],
@@ -44,6 +47,8 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
                 chargeable_income: row.get(3)?,
                 tax_payable: row.get(4)?,
                 wht_credit: row.get(5)?,
+                paye_credit: row.get(14)?,
+                foreign_tax_credit: row.get(15)?,
                 net_tax_payable: row.get(6)?,
                 minimum_tax: row.get(7)?,
                 final_tax_payable: row.get(8)?,
@@ -722,15 +727,26 @@ pub fn export_filing_pdf_in_dir(
     layer.use_text("COMPUTATION SUMMARY", 11.0, left, y, &font_bold);
     y -= line_h;
 
-    let rows: &[(&str, String)] = &[
+    let mut rows: Vec<(&str, String)> = vec![
         ("Total Gross Income", naira(summary.total_income_ngn)),
         ("Chargeable Income", naira(summary.chargeable_income)),
-        ("Gross Tax (PITA bands)", naira(summary.tax_payable)),
-        ("WHT Credits", naira(summary.wht_credit.map(|v| -v))),
-        ("Net Tax Payable", naira(summary.net_tax_payable)),
-        ("Minimum Tax (1%)", naira(summary.minimum_tax)),
+        ("Gross Tax (Graduated Bands)", naira(summary.tax_payable)),
     ];
-    for (label, value) in rows {
+    if summary.minimum_tax.unwrap_or(0.0) > 0.0 {
+        rows.push(("Minimum Tax Floor", naira(summary.minimum_tax)));
+    }
+    rows.push(("Less: WHT Credits", naira(summary.wht_credit.map(|v| -v))));
+    if summary.paye_credit.unwrap_or(0.0) > 0.0 {
+        rows.push(("Less: PAYE Credits", naira(summary.paye_credit.map(|v| -v))));
+    }
+    if summary.foreign_tax_credit.unwrap_or(0.0) > 0.0 {
+        rows.push((
+            "Less: Foreign Tax Credits",
+            naira(summary.foreign_tax_credit.map(|v| -v)),
+        ));
+    }
+    rows.push(("Net Tax Payable", naira(summary.net_tax_payable)));
+    for (label, value) in &rows {
         layer.use_text(*label, 9.0, left, y, &font);
         layer.use_text(value.as_str(), 9.0, Mm(118.0), y, &font);
         y -= line_h;
@@ -1027,6 +1043,8 @@ pub fn export_filing_json_with_conn(
             "chargeableIncome": summary.chargeable_income,
             "taxPayable":       summary.tax_payable,
             "whtCredit":        summary.wht_credit,
+            "payeCredit":       summary.paye_credit,
+            "foreignTaxCredit": summary.foreign_tax_credit,
             "netTaxPayable":    summary.net_tax_payable,
             "minimumTax":       summary.minimum_tax,
             "finalTaxPayable":  summary.final_tax_payable,

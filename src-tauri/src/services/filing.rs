@@ -28,6 +28,8 @@ impl FilingService {
             chargeable_income: None,
             tax_payable: None,
             wht_credit: None,
+            paye_credit: None,
+            foreign_tax_credit: None,
             net_tax_payable: None,
             minimum_tax: None,
             final_tax_payable: None,
@@ -59,7 +61,8 @@ impl FilingService {
         let mut stmt = conn.prepare(
             "SELECT id, taxpayer_id, parent_filing_id, year_of_assessment, status, filing_reference, 
                     created_at, confirmed_at, total_income_ngn, chargeable_income, tax_payable, 
-                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id, submitted_at 
+                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id, submitted_at,
+                    paye_credit, foreign_tax_credit 
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC"
         )?;
 
@@ -89,6 +92,8 @@ impl FilingService {
                 chargeable_income: row.get(9)?,
                 tax_payable: row.get(10)?,
                 wht_credit: row.get(11)?,
+                paye_credit: row.get(18)?,
+                foreign_tax_credit: row.get(19)?,
                 net_tax_payable: row.get(12)?,
                 minimum_tax: row.get(13)?,
                 final_tax_payable: row.get(14)?,

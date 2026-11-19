@@ -11,8 +11,8 @@ import { queueDocument, flushDocuments } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
-type StandardRelief = 'pension' | 'nhis' | 'nhf' | 'life_assurance' | 'rent' | 'foreign_tax';
-type FieldKey = 'pension' | 'nhis' | 'nhf' | 'lifeAssurance' | 'annualRent' | 'foreignTaxPaid';
+type StandardRelief = 'pension' | 'nhis' | 'nhf' | 'life_assurance' | 'rent' | 'paye';
+type FieldKey = 'pension' | 'nhis' | 'nhf' | 'lifeAssurance' | 'annualRent' | 'paye';
 
 const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
   pension: 'pension',
@@ -20,7 +20,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
   nhf: 'nhf',
   life_assurance: 'lifeAssurance',
   rent: 'annualRent',
-  foreign_tax: 'foreignTaxPaid',
+  paye: 'paye',
 };
 
 @Component({
@@ -196,27 +196,27 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
         }
       </div>
 
-      <!-- Foreign tax paid (reference only) -->
+      <!-- PAYE already deducted -->
       <div class="card">
-        <h3 class="title-md" style="margin-bottom:var(--space-2)">Foreign Tax Paid <span class="badge badge--draft" style="font-size:10px;vertical-align:middle">Reference only</span></h3>
+        <h3 class="title-md" style="margin-bottom:var(--space-2)">PAYE Already Deducted</h3>
         <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
-          Tax deducted or paid in the country of source on foreign income. Recorded for reference only in v1 —
-          formal double-taxation treaty relief requires a tax advisor.
+          Pay-As-You-Earn (PAYE) income tax already deducted by your employer(s) during the year.
+          Credited directly against your computed tax payable. (Foreign tax paid is recorded per foreign income entry in Step 1.)
         </p>
         <div class="relief-row">
           <div class="relief-row__info">
-            <div class="relief-row__label">Foreign Tax Paid (₦ equivalent)<lf-help text="Convert the foreign tax paid to Naira at the same rate used for the income entry. Attach the foreign tax certificate or withholding notice as a supporting document."></lf-help></div>
-            <div class="relief-row__sub">Attach supporting documentation below</div>
+            <div class="relief-row__label">Total PAYE Deducted (₦)<lf-help text="Total PAYE withheld by your employer(s) for this income year, as shown on your payslips or tax deduction card. Directly reduces your tax payable."></lf-help></div>
+            <div class="relief-row__sub">Attach employer PAYE tax deduction card or payslip summary below</div>
           </div>
           <div class="relief-row__input">
-            <input type="number" class="form-input" [(ngModel)]="fields.foreignTaxPaid"
-              name="foreignTaxPaid" min="0" placeholder="₦ 0.00" />
+            <input type="number" class="form-input" [(ngModel)]="fields.paye"
+              name="paye" min="0" placeholder="₦ 0.00" />
           </div>
         </div>
-        @if (fields.foreignTaxPaid > 0) {
+        @if (fields.paye > 0) {
           <div class="relief-docs">
-            <lf-file-dropzone [compact]="true" label="Attach foreign tax certificate" (fileSelected)="onFileSelected($event, standard.foreign_tax)" />
-            @for (doc of standard.foreign_tax.documents; track doc.id) {
+            <lf-file-dropzone [compact]="true" label="Attach PAYE tax deduction card" (fileSelected)="onFileSelected($event, standard.paye)" />
+            @for (doc of standard.paye.documents; track doc.id) {
               <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
             }
           </div>
@@ -311,7 +311,7 @@ export class StepDeductionsComponent implements OnInit {
   private configService = inject(ConfigService);
   private toast = inject(ToastService);
 
-  fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, foreignTaxPaid: 0 };
+  fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, paye: 0 };
   standard = {} as Record<StandardRelief, ReliefEntry>;
   whtEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);

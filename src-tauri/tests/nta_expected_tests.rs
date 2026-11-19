@@ -373,3 +373,189 @@ fn test_s9_untouched_seed_upgrades_to_nta_2025_and_picks_config_by_income_year()
     let cfg_2026 = ConfigService::get_for_income_year(&conn, 2026).unwrap();
     assert_eq!(cfg_2026.id.to_string(), NTA_2025_CONFIG_ID);
 }
+
+#[test]
+fn test_s11_paye_and_per_entry_foreign_tax_credits() {
+    let cfg = nta_2025_config(0.0);
+
+    // 1. PAYE partly covering tax: ₦5m salary -> ₦690,000 tax, ₦400,000 PAYE -> ₦290,000 due
+    let r_part = ComputationEngine::compute(
+        &[employment_entry(5_000_000.0)],
+        &[],
+        &[relief("paye", 400_000.0)],
+        &cfg,
+    )
+    .unwrap();
+    assert_ngn_eq(r_part.paye_credits, 400_000.0, "partial PAYE credit");
+    assert_ngn_eq(r_part.final_tax_payable, 290_000.0, "partial PAYE net tax");
+
+    // 2. PAYE fully / over covering tax -> floored at ₦0
+    let r_full = ComputationEngine::compute(
+        &[employment_entry(5_000_000.0)],
+        &[],
+        &[relief("paye", 800_000.0)],
+        &cfg,
+    )
+    .unwrap();
+    assert_ngn_eq(r_full.paye_credits, 800_000.0, "full PAYE credit");
+    assert_ngn_eq(r_full.final_tax_payable, 0.0, "excess PAYE floors at zero");
+
+    // 3. Mixed domestic (₦10m) + foreign (₦2m) = ₦12m total -> ₦1,950,000 graduated tax.
+    // Foreign tax paid = ₦500,000. Whole-return credit would give ₦500k (₦1,450,000 due);
+    // per-income limit is 1,950,000 * (2m / 12m) = ₦325,000 -> ₦1,625,000 due.
+    let domestic = employment_entry(10_000_000.0);
+    let foreign = IncomeEntry {
+        income_type: "business".to_string(),
+        gross_amount_ngn: 2_000_000.0,
+        is_foreign: true,
+        foreign_tax_paid_ngn: Some(500_000.0),
+        ..Default::default()
+    };
+    let r_mixed = ComputationEngine::compute(&[domestic, foreign], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(r_mixed.graduated_tax, 1_950_000.0, "mixed gross tax");
+    assert_ngn_eq(r_mixed.foreign_tax_credits, 325_000.0, "per-entry FTC cap");
+    assert_ngn_eq(r_mixed.final_tax_payable, 1_625_000.0, "mixed final tax");
+
+    // 4. Combined WHT + PAYE + FTC exceeding tax floors at ₦0
+    let r_floor = ComputationEngine::compute(
+        &[
+            employment_entry(4_000_000.0),
+            IncomeEntry {
+                income_type: "business".to_string(),
+                gross_amount_ngn: 1_000_000.0,
+                is_foreign: true,
+                foreign_tax_paid_ngn: Some(100_000.0),
+                ..Default::default()
+            },
+        ],
+        &[],
+        &[relief("wht", 400_000.0), relief("paye", 400_000.0)],
+        &cfg,
+    )
+    .unwrap();
+    assert_ngn_eq(r_floor.final_tax_payable, 0.0, "combined credits floor at zero");
+}
+
+#[test]
+fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            export::{export_filing_json_with_conn, export_filing_pdf_in_dir},
+            filing::{
+                confirm_filing_with_conn, copy_entries_to_next_year,
+                upsert_income_entry_with_conn, upsert_relief_entry_with_conn,
+            },
+        },
+        services::{filing::FilingService, profile::ProfileService},
+        AppState,
+    };
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s11-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let filing_id = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let tp = ProfileService::create(
+            db,
+            json!({ "fullName": "Bola Ade", "tin": "1234567890" }),
+        )
+        .unwrap();
+        let f1 = FilingService::create_draft(db, tp.id, 2024, "NTA 2025").unwrap();
+        let f2 = FilingService::create_draft(db, tp.id, 2025, "NTA 2025").unwrap();
+        let fid1 = f1.id.to_string();
+        let fid2 = f2.id.to_string();
+
+        let conn = db.conn.lock().unwrap();
+        // ₦10m domestic + ₦2m foreign (₦500k foreign tax -> ₦325k FTC), ₦200k WHT, ₦300k PAYE, ₦0 pension
+        upsert_income_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid1, "incomeType": "employment", "grossAmountNgn": 10_000_000.0 }),
+        )
+        .unwrap();
+        upsert_income_entry_with_conn(
+            &conn,
+            &json!({
+                "filingId": fid1, "incomeType": "business", "grossAmountNgn": 2_000_000.0,
+                "isForeign": true, "foreignTaxPaidNgn": 500_000.0
+            }),
+        )
+        .unwrap();
+        upsert_relief_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid1, "reliefType": "wht", "claimedAmount": 200_000.0, "approvedAmount": 200_000.0 }),
+        )
+        .unwrap();
+        upsert_relief_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid1, "reliefType": "paye", "claimedAmount": 300_000.0, "approvedAmount": 300_000.0 }),
+        )
+        .unwrap();
+        upsert_relief_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid1, "reliefType": "pension", "claimedAmount": 0.0, "approvedAmount": 0.0 }),
+        )
+        .unwrap();
+
+        // Copy to next year: must NULL foreign_tax_paid_ngn and drop wht/paye/foreign_tax reliefs
+        copy_entries_to_next_year(&conn, &fid1, &fid2).unwrap();
+        let copied_ft_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE filing_id=?1 AND foreign_tax_paid_ngn IS NOT NULL",
+                rusqlite::params![fid2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copied_ft_count, 0, "foreign_tax_paid_ngn must be NULL after copy");
+        let copied_credit_reliefs: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1 AND relief_type IN ('wht','paye','foreign_tax')",
+                rusqlite::params![fid2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(copied_credit_reliefs, 0, "credit reliefs must not be copied to next year");
+
+        // Confirm f1: 1,950,000 - 200,000 WHT - 300,000 PAYE - 325,000 FTC = 1,125,000
+        let confirmed = confirm_filing_with_conn(&conn, &fid1).unwrap();
+        assert_eq!(confirmed.tax_payable, Some(1_950_000.0));
+        assert_eq!(confirmed.wht_credit, Some(200_000.0));
+        assert_eq!(confirmed.paye_credit, Some(300_000.0));
+        assert_eq!(confirmed.foreign_tax_credit, Some(325_000.0));
+        assert_eq!(confirmed.final_tax_payable, Some(1_125_000.0));
+
+        // JSON export matches exact arithmetic
+        let json_path = dir.join("s11.json");
+        export_filing_json_with_conn(&conn, &fid1, json_path.to_str().unwrap()).unwrap();
+        let exported: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(exported["filing"]["taxPayable"].as_f64(), Some(1_950_000.0));
+        assert_eq!(exported["filing"]["whtCredit"].as_f64(), Some(200_000.0));
+        assert_eq!(exported["filing"]["payeCredit"].as_f64(), Some(300_000.0));
+        assert_eq!(exported["filing"]["foreignTaxCredit"].as_f64(), Some(325_000.0));
+        assert_eq!(exported["filing"]["finalTaxPayable"].as_f64(), Some(1_125_000.0));
+        fid1
+    };
+
+    // PDF export renders all credits and final tax payable cleanly
+    let pdf_path = dir.join("s11.pdf");
+    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
+        .unwrap();
+    let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+    let text: String = pdf_doc
+        .get_pages()
+        .keys()
+        .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("1,950,000.00"), "PDF missing gross tax: {text}");
+    assert!(text.contains("200,000.00"), "PDF missing WHT credit: {text}");
+    assert!(text.contains("300,000.00"), "PDF missing PAYE credit: {text}");
+    assert!(text.contains("325,000.00"), "PDF missing FTC: {text}");
+    assert!(text.contains("1,125,000.00"), "PDF missing final tax: {text}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

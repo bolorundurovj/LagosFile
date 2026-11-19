@@ -330,6 +330,18 @@ interface FilingRowAction {
                 <span>Less: WHT Credits</span>
                 <span class="financial-value">{{ previewFiling()!.whtCredit | naira }}</span>
               </div>
+              @if ((previewFiling()!.payeCredit ?? 0) > 0) {
+                <div class="breakdown-row breakdown-row--deduct">
+                  <span>Less: PAYE Credits</span>
+                  <span class="financial-value">{{ previewFiling()!.payeCredit | naira }}</span>
+                </div>
+              }
+              @if ((previewFiling()!.foreignTaxCredit ?? 0) > 0) {
+                <div class="breakdown-row breakdown-row--deduct">
+                  <span>Less: Foreign Tax Credits</span>
+                  <span class="financial-value">{{ previewFiling()!.foreignTaxCredit | naira }}</span>
+                </div>
+              }
               <div class="breakdown-row breakdown-row--subtotal">
                 <span>Net Tax Payable</span>
                 <span class="financial-value">{{ previewFiling()!.netTaxPayable | naira }}</span>

@@ -71,6 +71,8 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
         chargeable_income: row.get(9)?,
         tax_payable: row.get(10)?,
         wht_credit: row.get(11)?,
+        paye_credit: row.get(21)?,
+        foreign_tax_credit: row.get(22)?,
         net_tax_payable: row.get(12)?,
         minimum_tax: row.get(13)?,
         final_tax_payable: row.get(14)?,
@@ -94,7 +96,8 @@ const FILING_SELECT_COLS: &str = "id,taxpayer_id,parent_filing_id,year_of_assess
                     filing_reference,created_at,confirmed_at,total_income_ngn,
                     chargeable_income,tax_payable,wht_credit,net_tax_payable,
                     minimum_tax,final_tax_payable,tax_config_version,
-                    payment_date,payment_reference,amount_paid,tax_config_id,submitted_at";
+                    payment_date,payment_reference,amount_paid,tax_config_id,submitted_at,
+                    paye_credit,foreign_tax_credit";
 
 pub fn get_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<Filing, String> {
     conn.query_row(
@@ -301,8 +304,9 @@ pub fn confirm_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result
     conn.execute(
         "UPDATE filing SET status='Confirmed',confirmed_at=?1,filing_reference=?2,
          total_income_ngn=?3,chargeable_income=?4,tax_payable=?5,
-         net_tax_payable=?6,minimum_tax=?7,final_tax_payable=?8,wht_credit=?9
-         WHERE id=?10",
+         net_tax_payable=?6,minimum_tax=?7,final_tax_payable=?8,wht_credit=?9,
+         paye_credit=?10,foreign_tax_credit=?11
+         WHERE id=?12",
         params![
             now.to_rfc3339(),
             filing_ref,
@@ -313,6 +317,8 @@ pub fn confirm_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result
             computed.minimum_tax,
             computed.final_tax_payable,
             computed.wht_credits,
+            computed.paye_credits,
+            computed.foreign_tax_credits,
             id,
         ],
     )
@@ -452,7 +458,7 @@ pub fn copy_entries_to_next_year(
          fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain)
          SELECT {SQL_UUID},?1,income_type,description,gross_amount_ngn,is_foreign,
          foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-         fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain
+         fx_rate_used,fx_rate_source,NULL,is_cgt_exempt,cgt_proceeds,cgt_gain
          FROM income_entry WHERE filing_id=?2"),
         params![to_id, from_id],
     )?;
@@ -478,13 +484,13 @@ pub fn copy_entries_to_next_year(
         params![to_id, from_id],
     )?;
 
-    // copy recurring reliefs; WHT credits and foreign tax are tied to the
-    // prior year's certificates and must not be re-claimed in the new filing.
+    // copy recurring reliefs; WHT, PAYE and foreign tax credits are tied to the
+    // prior year's deductions/certificates and must not be re-claimed in the new filing.
     conn.execute(
         &format!("INSERT INTO relief_entry
            (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description)
          SELECT {SQL_UUID},?1,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description
-         FROM relief_entry WHERE filing_id=?2 AND relief_type NOT IN ('wht','foreign_tax')"),
+         FROM relief_entry WHERE filing_id=?2 AND relief_type NOT IN ('wht','foreign_tax','paye')"),
         params![to_id, from_id],
     )?;
     Ok(())
