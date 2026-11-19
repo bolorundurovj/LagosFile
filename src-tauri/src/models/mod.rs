@@ -284,6 +284,16 @@ pub struct PendingFilingForeignIncome {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct PendingFilingForeignCurrencySummary {
+    pub currency: String,
+    pub total_amount: f64,
+    pub fx_rate_used: f64,
+    pub fx_rate_source: String,
+    pub naira_equivalent: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingFilingIncome {
     pub employment: f64,
     #[serde(rename = "benefitsInKind")]
@@ -300,6 +310,8 @@ pub struct PendingFilingIncome {
     pub prize: f64,
     pub other: f64,
     pub foreign_income: PendingFilingForeignIncome,
+    #[serde(default)]
+    pub foreign_incomes: Vec<PendingFilingForeignCurrencySummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -324,6 +336,8 @@ pub struct PendingFilingDeductions {
     pub life_assurance: f64,
     #[serde(rename = "rentReliefApplied")]
     pub rent_relief_applied: f64,
+    #[serde(default, rename = "otherApproved")]
+    pub other_approved: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -339,6 +353,10 @@ pub struct PendingFilingComputation {
     pub graduated_tax: f64,
     #[serde(rename = "whtCredits")]
     pub wht_credits: f64,
+    #[serde(default, rename = "payeCredits")]
+    pub paye_credits: f64,
+    #[serde(default, rename = "foreignTaxCredits")]
+    pub foreign_tax_credits: f64,
     #[serde(rename = "netTaxPayable")]
     pub net_tax_payable: f64,
     #[serde(rename = "minimumTax")]
@@ -347,6 +365,21 @@ pub struct PendingFilingComputation {
     pub final_tax_payable: f64,
     #[serde(rename = "configVersion")]
     pub config_version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedPendingFiling {
+    pub filing_id: String,
+    pub year_of_assessment: i32,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingBatch {
+    pub filings: Vec<PendingFiling>,
+    pub failures: Vec<FailedPendingFiling>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -375,4 +408,6 @@ pub struct LIRSAutomationResult {
     pub message: String,
     pub pending_filing_path: Option<String>,
     pub filing_id: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }

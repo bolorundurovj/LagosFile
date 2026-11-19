@@ -314,3 +314,241 @@ fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_i
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_s23_landlord_tenant_foreign_currencies_bik_paye_ftc_and_batch_partial_failure() {
+    use lagosfile_lib::{
+        commands::filing::{
+            confirm_filing_with_conn, create_draft_filing_with_conn, upsert_income_entry_with_conn,
+            upsert_relief_entry_with_conn,
+        },
+        db::AppDb,
+        services::profile::ProfileService,
+    };
+    use serde_json::json;
+
+    let db = AppDb::open_in_memory().unwrap();
+    ProfileService::create(
+        &db,
+        json!({ "fullName": "Chidi Okeke", "tin": "1234567890123" }),
+    )
+    .unwrap();
+    let conn = db.conn.lock().unwrap();
+
+    // 1. Landlord (2023): rental income ₦3m, NO rent relief -> owner, rent_paid = 0
+    let landlord_draft = create_draft_filing_with_conn(&conn, 2023).unwrap();
+    let landlord_id = landlord_draft.id.to_string();
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": landlord_id,
+            "incomeType": "rental",
+            "description": "Lekki flat rent income",
+            "grossAmountNgn": 3_000_000.0
+        }),
+    )
+    .unwrap();
+    confirm_filing_with_conn(&conn, &landlord_id).unwrap();
+
+    let landlord_payload = lirs::build_pending_filing(&conn, &landlord_id).unwrap();
+    assert!((landlord_payload.income.rental - 3_000_000.0).abs() < 0.01);
+    assert_eq!(landlord_payload.accommodation.acc_type, "owner");
+    assert_eq!(landlord_payload.accommodation.ownership, "owner");
+    assert_eq!(landlord_payload.accommodation.rent_paid, 0.0);
+
+    // 2. Tenant (2024) with rent relief, capped pension, other_approved, BIK, PAYE, FTC, and 2 foreign currencies
+    // Add a pension cap on the active config so we verify capped approved values in payload
+    let active_cfg_id: String = conn
+        .query_row("SELECT id FROM tax_config WHERE is_active = 1 LIMIT 1", [], |r| r.get(0))
+        .unwrap();
+    conn.execute(
+        "UPDATE tax_config SET relief_caps_json = ?1 WHERE id = ?2",
+        rusqlite::params![
+            r#"{"rentReliefCap":500000,"rentReliefRate":0.20,"pensionCap":300000}"#,
+            active_cfg_id
+        ],
+    )
+    .unwrap();
+
+    let tenant_draft = create_draft_filing_with_conn(&conn, 2024).unwrap();
+    let tenant_id = tenant_draft.id.to_string();
+    // Pin this filing to the config with pensionCap=300k
+    conn.execute(
+        "UPDATE filing SET tax_config_id = ?1 WHERE id = ?2",
+        rusqlite::params![active_cfg_id, tenant_id],
+    )
+    .unwrap();
+
+    // Employment ₦10m
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "incomeType": "employment",
+            "grossAmountNgn": 10_000_000.0
+        }),
+    )
+    .unwrap();
+    // BIK: employer-provided accommodation annual rental value ₦2.5m (capped at 20% of 10m = ₦2m)
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "incomeType": "benefits_in_kind",
+            "bikCategory": "accommodation",
+            "bikCost": 2_500_000.0,
+            "grossAmountNgn": 2_000_000.0
+        }),
+    )
+    .unwrap();
+    // Two GBP foreign entries + one EUR foreign entry (with foreign tax paid)
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "incomeType": "business",
+            "grossAmountNgn": 2_000_000.0,
+            "isForeign": true,
+            "foreignCurrency": "GBP",
+            "foreignAmount": 1_000.0,
+            "fxRateUsed": 2_000.0,
+            "fxRateSource": "fawazahmed0",
+            "foreignTaxPaidNgn": 100_000.0
+        }),
+    )
+    .unwrap();
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "incomeType": "business",
+            "grossAmountNgn": 4_200_000.0,
+            "isForeign": true,
+            "foreignCurrency": "GBP",
+            "foreignAmount": 2_000.0,
+            "fxRateUsed": 2_100.0,
+            "fxRateSource": "cbn_override"
+        }),
+    )
+    .unwrap();
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "incomeType": "royalty",
+            "grossAmountNgn": 1_800_000.0,
+            "isForeign": true,
+            "foreignCurrency": "EUR",
+            "foreignAmount": 1_000.0,
+            "fxRateUsed": 1_800.0,
+            "fxRateSource": "fawazahmed0"
+        }),
+    )
+    .unwrap();
+
+    // Reliefs: Rent ₦4m (relief capped at ₦500k), Pension claimed ₦600k / approved ₦500k (capped at ₦300k),
+    // Other Approved ₦250k, PAYE ₦180k
+    upsert_relief_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "reliefType": "rent",
+            "claimedAmount": 4_000_000.0,
+            "approvedAmount": 4_000_000.0
+        }),
+    )
+    .unwrap();
+    upsert_relief_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "reliefType": "pension",
+            "claimedAmount": 600_000.0,
+            "approvedAmount": 500_000.0
+        }),
+    )
+    .unwrap();
+    upsert_relief_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "reliefType": "other_approved",
+            "claimedAmount": 250_000.0,
+            "approvedAmount": 250_000.0
+        }),
+    )
+    .unwrap();
+    upsert_relief_entry_with_conn(
+        &conn,
+        &json!({
+            "filingId": tenant_id,
+            "reliefType": "paye",
+            "claimedAmount": 180_000.0,
+            "approvedAmount": 180_000.0
+        }),
+    )
+    .unwrap();
+    confirm_filing_with_conn(&conn, &tenant_id).unwrap();
+
+    let tenant_payload = lirs::build_pending_filing(&conn, &tenant_id).unwrap();
+    // Accommodation derived from rent relief + employer BIK accommodation
+    assert_eq!(tenant_payload.accommodation.acc_type, "rent");
+    assert_eq!(tenant_payload.accommodation.ownership, "tenant");
+    assert!((tenant_payload.accommodation.rent_paid - 4_000_000.0).abs() < 0.01);
+    assert!((tenant_payload.accommodation.rent_paid_by_employer - 2_500_000.0).abs() < 0.01);
+
+    // Deductions use approved & capped values
+    assert!((tenant_payload.deductions.rent_relief_applied - 500_000.0).abs() < 0.01);
+    assert!((tenant_payload.deductions.pension - 300_000.0).abs() < 0.01);
+    assert!((tenant_payload.deductions.other_approved - 250_000.0).abs() < 0.01);
+
+    // BIK, PAYE, FTC populated
+    assert!((tenant_payload.income.benefits_in_kind - 2_000_000.0).abs() < 0.01);
+    assert!((tenant_payload.computation.paye_credits - 180_000.0).abs() < 0.01);
+    assert!((tenant_payload.computation.foreign_tax_credits - 100_000.0).abs() < 0.01);
+
+    // Foreign currencies summed per currency with real currency codes
+    assert_eq!(tenant_payload.income.foreign_incomes.len(), 2);
+    let eur = tenant_payload
+        .income
+        .foreign_incomes
+        .iter()
+        .find(|f| f.currency == "EUR")
+        .expect("EUR summary present");
+    assert!((eur.total_amount - 1_000.0).abs() < 0.01);
+    assert!((eur.naira_equivalent - 1_800_000.0).abs() < 0.01);
+
+    let gbp = tenant_payload
+        .income
+        .foreign_incomes
+        .iter()
+        .find(|f| f.currency == "GBP")
+        .expect("GBP summary present");
+    assert!((gbp.total_amount - 3_000.0).abs() < 0.01);
+    assert!((gbp.naira_equivalent - 6_200_000.0).abs() < 0.01);
+    assert!((gbp.fx_rate_used - (6_200_000.0 / 3_000.0)).abs() < 0.01);
+    // Primary foreign_income uses real currency code GBP (largest NGN equivalent), not hardcoded USD
+    assert_eq!(tenant_payload.income.foreign_income.currency, "GBP");
+    assert!((tenant_payload.income.foreign_income.naira_equivalent - 6_200_000.0).abs() < 0.01);
+
+    // 3. Batch with one valid filing and one failing filing reports the failure instead of dropping it
+    // Break landlord filing's taxpayer_id so build_pending_filing fails for landlord while tenant succeeds
+    conn.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+    conn.execute(
+        "UPDATE filing SET taxpayer_id = '00000000-0000-0000-0000-000000000099' WHERE id = ?1",
+        rusqlite::params![landlord_id],
+    )
+    .unwrap();
+    conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
+    let batch = lirs::build_all_pending_filings_detailed(&conn).unwrap();
+    assert_eq!(batch.filings.len(), 1);
+    assert_eq!(batch.filings[0].filing_id, tenant_id);
+    assert_eq!(batch.failures.len(), 1);
+    assert_eq!(batch.failures[0].filing_id, landlord_id);
+    assert_eq!(batch.failures[0].year_of_assessment, 2023);
+    assert!(
+        batch.failures[0].error.contains("Taxpayer not found"),
+        "expected failure reason, got: {}",
+        batch.failures[0].error
+    );
+}

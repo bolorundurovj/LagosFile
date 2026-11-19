@@ -9,6 +9,7 @@ use crate::{
 use chrono::Utc;
 use rusqlite::params;
 use std::{
+    collections::BTreeMap,
     io::{Read, Write},
     net::TcpListener,
     sync::{
@@ -188,6 +189,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
 
     let mut employment = 0.0_f64;
     let mut benefits_in_kind = 0.0_f64;
+    let mut rent_paid_by_employer = 0.0_f64;
     let mut business = 0.0_f64;
     let mut rental = 0.0_f64;
     let mut dividend = 0.0_f64;
@@ -197,15 +199,23 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let mut royalty = 0.0_f64;
     let mut prize = 0.0_f64;
     let mut other = 0.0_f64;
-    let mut foreign_total_usd = 0.0_f64;
-    let mut foreign_naira = 0.0_f64;
-    let mut foreign_rate = 0.0_f64;
-    let mut foreign_source = String::new();
+
+    struct ForeignAcc {
+        total_amount: f64,
+        naira_equivalent: f64,
+        last_rate: f64,
+        sources: Vec<String>,
+    }
+    let mut foreign_by_currency: BTreeMap<String, ForeignAcc> = BTreeMap::new();
 
     for entry in &income_entries {
         match entry.income_type.as_str() {
             "employment" => employment += entry.gross_amount_ngn,
             "benefits_in_kind" => {
+                if entry.bik_category.as_deref() == Some("accommodation") {
+                    rent_paid_by_employer +=
+                        entry.bik_cost.unwrap_or(entry.gross_amount_ngn).max(0.0);
+                }
                 let val = match (entry.bik_category.as_deref(), entry.bik_cost) {
                     (Some("accommodation"), Some(cost)) => {
                         let capped = cost.max(0.0).min(remaining_accommodation_cap);
@@ -230,41 +240,74 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             _ => other += entry.gross_amount_ngn,
         }
         if entry.is_foreign {
-            foreign_total_usd += entry.foreign_amount.unwrap_or(0.0);
-            if let (Some(r), Some(ref s)) = (entry.fx_rate_used, &entry.fx_rate_source) {
-                foreign_naira = r * entry.foreign_amount.unwrap_or(0.0);
-                foreign_rate = r;
-                foreign_source = s.clone();
+            let curr = entry
+                .foreign_currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("USD")
+                .to_uppercase();
+            let amt = entry.foreign_amount.unwrap_or(0.0).max(0.0);
+            let ngn = if entry.gross_amount_ngn > 0.0 {
+                entry.gross_amount_ngn
+            } else {
+                entry.fx_rate_used.unwrap_or(0.0) * amt
+            };
+            let acc = foreign_by_currency.entry(curr).or_insert(ForeignAcc {
+                total_amount: 0.0,
+                naira_equivalent: 0.0,
+                last_rate: 0.0,
+                sources: Vec::new(),
+            });
+            acc.total_amount += amt;
+            acc.naira_equivalent += ngn;
+            if let Some(r) = entry.fx_rate_used {
+                acc.last_rate = r;
+            }
+            if let Some(ref s) = entry.fx_rate_source {
+                let s_trim = s.trim();
+                if !s_trim.is_empty() && !acc.sources.iter().any(|existing| existing == s_trim) {
+                    acc.sources.push(s_trim.to_string());
+                }
             }
         }
     }
 
-    let mut re_stmt = conn
-        .prepare("SELECT relief_type,claimed_amount FROM relief_entry WHERE filing_id=?1")
-        .map_err(|e| e.to_string())?;
-
-    let mut pension = 0.0_f64;
-    let mut nhf = 0.0_f64;
-    let mut nhis = 0.0_f64;
-    let mut life_assurance = 0.0_f64;
-    let mut rent_relief_applied = 0.0_f64;
-
-    let relief_rows: Vec<(String, f64)> = re_stmt
-        .query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+    let foreign_incomes: Vec<PendingFilingForeignCurrencySummary> = foreign_by_currency
+        .into_iter()
+        .map(|(currency, acc)| {
+            let fx_rate_used = if acc.total_amount > 0.0 {
+                acc.naira_equivalent / acc.total_amount
+            } else {
+                acc.last_rate
+            };
+            PendingFilingForeignCurrencySummary {
+                currency,
+                total_amount: acc.total_amount,
+                fx_rate_used,
+                fx_rate_source: acc.sources.join(", "),
+                naira_equivalent: acc.naira_equivalent,
+            }
+        })
         .collect();
 
-    for (r_type, amt) in &relief_rows {
-        match r_type.as_str() {
-            "pension" => pension += amt,
-            "nhf" => nhf += amt,
-            "nhis" => nhis += amt,
-            "life_assurance" => life_assurance += amt,
-            "rent" => rent_relief_applied += amt,
-            _ => {}
-        }
-    }
+    let primary_foreign = foreign_incomes
+        .iter()
+        .max_by(|a, b| a.naira_equivalent.total_cmp(&b.naira_equivalent))
+        .map(|f| PendingFilingForeignIncome {
+            total_usd: f.total_amount,
+            currency: f.currency.clone(),
+            fx_rate_used: f.fx_rate_used,
+            fx_rate_source: f.fx_rate_source.clone(),
+            naira_equivalent: f.naira_equivalent,
+        })
+        .unwrap_or(PendingFilingForeignIncome {
+            total_usd: 0.0,
+            currency: String::new(),
+            fx_rate_used: 0.0,
+            fx_rate_source: String::new(),
+            naira_equivalent: 0.0,
+        });
 
     let mut ca_stmt = conn
         .prepare(
@@ -331,6 +374,48 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let computation = ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())?;
 
+    let mut pension_raw = 0.0_f64;
+    let mut nhf_raw = 0.0_f64;
+    let mut nhis_raw = 0.0_f64;
+    let mut life_assurance = 0.0_f64;
+    let mut other_approved = 0.0_f64;
+    let mut rent_paid = 0.0_f64;
+
+    for r in &reliefs {
+        let approved = r.approved_amount.max(0.0);
+        match r.relief_type.as_str() {
+            "pension" => pension_raw += approved,
+            "nhf" => nhf_raw += approved,
+            "nhis" => nhis_raw += approved,
+            "life_assurance" => life_assurance += approved,
+            "other_approved" => other_approved += approved,
+            "rent" => {
+                rent_paid += if approved > 0.0 {
+                    approved
+                } else {
+                    r.claimed_amount.max(0.0)
+                };
+            }
+            _ => {}
+        }
+    }
+
+    let apply_cap = |v: f64, cap: Option<f64>| match cap {
+        Some(limit) => v.min(limit),
+        None => v,
+    };
+    let pension = apply_cap(pension_raw, config.relief_caps.pension_cap);
+    let nhf = apply_cap(nhf_raw, config.relief_caps.nhf_cap);
+    let nhis = apply_cap(nhis_raw, config.relief_caps.nhis_cap);
+
+    let (acc_type, ownership) = if rent_paid > 0.0 {
+        ("rent".to_string(), "tenant".to_string())
+    } else if rent_paid_by_employer > 0.0 {
+        ("employer_provided".to_string(), "tenant".to_string())
+    } else {
+        ("owner".to_string(), "owner".to_string())
+    };
+
     let income_year = filing.year_of_assessment;
     let lirs_yoa = income_year + 1;
 
@@ -355,31 +440,14 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             royalty,
             prize,
             other,
-            foreign_income: PendingFilingForeignIncome {
-                total_usd: foreign_total_usd,
-                currency: if foreign_total_usd > 0.0 {
-                    "USD".to_string()
-                } else {
-                    String::new()
-                },
-                fx_rate_used: foreign_rate,
-                fx_rate_source: foreign_source,
-                naira_equivalent: foreign_naira,
-            },
+            foreign_income: primary_foreign,
+            foreign_incomes,
         },
         accommodation: PendingFilingAccommodation {
-            acc_type: if rental > 0.0 {
-                "rent".to_string()
-            } else {
-                "owner".to_string()
-            },
-            ownership: if rental > 0.0 {
-                "tenant".to_string()
-            } else {
-                "owner".to_string()
-            },
-            rent_paid: rental,
-            rent_paid_by_employer: 0.0,
+            acc_type,
+            ownership,
+            rent_paid,
+            rent_paid_by_employer,
             date_started: format!("{}-01-01", income_year),
             date_end: format!("{}-12-31", income_year),
         },
@@ -388,7 +456,8 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             nhf,
             nhis,
             life_assurance,
-            rent_relief_applied,
+            rent_relief_applied: computation.rent_relief_applied,
+            other_approved,
         },
         computation: PendingFilingComputation {
             total_gross_income: computation.total_gross_income,
@@ -396,6 +465,8 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             chargeable_income: computation.chargeable_income,
             graduated_tax: computation.graduated_tax,
             wht_credits: computation.wht_credits,
+            paye_credits: computation.paye_credits,
+            foreign_tax_credits: computation.foreign_tax_credits,
             net_tax_payable: computation.net_tax_payable,
             minimum_tax: computation.minimum_tax,
             final_tax_payable: computation.final_tax_payable,
@@ -610,16 +681,20 @@ pub fn start_bridge_on_port(
     Ok(bound_port)
 }
 
-pub fn build_all_pending_filings(conn: &rusqlite::Connection) -> Result<Vec<PendingFiling>, String> {
-    let ids: Vec<String> = conn
-        .prepare("SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC")
+pub fn build_all_pending_filings_detailed(
+    conn: &rusqlite::Connection,
+) -> Result<PendingFilingBatch, String> {
+    let rows: Vec<(String, i32)> = conn
+        .prepare(
+            "SELECT id, year_of_assessment FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
+        )
         .map_err(|e| e.to_string())?
-        .query_map([], |row| row.get(0))
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
 
-    if ids.is_empty() {
+    if rows.is_empty() {
         return Err(
             "No confirmed filings found. Confirm a filing before using the LIRS extension."
                 .to_string(),
@@ -627,26 +702,49 @@ pub fn build_all_pending_filings(conn: &rusqlite::Connection) -> Result<Vec<Pend
     }
 
     let mut filings = Vec::new();
-    let mut first_err: Option<String> = None;
-    for id in &ids {
-        match build_pending_filing(conn, id) {
+    let mut failures = Vec::new();
+    for (id, yoa) in rows {
+        match build_pending_filing(conn, &id) {
             Ok(f) => filings.push(f),
             Err(e) => {
-                if first_err.is_none() {
-                    first_err = Some(e);
-                }
+                log_automation_failure(&id, &e);
+                failures.push(FailedPendingFiling {
+                    filing_id: id,
+                    year_of_assessment: yoa,
+                    error: e,
+                });
             }
         }
     }
 
     if filings.is_empty() {
+        let reasons: Vec<String> = failures
+            .iter()
+            .map(|f| format!("{} ({}): {}", f.year_of_assessment, f.filing_id, f.error))
+            .collect();
         return Err(format!(
             "Could not build any confirmed filings for LIRS: {}",
-            first_err.unwrap_or_else(|| "unknown error".to_string())
+            reasons.join("; ")
         ));
     }
 
-    Ok(filings)
+    Ok(PendingFilingBatch { filings, failures })
+}
+
+pub fn build_all_pending_filings(conn: &rusqlite::Connection) -> Result<Vec<PendingFiling>, String> {
+    build_all_pending_filings_detailed(conn).map(|b| b.filings)
+}
+
+fn format_failure_warnings(failures: &[FailedPendingFiling]) -> Vec<String> {
+    failures
+        .iter()
+        .map(|f| {
+            format!(
+                "Filing {} (income year {}) skipped: {}",
+                f.filing_id, f.year_of_assessment, f.error
+            )
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -654,7 +752,7 @@ pub async fn open_lirs_portal(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<LIRSAutomationResult, String> {
-    let (primary, all_filings, filing_ref) = {
+    let (primary, all_filings, filing_ref, failures) = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -662,25 +760,38 @@ pub async fn open_lirs_portal(
         let primary = build_pending_filing(&conn, &id)?;
         let filing_ref = primary.filing_reference.clone();
 
-        let all_ids: Vec<String> = conn
+        let all_rows: Vec<(String, i32)> = conn
             .prepare(
-                "SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
+                "SELECT id, year_of_assessment FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
             )
             .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get(0))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
 
-        let mut all_filings: Vec<PendingFiling> = all_ids
-            .iter()
-            .filter(|fid| *fid != &id)
-            .filter_map(|fid| build_pending_filing(&conn, fid).ok())
-            .collect();
+        let mut all_filings: Vec<PendingFiling> = Vec::new();
+        let mut failures: Vec<FailedPendingFiling> = Vec::new();
+        for (fid, yoa) in all_rows {
+            if fid == id {
+                continue;
+            }
+            match build_pending_filing(&conn, &fid) {
+                Ok(f) => all_filings.push(f),
+                Err(e) => {
+                    log_automation_failure(&fid, &e);
+                    failures.push(FailedPendingFiling {
+                        filing_id: fid,
+                        year_of_assessment: yoa,
+                        error: e,
+                    });
+                }
+            }
+        }
 
         all_filings.insert(0, primary.clone());
 
-        (primary, all_filings, filing_ref)
+        (primary, all_filings, filing_ref, failures)
     };
 
     let data_dir = lirs_data_dir();
@@ -701,16 +812,27 @@ pub async fn open_lirs_portal(
         return Err(reason);
     }
 
+    let warnings = format_failure_warnings(&failures);
+    let mut message = format!(
+        "LIRS portal opened. {} filing(s) available in the extension. Reference: {}.",
+        all_filings.len(),
+        filing_ref.unwrap_or_else(|| "N/A".to_string())
+    );
+    if !warnings.is_empty() {
+        message.push_str(&format!(
+            " {} other confirmed filing(s) could not be prepared: {}",
+            warnings.len(),
+            warnings.join("; ")
+        ));
+    }
+
     Ok(LIRSAutomationResult {
         success: true,
         fallback_active: false,
-        message: format!(
-            "LIRS portal opened. {} filing(s) available in the extension. Reference: {}.",
-            all_filings.len(),
-            filing_ref.unwrap_or_else(|| "N/A".to_string())
-        ),
+        message,
         pending_filing_path: Some(path.to_string_lossy().to_string()),
         filing_id: id,
+        warnings,
     })
 }
 
@@ -718,16 +840,16 @@ pub async fn open_lirs_portal(
 pub async fn open_lirs_portal_all(
     state: State<'_, AppState>,
 ) -> Result<LIRSAutomationResult, String> {
-    let filings = {
+    let batch = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        build_all_pending_filings(&conn)?
+        build_all_pending_filings_detailed(&conn)?
     };
 
-    let count = filings.len();
-    let primary_json = serde_json::to_string(&filings[0]).map_err(|e| e.to_string())?;
-    let filings_json = serde_json::to_string(&filings).map_err(|e| e.to_string())?;
+    let count = batch.filings.len();
+    let primary_json = serde_json::to_string(&batch.filings[0]).map_err(|e| e.to_string())?;
+    let filings_json = serde_json::to_string(&batch.filings).map_err(|e| e.to_string())?;
 
     start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
@@ -738,11 +860,22 @@ pub async fn open_lirs_portal_all(
         return Err(reason);
     }
 
+    let warnings = format_failure_warnings(&batch.failures);
+    let mut message = format!("{} confirmed filing(s) ready in the LIRS extension.", count);
+    if !warnings.is_empty() {
+        message.push_str(&format!(
+            " {} filing(s) failed: {}",
+            warnings.len(),
+            warnings.join("; ")
+        ));
+    }
+
     Ok(LIRSAutomationResult {
         success: true,
         fallback_active: false,
-        message: format!("{} confirmed filing(s) ready in the LIRS extension.", count),
+        message,
         pending_filing_path: None,
         filing_id: String::new(),
+        warnings,
     })
 }
