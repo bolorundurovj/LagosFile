@@ -7,7 +7,7 @@ import { ReliefEntry, ReliefType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { ToastService } from '../../../../core/services/toast.service';
-import { queueDocument, flushDocuments } from '../pending-documents';
+import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
@@ -56,7 +56,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach PFA statement" (fileSelected)="onFileSelected($event, standard.pension)" />
             @for (doc of standard.pension.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.pension, doc.id)">×</button></span>
             }
           </div>
 
@@ -72,7 +72,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach NHIS receipt" (fileSelected)="onFileSelected($event, standard.nhis)" />
             @for (doc of standard.nhis.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.nhis, doc.id)">×</button></span>
             }
           </div>
 
@@ -88,7 +88,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach NHF statement" (fileSelected)="onFileSelected($event, standard.nhf)" />
             @for (doc of standard.nhf.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.nhf, doc.id)">×</button></span>
             }
           </div>
 
@@ -104,7 +104,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach policy or premium receipt" (fileSelected)="onFileSelected($event, standard.life_assurance)" />
             @for (doc of standard.life_assurance.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.life_assurance, doc.id)">×</button></span>
             }
           </div>
 
@@ -123,7 +123,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
             @for (doc of standard.rent.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.rent, doc.id)">×</button></span>
             }
           </div>
 
@@ -184,7 +184,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
             <div class="relief-docs">
               <lf-file-dropzone [compact]="true" label="Attach WHT certificate" (fileSelected)="onFileSelected($event, w)" />
               @for (doc of w.documents; track doc.id) {
-                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(w, doc.id)">×</button></span>
               }
             </div>
           </div>
@@ -219,7 +219,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach PAYE tax deduction card" (fileSelected)="onFileSelected($event, standard.paye)" />
             @for (doc of standard.paye.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.paye, doc.id)">×</button></span>
             }
           </div>
         }
@@ -248,7 +248,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs" style="margin-bottom:var(--space-4)">
             <lf-file-dropzone [compact]="true" label="Attach supporting document" (fileSelected)="onFileSelected($event, o)" />
             @for (doc of o.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(o, doc.id)">×</button></span>
             }
           </div>
         }
@@ -287,6 +287,11 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
       font-size: var(--text-label-sm); color: var(--color-on-surface-variant);
       padding: var(--space-1) var(--space-2);
     }
+    .doc-chip__remove {
+      background: none; border: none; color: inherit; cursor: pointer;
+      padding: 0 4px; font-size: 14px; line-height: 1; opacity: 0.7;
+    }
+    .doc-chip__remove:hover { opacity: 1; color: var(--color-error, #b91c1c); }
     .relief-callout {
       display: flex; align-items: center; gap: var(--space-3);
       padding: var(--space-3) var(--space-4);
@@ -417,6 +422,11 @@ export class StepDeductionsComponent implements OnInit {
   onFileSelected(file: DropzoneFile, entry: ReliefEntry): void {
     const error = queueDocument(entry, file, 'relief_entry');
     if (error) this.toast.error(error);
+  }
+
+  async onRemoveDocument(entry: ReliefEntry, docId: string): Promise<void> {
+    const error = await removeDocument(this.filingService, entry, docId);
+    if (error) this.toast.error('Could not remove document: ' + error);
   }
 
   async save(): Promise<boolean> {

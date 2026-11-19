@@ -49,6 +49,7 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
       'upsertIncomeEntry',
       'deleteIncomeEntry',
       'attachDocument',
+      'deleteDocument',
     ]);
     fxServiceSpy = jasmine.createSpyObj('FxService', ['resolveRate']);
     toastSpy = jasmine.createSpyObj('ToastService', ['error', 'success', 'info', 'warning']);
@@ -235,5 +236,37 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     const bikField = incomeGroup?.fields.find(f => f.label === 'Benefits-in-Kind');
     expect(bikField).toBeTruthy();
     expect(bikField?.copyText).toBe('2000000');
+  });
+
+  it('replaces temp doc id after save so removing an attachment in the same session deletes the real DB id', async () => {
+    filingServiceSpy.attachDocument.and.resolveTo({
+      id: 'real-db-doc-99',
+      fileName: 'payslip.pdf',
+      filePath: 'documents/e1/real_payslip.pdf.enc',
+      fileSizeBytes: 1234,
+    });
+    filingServiceSpy.deleteDocument.and.resolveTo();
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    comp.addEntry();
+    const entry = comp.entries()[0];
+    comp.onFileSelected(
+      { path: 'C:/tmp/payslip.pdf', name: 'payslip.pdf', type: 'pdf', size: 1234 },
+      entry,
+    );
+    expect(entry.documents.length).toBe(1);
+    const tempId = entry.documents[0].id;
+    expect(tempId).not.toBe('real-db-doc-99');
+
+    await comp.save();
+    expect(entry.documents[0].id).toBe('real-db-doc-99');
+
+    await comp.onRemoveDocument(entry, entry.documents[0].id);
+    expect(filingServiceSpy.deleteDocument).toHaveBeenCalledWith('real-db-doc-99');
+    expect(entry.documents.length).toBe(0);
   });
 });

@@ -6,7 +6,7 @@ import { ToastService } from '../../../../core/services/toast.service';
 import { CapitalAllowance, AssetType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
-import { queueDocument, flushDocuments } from '../pending-documents';
+import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
@@ -145,7 +145,10 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
               <label class="form-label" style="margin-bottom:var(--space-2)">Supporting Documents</label>
               <lf-file-dropzone label="Attach invoice or proof of purchase" (fileSelected)="onFileSelected($event, entry)" />
               @for (doc of entry.documents; track doc.id) {
-                <div class="doc-chip" style="display:flex;align-items:center;gap:4px"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</div>
+                <div class="doc-chip" style="display:flex;align-items:center;gap:4px">
+                  <lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}
+                  <button type="button" class="btn btn--ghost btn--sm" aria-label="Remove attachment" (click)="onRemoveDocument(entry, doc.id)">×</button>
+                </div>
               }
             </div>
           </div>
@@ -365,6 +368,11 @@ export class StepAllowancesComponent implements OnInit {
   onFileSelected(file: DropzoneFile, entry: CapitalAllowance): void {
     const error = queueDocument(entry, file, 'capital_allowance');
     if (error) this.toast.error(error);
+  }
+
+  async onRemoveDocument(entry: CapitalAllowance, docId: string): Promise<void> {
+    const error = await removeDocument(this.filingService, entry, docId);
+    if (error) this.toast.error('Could not remove document: ' + error);
   }
 
   readonly totalAllowance = () =>

@@ -419,14 +419,18 @@ pub async fn record_payment(
     get_filing(id, state).await
 }
 
-#[tauri::command]
-pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    {
+pub fn delete_filing_in_dir(
+    dir: &std::path::Path,
+    id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    let candidate_paths: Vec<String> = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
-        let status: String = conn
+        let status: String = tx
             .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
                 r.get(0)
             })
@@ -438,11 +442,57 @@ pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(),
             ));
         }
 
-        conn.execute("DELETE FROM filing WHERE id=?1", params![id])
+        let paths: Vec<String> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT file_path FROM document WHERE parent_entry_id IN (
+                         SELECT id FROM income_entry WHERE filing_id=?1
+                         UNION ALL
+                         SELECT id FROM capital_allowance WHERE filing_id=?1
+                         UNION ALL
+                         SELECT id FROM relief_entry WHERE filing_id=?1
+                     )",
+                )
+                .map_err(|e| e.to_string())?;
+            let collected = stmt
+                .query_map(params![id], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            collected
+        };
+
+        tx.execute(
+            "DELETE FROM document WHERE parent_entry_id IN (
+                 SELECT id FROM income_entry WHERE filing_id=?1
+                 UNION ALL
+                 SELECT id FROM capital_allowance WHERE filing_id=?1
+                 UNION ALL
+                 SELECT id FROM relief_entry WHERE filing_id=?1
+             )",
+            params![id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM filing WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        paths
+    };
+    crate::commands::auth::persist_db_in_dir(dir, state)?;
+
+    if !candidate_paths.is_empty() {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(dir, &conn, &candidate_paths);
+        }
     }
-    persist_db(&state).await?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    delete_filing_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
 /// Copies a filing's entries into a new draft for the following year: income,
@@ -905,22 +955,71 @@ pub async fn upsert_income_entry(
     Ok(serde_json::json!({ "id": id }))
 }
 
-pub fn delete_income_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
-    require_draft_for_entry_id(conn, "income_entry", id)?;
-    conn.execute("DELETE FROM income_entry WHERE id=?1", params![id])
+fn delete_entry_and_docs_tx(
+    conn: &rusqlite::Connection,
+    table: &str,
+    id: &str,
+) -> Result<Vec<String>, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    require_draft_for_entry_id(&tx, table, id)?;
+    let paths: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT file_path FROM document WHERE parent_entry_id=?1")
+            .map_err(|e| e.to_string())?;
+        let collected = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        collected
+    };
+    tx.execute("DELETE FROM document WHERE parent_entry_id=?1", params![id])
         .map_err(|e| e.to_string())?;
+    tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), params![id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(paths)
+}
+
+fn delete_entry_in_dir(
+    dir: &std::path::Path,
+    table: &str,
+    id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    let candidate_paths = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        delete_entry_and_docs_tx(&conn, table, id)?
+    };
+    crate::commands::auth::persist_db_in_dir(dir, state)?;
+    if !candidate_paths.is_empty() {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(dir, &conn, &candidate_paths);
+        }
+    }
     Ok(())
+}
+
+pub fn delete_income_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    delete_entry_and_docs_tx(conn, "income_entry", id)?;
+    Ok(())
+}
+
+pub fn delete_income_entry_in_dir(
+    dir: &std::path::Path,
+    id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    delete_entry_in_dir(dir, "income_entry", id, state)
 }
 
 #[tauri::command]
 pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        delete_income_entry_with_conn(&conn, &id)?;
-    }
-    persist_db(&state).await
+    delete_income_entry_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
 #[tauri::command]
@@ -1016,21 +1115,21 @@ pub async fn upsert_allowance(
 }
 
 pub fn delete_allowance_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
-    require_draft_for_entry_id(conn, "capital_allowance", id)?;
-    conn.execute("DELETE FROM capital_allowance WHERE id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    delete_entry_and_docs_tx(conn, "capital_allowance", id)?;
     Ok(())
+}
+
+pub fn delete_allowance_in_dir(
+    dir: &std::path::Path,
+    id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    delete_entry_in_dir(dir, "capital_allowance", id, state)
 }
 
 #[tauri::command]
 pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        delete_allowance_with_conn(&conn, &id)?;
-    }
-    persist_db(&state).await
+    delete_allowance_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
 /// Return capital allowances from the most recent *Confirmed* filing
@@ -1188,21 +1287,21 @@ pub async fn upsert_relief_entry(
 }
 
 pub fn delete_relief_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
-    require_draft_for_entry_id(conn, "relief_entry", id)?;
-    conn.execute("DELETE FROM relief_entry WHERE id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    delete_entry_and_docs_tx(conn, "relief_entry", id)?;
     Ok(())
+}
+
+pub fn delete_relief_entry_in_dir(
+    dir: &std::path::Path,
+    id: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    delete_entry_in_dir(dir, "relief_entry", id, state)
 }
 
 #[tauri::command]
 pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        delete_relief_entry_with_conn(&conn, &id)?;
-    }
-    persist_db(&state).await
+    delete_relief_entry_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
 pub fn compute_filing_with_conn(

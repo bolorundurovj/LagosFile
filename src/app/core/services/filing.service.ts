@@ -110,8 +110,8 @@ export class FilingService {
     fileName: string,
     fileType: string,
     fileSizeBytes: number,
-  ): Promise<void> {
-    return this.tauri.invoke('attach_document', {
+  ): Promise<{ id: string; fileName: string; filePath: string; fileSizeBytes: number }> {
+    return this.tauri.invoke<{ id: string; fileName: string; filePath: string; fileSizeBytes: number }>('attach_document', {
       parentEntryId, parentEntryType, filePath, fileName, fileType, fileSizeBytes,
     });
   }

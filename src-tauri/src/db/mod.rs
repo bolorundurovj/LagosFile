@@ -531,6 +531,79 @@ fn migrate_timestamps_to_rfc3339(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_filing_parent_on_delete_set_null(conn: &Connection) -> Result<()> {
+    let ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='filing'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let Some(ddl) = ddl else {
+        return Ok(());
+    };
+    if ddl.to_ascii_uppercase().contains("ON DELETE SET NULL") {
+        return Ok(());
+    }
+
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+    let rebuild_res: Result<()> = (|| {
+        conn.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE filing_new (
+                 id                  TEXT PRIMARY KEY,
+                 taxpayer_id         TEXT NOT NULL REFERENCES taxpayer(id),
+                 parent_filing_id    TEXT REFERENCES filing(id) ON DELETE SET NULL,
+                 year_of_assessment  INTEGER NOT NULL,
+                 status              TEXT NOT NULL DEFAULT 'Draft',
+                 filing_reference    TEXT,
+                 created_at          TEXT NOT NULL,
+                 confirmed_at        TEXT,
+                 submitted_at        TEXT,
+                 total_income_ngn    REAL,
+                 chargeable_income   REAL,
+                 tax_payable         REAL,
+                 wht_credit          REAL,
+                 paye_credit         REAL,
+                 foreign_tax_credit  REAL,
+                 net_tax_payable     REAL,
+                 minimum_tax         REAL,
+                 final_tax_payable   REAL,
+                 tax_config_version  TEXT NOT NULL DEFAULT 'default',
+                 tax_config_id       TEXT REFERENCES tax_config(id),
+                 payment_date        TEXT,
+                 payment_reference   TEXT,
+                 amount_paid         REAL
+             );
+             INSERT INTO filing_new (
+                 id, taxpayer_id, parent_filing_id, year_of_assessment, status,
+                 filing_reference, created_at, confirmed_at, submitted_at,
+                 total_income_ngn, chargeable_income, tax_payable, wht_credit,
+                 paye_credit, foreign_tax_credit, net_tax_payable, minimum_tax,
+                 final_tax_payable, tax_config_version, tax_config_id,
+                 payment_date, payment_reference, amount_paid
+             )
+             SELECT
+                 id, taxpayer_id, parent_filing_id, year_of_assessment, status,
+                 filing_reference, created_at, confirmed_at, submitted_at,
+                 total_income_ngn, chargeable_income, tax_payable, wht_credit,
+                 paye_credit, foreign_tax_credit, net_tax_payable, minimum_tax,
+                 final_tax_payable, tax_config_version, tax_config_id,
+                 payment_date, payment_reference, amount_paid
+             FROM filing;
+             DROP TABLE filing;
+             ALTER TABLE filing_new RENAME TO filing;
+             COMMIT;",
+        )?;
+        Ok(())
+    })();
+    if rebuild_res.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+    }
+    let _ = conn.execute_batch("PRAGMA foreign_keys=ON;");
+    rebuild_res
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -543,6 +616,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))?;
         }
     }
+    migrate_filing_parent_on_delete_set_null(conn)?;
     backfill_filing_tax_config_ids(conn)?;
     ensure_nta_and_pita_configs(conn)?;
     migrate_foreign_tax_reliefs(conn)?;

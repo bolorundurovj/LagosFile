@@ -313,3 +313,181 @@ fn test_s6_backup_bundles_encrypted_documents_and_fresh_install_restore_opens_th
     let _ = std::fs::remove_file(&backup_file);
     let _ = std::fs::remove_dir_all(&fresh_dir);
 }
+
+#[test]
+fn test_s18_deleting_draft_cleans_up_folder_and_allows_deleting_duplicated_parent() {
+    use lagosfile_lib::commands::filing::{
+        create_draft_filing_with_conn, delete_filing_in_dir, delete_income_entry_in_dir,
+        duplicate_filing_with_conn, upsert_income_entry_with_conn,
+    };
+    use rusqlite::params;
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s18-del-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "654321", &state).unwrap();
+
+    let (draft1_id, entry1_id, draft2_id, entry2_id) = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Tobi', '1000099901', '2025-01-01T00:00:00Z')",
+            params![tp_id],
+        )
+        .unwrap();
+        let d1 = create_draft_filing_with_conn(&conn, 2022).unwrap();
+        let e1 = upsert_income_entry_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": d1.id.to_string(),
+                "incomeType": "employment",
+                "grossAmountNgn": 3_000_000.0,
+                "isForeign": false,
+                "isCgtExempt": false
+            }),
+        )
+        .unwrap();
+        // Duplicate d1 -> d2 so d2 has parent_filing_id = d1.id
+        let d2 = duplicate_filing_with_conn(&conn, &d1.id.to_string()).unwrap();
+        let e2: String = conn
+            .query_row(
+                "SELECT id FROM income_entry WHERE filing_id=?1",
+                params![d2.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (d1.id.to_string(), e1, d2.id.to_string(), e2)
+    };
+
+    let tmp_file = dir.join("receipt.txt");
+    std::fs::write(&tmp_file, b"draft1 receipt").unwrap();
+    let att1 = attach_document_in_dir(
+        &dir,
+        &entry1_id,
+        "income_entry",
+        tmp_file.to_str().unwrap(),
+        "receipt.txt",
+        "txt",
+        14,
+        &state,
+    )
+    .unwrap();
+    let att1_path = doc_store::resolve_doc_path(&dir, att1["filePath"].as_str().unwrap());
+    let att1_folder = att1_path.parent().unwrap().to_path_buf();
+    assert!(att1_path.exists());
+
+    // Delete Draft 1 even though Draft 2 references it via parent_filing_id!
+    delete_filing_in_dir(&dir, &draft1_id, &state).expect("deleting duplicated Draft must succeed");
+    assert!(!att1_path.exists(), "deleted draft attachment file must be removed");
+    assert!(!att1_folder.exists(), "deleted draft entry folder must be removed");
+
+    // Draft 2's parent_filing_id is now NULL, and no document rows remain for entry1
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let parent: Option<String> = conn
+            .query_row(
+                "SELECT parent_filing_id FROM filing WHERE id=?1",
+                params![draft2_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(parent, None);
+        let leftover_docs: i64 = conn
+            .query_row(
+                "SELECT COUNT(1) FROM document WHERE parent_entry_id=?1",
+                params![entry1_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover_docs, 0);
+    }
+
+    // Deleting a single entry also cleans up its attachment file and row
+    let att2 = attach_document_in_dir(
+        &dir,
+        &entry2_id,
+        "income_entry",
+        tmp_file.to_str().unwrap(),
+        "receipt.txt",
+        "txt",
+        14,
+        &state,
+    )
+    .unwrap();
+    let att2_path = doc_store::resolve_doc_path(&dir, att2["filePath"].as_str().unwrap());
+    assert!(att2_path.exists());
+    delete_income_entry_in_dir(&dir, &entry2_id, &state).unwrap();
+    assert!(!att2_path.exists(), "deleted entry attachment file must be removed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_s18_shared_file_survives_single_row_delete_and_orphan_sweep_removes_stray_files() {
+    use lagosfile_lib::commands::auth::unlock_db_in_dir;
+    use lagosfile_lib::commands::document::delete_document_in_dir;
+    use rusqlite::params;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s18-ref-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "654321", &state).unwrap();
+    let (_filing_id, entry_id) = seed_taxpayer_and_filing(&state);
+
+    let tmp_file = dir.join("shared.txt");
+    std::fs::write(&tmp_file, b"shared content").unwrap();
+    let att1 = attach_document_in_dir(
+        &dir,
+        &entry_id,
+        "income_entry",
+        tmp_file.to_str().unwrap(),
+        "shared.txt",
+        "txt",
+        14,
+        &state,
+    )
+    .unwrap();
+    let doc1_id = att1["id"].as_str().unwrap().to_string();
+    let rel_path = att1["filePath"].as_str().unwrap().to_string();
+    let full_path = doc_store::resolve_doc_path(&dir, &rel_path);
+
+    // Insert a second document row referencing the exact same file_path
+    let doc2_id = uuid::Uuid::new_v4().to_string();
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO document (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
+             VALUES (?1,?2,'income_entry',?3,'shared.txt','txt',14,'2025-01-01T00:00:00Z')",
+            params![doc2_id, entry_id, rel_path],
+        )
+        .unwrap();
+    }
+
+    // Deleting row 1 must NOT delete the file while row 2 still references it
+    delete_document_in_dir(&dir, &doc1_id, &state).unwrap();
+    assert!(full_path.exists(), "file referenced by two rows must survive deleting one");
+
+    // Deleting row 2 now leaves zero references, so the file is removed
+    delete_document_in_dir(&dir, &doc2_id, &state).unwrap();
+    assert!(!full_path.exists(), "file must be removed once last reference is deleted");
+
+    // Drop an orphaned stray file under documents/ and unlock to verify startup sweep removes it
+    let orphan_dir = dir.join("documents").join("orphan-entry-id");
+    std::fs::create_dir_all(&orphan_dir).unwrap();
+    let orphan_file = orphan_dir.join("stray.enc");
+    std::fs::write(&orphan_file, b"orphan bytes").unwrap();
+    assert!(orphan_file.exists());
+
+    let restarted_state = AppState::default();
+    unlock_db_in_dir(&dir, "654321", &restarted_state).unwrap();
+    assert!(!orphan_file.exists(), "startup orphan sweep must delete unreferenced file");
+    assert!(!orphan_dir.exists(), "startup orphan sweep must prune empty orphan folder");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

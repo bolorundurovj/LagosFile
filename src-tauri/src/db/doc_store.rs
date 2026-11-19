@@ -244,6 +244,13 @@ where
 
     report.total_found = to_migrate.len();
     if to_migrate.is_empty() {
+        if let Ok(guard) = state.db.lock() {
+            if let Some(db) = guard.as_ref() {
+                if let Ok(conn) = db.conn.lock() {
+                    let _ = sweep_orphan_doc_files(dir, &conn);
+                }
+            }
+        }
         return Ok(report);
     }
 
@@ -290,7 +297,108 @@ where
         persist_db_in_dir(dir, state)?;
     }
 
+    // Startup sweep: remove any orphaned files in documents/ not referenced by any document row.
+    if let Ok(guard) = state.db.lock() {
+        if let Some(db) = guard.as_ref() {
+            if let Ok(conn) = db.conn.lock() {
+                let _ = sweep_orphan_doc_files(dir, &conn);
+            }
+        }
+    }
+
     Ok(report)
+}
+
+/// Removes candidate document files on disk ONLY if no remaining `document` row
+/// still references the same `file_path` (or resolves to the same path), and
+/// prunes empty entry subdirectories under `<dir>/documents/`.
+pub fn remove_unreferenced_doc_files(
+    dir: &Path,
+    conn: &rusqlite::Connection,
+    candidate_paths: &[String],
+) {
+    let docs_root = dir.join("documents");
+    let mut seen = std::collections::HashSet::new();
+
+    for stored in candidate_paths {
+        if stored.is_empty() || !seen.insert(stored.clone()) {
+            continue;
+        }
+        let ref_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(1) FROM document WHERE file_path = ?1",
+                params![stored],
+                |r| r.get(0),
+            )
+            .unwrap_or(1);
+        if ref_count > 0 {
+            continue;
+        }
+        let target = resolve_doc_path(dir, stored);
+        if target.exists() {
+            let _ = std::fs::remove_file(&target);
+        }
+        // Prune empty entry folder directly under <dir>/documents/
+        if let Some(parent) = target.parent() {
+            if parent != docs_root && parent.starts_with(&docs_root) {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+    }
+}
+
+/// Walks `<dir>/documents` and removes any file not referenced by any row in
+/// the `document` table, then prunes empty subdirectories. Returns the number
+/// of orphan files removed.
+pub fn sweep_orphan_doc_files(dir: &Path, conn: &rusqlite::Connection) -> usize {
+    let docs_root = dir.join("documents");
+    if !docs_root.exists() {
+        return 0;
+    }
+
+    let mut referenced = std::collections::HashSet::<PathBuf>::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT file_path FROM document") {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for path_str in rows.filter_map(|r| r.ok()) {
+                let resolved = resolve_doc_path(dir, &path_str);
+                if let Ok(canon) = std::fs::canonicalize(&resolved) {
+                    referenced.insert(canon);
+                }
+                referenced.insert(resolved);
+            }
+        }
+    }
+
+    fn walk_and_clean(
+        dir_path: &Path,
+        docs_root: &Path,
+        referenced: &std::collections::HashSet<PathBuf>,
+        removed: &mut usize,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir_path) else {
+            return;
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_and_clean(&path, docs_root, referenced, removed);
+                if path != docs_root {
+                    let _ = std::fs::remove_dir(&path);
+                }
+            } else if path.is_file() {
+                let canon = std::fs::canonicalize(&path).ok();
+                let is_referenced = referenced.contains(&path)
+                    || canon.as_ref().is_some_and(|c| referenced.contains(c));
+                if !is_referenced && std::fs::remove_file(&path).is_ok() {
+                    *removed += 1;
+                }
+            }
+        }
+    }
+
+    let mut removed = 0usize;
+    walk_and_clean(&docs_root, &docs_root, &referenced, &mut removed);
+    removed
 }
 
 pub fn migrate_plaintext_documents(dir: &Path, state: &AppState) -> Result<MigrationReport, String> {

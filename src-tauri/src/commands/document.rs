@@ -150,37 +150,40 @@ pub async fn list_documents(
 }
 
 pub fn delete_document_in_dir(dir: &Path, id: &str, state: &AppState) -> Result<(), String> {
-    let doc_meta: Option<(String, String, String)> = {
+    let candidate_path: Option<String> = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.query_row(
-            "SELECT file_path, parent_entry_id, parent_entry_type FROM document WHERE id=?1",
-            params![id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .ok()
-    };
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
-    {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let doc_meta: Option<(String, String, String)> = tx
+            .query_row(
+                "SELECT file_path, parent_entry_id, parent_entry_type FROM document WHERE id=?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .ok();
+
         if let Some((_, ref parent_id, ref parent_type)) = doc_meta {
             crate::commands::filing::require_draft_for_parent_entry(
-                &conn,
+                &tx,
                 parent_id,
                 parent_type,
             )?;
         }
-        conn.execute("DELETE FROM document WHERE id=?1", params![id])
+        tx.execute("DELETE FROM document WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
-    }
+        tx.commit().map_err(|e| e.to_string())?;
+        doc_meta.map(|(p, _, _)| p)
+    };
     persist_db_in_dir(dir, state)?;
 
-    if let Some((path, _, _)) = doc_meta {
-        let full = doc_store::resolve_doc_path(dir, &path);
-        let _ = std::fs::remove_file(full);
+    if let Some(path) = candidate_path {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            doc_store::remove_unreferenced_doc_files(dir, &conn, &[path]);
+        }
     }
     Ok(())
 }

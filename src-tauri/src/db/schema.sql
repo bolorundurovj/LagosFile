@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS taxpayer (
 CREATE TABLE IF NOT EXISTS filing (
     id                  TEXT PRIMARY KEY,
     taxpayer_id         TEXT NOT NULL REFERENCES taxpayer(id),
-    parent_filing_id    TEXT REFERENCES filing(id),
+    parent_filing_id    TEXT REFERENCES filing(id) ON DELETE SET NULL,
     year_of_assessment  INTEGER NOT NULL,
     status              TEXT NOT NULL DEFAULT 'Draft',
     filing_reference    TEXT,
@@ -37,7 +37,10 @@ CREATE TABLE IF NOT EXISTS filing (
     minimum_tax         REAL,
     final_tax_payable   REAL,
     tax_config_version  TEXT NOT NULL DEFAULT 'default',
-    tax_config_id       TEXT REFERENCES tax_config(id)
+    tax_config_id       TEXT REFERENCES tax_config(id),
+    payment_date        TEXT,
+    payment_reference   TEXT,
+    amount_paid         REAL
 );
 
 CREATE TABLE IF NOT EXISTS filing_ref_counter (

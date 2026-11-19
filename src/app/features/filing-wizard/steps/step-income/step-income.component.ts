@@ -11,7 +11,7 @@ import { NumericFormatDirective } from '../../../../shared/directives/numeric-fo
 import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 import { DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
-import { queueDocument, flushDocuments } from '../pending-documents';
+import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
 
 const INCOME_TYPES: { value: IncomeType; label: string }[] = [
   { value: 'employment',          label: 'Employment (salary & bonuses)' },
@@ -264,6 +264,7 @@ const BIK_CATEGORIES: { value: BikCategory; label: string; costLabel: string }[]
                   @for (doc of entry.documents; track doc.id) {
                     <li class="doc-list__item">
                       <span style="display:flex;align-items:center;gap:4px"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+                      <button type="button" class="btn btn--ghost btn--sm" aria-label="Remove attachment" (click)="onRemoveDocument(entry, doc.id)">×</button>
                     </li>
                   }
                 </ul>
@@ -595,6 +596,11 @@ export class StepIncomeComponent implements OnInit {
   onFileSelected(file: DropzoneFile, entry: IncomeEntry): void {
     const error = queueDocument(entry, file, 'income_entry');
     if (error) this.toast.error(error);
+  }
+
+  async onRemoveDocument(entry: IncomeEntry, docId: string): Promise<void> {
+    const error = await removeDocument(this.filingService, entry, docId);
+    if (error) this.toast.error('Could not remove document: ' + error);
   }
 
   readonly totalNgn = () =>
