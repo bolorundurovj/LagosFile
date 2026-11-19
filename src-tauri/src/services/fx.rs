@@ -70,7 +70,7 @@ impl FxService {
         conn.execute(
             "INSERT OR REPLACE INTO fx_cache
              (id, base_currency, quote_currency, rate, rate_date, source, fetched_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 uuid::Uuid::new_v4().to_string(),
                 base,
@@ -78,6 +78,7 @@ impl FxService {
                 rate,
                 date.format("%Y-%m-%d").to_string(),
                 source,
+                chrono::Utc::now().to_rfc3339(),
             ],
         )?;
         Ok(())

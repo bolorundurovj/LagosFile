@@ -509,6 +509,28 @@ fn migrate_share_gain_rows(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_timestamps_to_rfc3339(conn: &Connection) -> Result<()> {
+    const LEGACY_SQLITE_TS_GLOB: &str =
+        "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]";
+    for (table, col) in [
+        ("filing", "created_at"),
+        ("filing", "confirmed_at"),
+        ("filing", "submitted_at"),
+        ("fx_cache", "fetched_at"),
+        ("document", "uploaded_at"),
+    ] {
+        conn.execute(
+            &format!(
+                "UPDATE {table}
+                 SET {col} = replace({col}, ' ', 'T') || 'Z'
+                 WHERE {col} GLOB '{LEGACY_SQLITE_TS_GLOB}'"
+            ),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -525,6 +547,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     ensure_nta_and_pita_configs(conn)?;
     migrate_foreign_tax_reliefs(conn)?;
     migrate_share_gain_rows(conn)?;
+    migrate_timestamps_to_rfc3339(conn)?;
     seed_filing_ref_counter(conn)?;
     Ok(())
 }

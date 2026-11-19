@@ -392,3 +392,259 @@ fn test_s12_two_confirmations_never_share_a_reference() {
     assert_eq!(c2.filing_reference.as_deref(), Some("LIRS/REF/2024/00002"));
     assert_ne!(c1.filing_reference, c2.filing_reference);
 }
+
+#[test]
+fn test_s17_amend_copies_entries_and_attachments_independently() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            document::{attach_document_in_dir, delete_document_in_dir},
+            filing::{
+                amend_filing_in_dir, confirm_filing_with_conn, create_draft_filing_with_conn,
+                upsert_allowance_with_conn, upsert_income_entry_with_conn,
+                upsert_relief_entry_with_conn,
+            },
+        },
+        db::doc_store,
+        AppState,
+    };
+    use rusqlite::params;
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile_s17_amend_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "123456", &state).unwrap();
+
+    let src_doc = dir.join("payslip.txt");
+    let expected_bytes = b"Confidential 2024 payslip content";
+    std::fs::write(&src_doc, expected_bytes).unwrap();
+
+    let (parent_id, income_id) = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Chidi', '1234500001', '2025-01-01T00:00:00Z')",
+            params![tp_id],
+        )
+        .unwrap();
+        let f = create_draft_filing_with_conn(&conn, 2024).unwrap();
+        let fid = f.id.to_string();
+        let ie_id = upsert_income_entry_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "incomeType": "employment",
+                "description": "Salary",
+                "grossAmountNgn": 8_000_000.0,
+                "isForeign": false,
+                "isCgtExempt": false
+            }),
+        )
+        .unwrap();
+        upsert_allowance_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "assetDescription": "Laptop",
+                "assetType": "computer_laptop",
+                "assetCost": 1_000_000.0,
+                "acquisitionDate": "2024-02-01",
+                "taxWrittenDownValue": 1_000_000.0,
+                "annualAllowanceRate": 0.25,
+                "annualAllowanceAmount": 250_000.0
+            }),
+        )
+        .unwrap();
+        upsert_relief_entry_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "reliefType": "wht",
+                "claimedAmount": 100_000.0,
+                "approvedAmount": 100_000.0,
+                "whtRef": "WHT-2024-1"
+            }),
+        )
+        .unwrap();
+        (fid, ie_id)
+    };
+
+    let parent_doc = attach_document_in_dir(
+        &dir,
+        &income_id,
+        "income_entry",
+        src_doc.to_str().unwrap(),
+        "payslip.txt",
+        "txt",
+        expected_bytes.len() as i64,
+        &state,
+    )
+    .unwrap();
+    let parent_doc_path = parent_doc["filePath"].as_str().unwrap().to_string();
+
+    // Amending a Draft must fail
+    assert!(amend_filing_in_dir(&dir, &parent_id, &state).is_err());
+
+    // Confirm parent filing, then amend
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        confirm_filing_with_conn(&conn, &parent_id).unwrap();
+    }
+
+    let amended = amend_filing_in_dir(&dir, &parent_id, &state).unwrap();
+    assert_eq!(amended.status, "Draft");
+    assert_eq!(amended.year_of_assessment, 2024);
+    assert_eq!(amended.parent_filing_id.map(|u| u.to_string()), Some(parent_id.clone()));
+
+    // Verify all entries and copied attachment exist on the amendment
+    let (amend_doc_id, amend_doc_path, doc_key) = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let amend_fid = amended.id.to_string();
+
+        let amend_ie_id: String = conn
+            .query_row(
+                "SELECT id FROM income_entry WHERE filing_id=?1",
+                params![amend_fid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_ne!(amend_ie_id, income_id);
+
+        let ca_wdv: f64 = conn
+            .query_row(
+                "SELECT tax_written_down_value FROM capital_allowance WHERE filing_id=?1",
+                params![amend_fid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ca_wdv, 1_000_000.0, "amendment keeps same-year WDV as-is");
+
+        let wht_amt: f64 = conn
+            .query_row(
+                "SELECT claimed_amount FROM relief_entry WHERE filing_id=?1 AND relief_type='wht'",
+                params![amend_fid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(wht_amt, 100_000.0, "amendment preserves same-year WHT relief");
+
+        let (doc_id, doc_path): (String, String) = conn
+            .query_row(
+                "SELECT id, file_path FROM document WHERE parent_entry_id=?1",
+                params![amend_ie_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_ne!(doc_path, parent_doc_path, "amendment must not share file path with parent");
+        assert!(doc_path.starts_with(&format!("documents/{amend_ie_id}/")));
+
+        drop(conn);
+        let key = doc_store::get_doc_key(db).unwrap().unwrap();
+        (doc_id, doc_path, key)
+    };
+
+    // Both parent and amendment files decrypt to the original plaintext
+    let amend_plain = doc_store::read_decrypted_doc(&dir, &amend_doc_path, &doc_key).unwrap();
+    assert_eq!(amend_plain, expected_bytes);
+
+    // Deleting the amendment's attachment leaves the parent's attachment intact and readable
+    delete_document_in_dir(&dir, &amend_doc_id, &state).unwrap();
+    let parent_plain = doc_store::read_decrypted_doc(&dir, &parent_doc_path, &doc_key).unwrap();
+    assert_eq!(parent_plain, expected_bytes);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_s17_duplicate_year_checks_and_rfc3339_timestamps() {
+    use chrono::Datelike;
+    use lagosfile_lib::{
+        commands::filing::{create_draft_filing_with_conn, duplicate_filing_with_conn},
+        db::AppDb,
+    };
+    use rusqlite::params;
+
+    let current_year = chrono::Utc::now().year();
+    let db = AppDb::open_in_memory().unwrap();
+    let bytes = {
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Yemi', '1234500002', '2025-01-01T00:00:00Z')",
+            params![tp_id],
+        )
+        .unwrap();
+
+        // Duplicating (current_year - 1) into current_year must fail
+        let last_year = create_draft_filing_with_conn(&conn, current_year - 1).unwrap();
+        let err_current = duplicate_filing_with_conn(&conn, &last_year.id.to_string())
+            .expect_err("duplicating into current year must fail");
+        assert!(err_current.contains("past years"));
+
+        // Duplicating (current_year - 2) into (current_year - 1) which already exists must fail
+        let two_ago = create_draft_filing_with_conn(&conn, current_year - 2).unwrap();
+        let err_dup = duplicate_filing_with_conn(&conn, &two_ago.id.to_string())
+            .expect_err("duplicating into existing year must fail");
+        assert!(err_dup.contains("already exists"));
+
+        // Duplicating (current_year - 4) into (current_year - 3) succeeds with an RFC 3339 timestamp
+        let four_ago = create_draft_filing_with_conn(&conn, current_year - 4).unwrap();
+        let before = chrono::Utc::now() - chrono::Duration::seconds(5);
+        let duplicated = duplicate_filing_with_conn(&conn, &four_ago.id.to_string()).unwrap();
+        let after = chrono::Utc::now() + chrono::Duration::seconds(5);
+        assert_eq!(duplicated.year_of_assessment, current_year - 3);
+        assert!(
+            duplicated.created_at >= before && duplicated.created_at <= after,
+            "duplicated created_at must round-trip as current RFC 3339 timestamp, got {}",
+            duplicated.created_at
+        );
+
+        // Insert legacy SQLite datetime('now') rows to verify migration rewrites them to RFC 3339
+        conn.execute(
+            "UPDATE filing SET created_at = '2024-03-15 14:22:10' WHERE id = ?1",
+            params![four_ago.id.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO fx_cache (id, base_currency, quote_currency, rate, rate_date, source, fetched_at)
+             VALUES ('fx-1', 'USD', 'NGN', 1500.0, '2024-03-15', 'test', '2024-03-15 09:05:00')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        db.serialize().unwrap()
+    };
+
+    let migrated = AppDb::open_in_memory().unwrap();
+    migrated.load_from_bytes(&bytes).unwrap();
+    let conn = migrated.conn.lock().unwrap();
+    let migrated_filing_ts: String = conn
+        .query_row(
+            "SELECT created_at FROM filing WHERE year_of_assessment=?1",
+            params![current_year - 4],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(migrated_filing_ts, "2024-03-15T14:22:10Z");
+    assert!(chrono::DateTime::parse_from_rfc3339(&migrated_filing_ts).is_ok());
+
+    let migrated_fx_ts: String = conn
+        .query_row(
+            "SELECT fetched_at FROM fx_cache WHERE id='fx-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(migrated_fx_ts, "2024-03-15T09:05:00Z");
+    assert!(chrono::DateTime::parse_from_rfc3339(&migrated_fx_ts).is_ok());
+}

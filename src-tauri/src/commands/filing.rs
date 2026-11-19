@@ -496,64 +496,299 @@ pub fn copy_entries_to_next_year(
     Ok(())
 }
 
+pub fn duplicate_filing_with_conn(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<Filing, String> {
+    let (taxpayer_id, yoa): (String, i32) = conn
+        .query_row(
+            "SELECT taxpayer_id,year_of_assessment FROM filing WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let target_yoa = yoa + 1;
+    let current_year = Utc::now().year();
+    if target_yoa >= current_year {
+        return Err(format!(
+            "Filings can only be created for past years of assessment, not {current_year} or later.",
+        ));
+    }
+    let existing: bool = conn
+        .query_row(
+            "SELECT COUNT(1) FROM filing WHERE year_of_assessment=?1 AND taxpayer_id=?2",
+            params![target_yoa, taxpayer_id],
+            |r| r.get::<_, i32>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+    if existing {
+        return Err(format!(
+            "A filing for {target_yoa} already exists. Duplicate or amend the existing filing instead.",
+        ));
+    }
+
+    let new_id = Uuid::new_v4();
+    let now = Utc::now().to_rfc3339();
+    let target_cfg =
+        ConfigService::get_for_income_year(conn, target_yoa).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+         VALUES (?1,?2,?3,?4,'Draft',?5,?6,?7)",
+        params![
+            new_id.to_string(),
+            taxpayer_id,
+            id,
+            target_yoa,
+            now,
+            target_cfg.version_label,
+            target_cfg.id.to_string(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    copy_entries_to_next_year(conn, id, &new_id.to_string()).map_err(|e| e.to_string())?;
+    get_filing_with_conn(conn, &new_id.to_string())
+}
+
 #[tauri::command]
 pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
-    let new_id = Uuid::new_v4();
-    {
+    let filing = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let (taxpayer_id, yoa): (String, i32) = conn
-            .query_row(
-                "SELECT taxpayer_id,year_of_assessment FROM filing WHERE id=?1",
-                params![id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        let target_cfg =
-            ConfigService::get_for_income_year(&conn, yoa + 1).map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
-             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5,?6)",
-            params![
-                new_id.to_string(),
-                taxpayer_id,
-                id,
-                yoa + 1,
-                target_cfg.version_label,
-                target_cfg.id.to_string(),
-            ],
+        duplicate_filing_with_conn(&conn, &id)?
+    };
+    persist_db(&state).await?;
+    Ok(filing)
+}
+
+/// Copies a Confirmed/Submitted filing's entries and attachments as-is into a
+/// new same-year Draft amendment. Each attachment is copied to a brand-new file
+/// under the new entry's folder so the amendment never shares files with its parent.
+pub fn amend_filing_with_conn(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+    id: &str,
+) -> Result<Filing, String> {
+    let (taxpayer_id, yoa, status, config_ver, config_id): (
+        String,
+        i32,
+        String,
+        String,
+        Option<String>,
+    ) = conn
+        .query_row(
+            "SELECT taxpayer_id,year_of_assessment,status,tax_config_version,tax_config_id
+             FROM filing WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .map_err(|e| e.to_string())?;
-        copy_entries_to_next_year(&conn, &id, &new_id.to_string()).map_err(|e| e.to_string())?;
+
+    if status == "Draft" {
+        return Err("Only Confirmed or Submitted filings can be amended.".to_string());
     }
-    persist_db(&state).await?;
-    get_filing(new_id.to_string(), state).await
+
+    let new_id = Uuid::new_v4();
+    let new_id_str = new_id.to_string();
+    let now = Utc::now().to_rfc3339();
+
+    let mut copied_files: Vec<std::path::PathBuf> = Vec::new();
+    let res: Result<(), String> = (|| {
+        conn.execute(
+            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+             VALUES (?1,?2,?3,?4,'Draft',?5,?6,?7)",
+            params![new_id_str, taxpayer_id, id, yoa, now, config_ver, config_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Track (old_entry_id, new_entry_id, parent_entry_type) so we can copy attachments
+        let mut entry_id_map: Vec<(String, String, &'static str)> = Vec::new();
+
+        // 1. Copy income entries as-is
+        {
+            let mut stmt = conn
+                .prepare("SELECT id FROM income_entry WHERE filing_id=?1")
+                .map_err(|e| e.to_string())?;
+            let old_ids: Vec<String> = stmt
+                .query_map(params![id], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            for old_entry_id in old_ids {
+                let new_entry_id = Uuid::new_v4().to_string();
+                conn.execute(
+                    "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+                     foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+                     fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
+                     bik_category,bik_cost)
+                     SELECT ?1,?2,income_type,description,gross_amount_ngn,is_foreign,
+                     foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+                     fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
+                     bik_category,bik_cost
+                     FROM income_entry WHERE id=?3",
+                    params![new_entry_id, new_id_str, old_entry_id],
+                )
+                .map_err(|e| e.to_string())?;
+                entry_id_map.push((old_entry_id, new_entry_id, "income_entry"));
+            }
+        }
+
+        // 2. Copy capital allowances as-is (same year — do not reduce WDV)
+        {
+            let mut stmt = conn
+                .prepare("SELECT id FROM capital_allowance WHERE filing_id=?1")
+                .map_err(|e| e.to_string())?;
+            let old_ids: Vec<String> = stmt
+                .query_map(params![id], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            for old_entry_id in old_ids {
+                let new_entry_id = Uuid::new_v4().to_string();
+                conn.execute(
+                    "INSERT INTO capital_allowance
+                       (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+                        tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
+                     SELECT ?1,?2,asset_description,asset_type,asset_cost,acquisition_date,
+                        tax_written_down_value,annual_allowance_rate,annual_allowance_amount
+                     FROM capital_allowance WHERE id=?3",
+                    params![new_entry_id, new_id_str, old_entry_id],
+                )
+                .map_err(|e| e.to_string())?;
+                entry_id_map.push((old_entry_id, new_entry_id, "capital_allowance"));
+            }
+        }
+
+        // 3. Copy relief entries as-is (including WHT, PAYE, rent, pension, etc. for same year)
+        {
+            let mut stmt = conn
+                .prepare("SELECT id FROM relief_entry WHERE filing_id=?1")
+                .map_err(|e| e.to_string())?;
+            let old_ids: Vec<String> = stmt
+                .query_map(params![id], |r| r.get(0))
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            for old_entry_id in old_ids {
+                let new_entry_id = Uuid::new_v4().to_string();
+                conn.execute(
+                    "INSERT INTO relief_entry
+                       (id,filing_id,relief_type,claimed_amount,approved_amount,
+                        wht_ref,wht_income_type,wht_date,description)
+                     SELECT ?1,?2,relief_type,claimed_amount,approved_amount,
+                        wht_ref,wht_income_type,wht_date,description
+                     FROM relief_entry WHERE id=?3",
+                    params![new_entry_id, new_id_str, old_entry_id],
+                )
+                .map_err(|e| e.to_string())?;
+                entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
+            }
+        }
+
+        // 4. Copy attached documents to independent files under each new entry's folder
+        for (old_entry_id, new_entry_id, parent_type) in &entry_id_map {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT file_path,file_name,file_type,file_size_bytes,uploaded_at
+                     FROM document WHERE parent_entry_id=?1",
+                )
+                .map_err(|e| e.to_string())?;
+            struct DocRow {
+                file_path: String,
+                file_name: String,
+                file_type: String,
+                file_size_bytes: i64,
+                uploaded_at: String,
+            }
+            let docs: Vec<DocRow> = stmt
+                .query_map(params![old_entry_id], |r| {
+                    Ok(DocRow {
+                        file_path: r.get(0)?,
+                        file_name: r.get(1)?,
+                        file_type: r.get(2)?,
+                        file_size_bytes: r.get(3)?,
+                        uploaded_at: r.get(4)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(stmt);
+
+            for doc in docs {
+                let src = crate::db::doc_store::resolve_doc_path(dir, &doc.file_path);
+                let suffix = if doc.file_path.ends_with(".enc") {
+                    ".enc"
+                } else {
+                    ""
+                };
+                let new_doc_id = Uuid::new_v4();
+                let new_rel = format!(
+                    "documents/{}/{}_{}{}",
+                    new_entry_id, new_doc_id, doc.file_name, suffix
+                );
+                let dest = dir.join(&new_rel);
+                if src.exists() {
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    std::fs::copy(&src, &dest).map_err(|e| {
+                        format!("Failed to copy attachment '{}': {}", doc.file_name, e)
+                    })?;
+                    copied_files.push(dest);
+                }
+                conn.execute(
+                    "INSERT INTO document
+                     (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                    params![
+                        new_doc_id.to_string(),
+                        new_entry_id,
+                        parent_type,
+                        new_rel,
+                        doc.file_name,
+                        doc.file_type,
+                        doc.file_size_bytes,
+                        doc.uploaded_at,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+
+        Ok(())
+    })();
+
+    if let Err(err) = res {
+        let _ = conn.execute("DELETE FROM filing WHERE id=?1", params![new_id_str]);
+        for path in copied_files {
+            let _ = std::fs::remove_file(path);
+        }
+        return Err(err);
+    }
+
+    get_filing_with_conn(conn, &new_id_str)
+}
+
+pub fn amend_filing_in_dir(
+    dir: &std::path::Path,
+    id: &str,
+    state: &AppState,
+) -> Result<Filing, String> {
+    let filing = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        amend_filing_with_conn(&conn, dir, id)?
+    };
+    crate::commands::auth::persist_db_in_dir(dir, state)?;
+    Ok(filing)
 }
 
 #[tauri::command]
 pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
-    let new_id = Uuid::new_v4();
-    {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let (taxpayer_id, yoa, config_ver, config_id): (String, i32, String, Option<String>) = conn
-            .query_row(
-                "SELECT taxpayer_id,year_of_assessment,tax_config_version,tax_config_id FROM filing WHERE id=?1",
-                params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
-             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5,?6)",
-            params![new_id.to_string(), taxpayer_id, id, yoa, config_ver, config_id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    persist_db(&state).await?;
-    get_filing(new_id.to_string(), state).await
+    amend_filing_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
 #[tauri::command]
