@@ -213,3 +213,181 @@ fn test_filing_fields_populated_correctly() {
     assert!(filing.final_tax_payable.is_none());
     assert!(filing.parent_filing_id.is_none());
 }
+
+#[test]
+fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            document::attach_document_in_dir,
+            export::{export_filing_json_with_conn, export_filing_pdf_in_dir},
+            filing::{
+                confirm_filing_with_conn, delete_allowance_with_conn,
+                delete_income_entry_with_conn, delete_relief_entry_with_conn,
+                mark_filing_submitted_with_conn, upsert_allowance_with_conn,
+                upsert_income_entry_with_conn, upsert_relief_entry_with_conn,
+            },
+        },
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s12-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let (filing_id, income_id, ca_id, relief_id) = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let tp_id = create_taxpayer(db);
+        let filing = FilingService::create_draft(db, tp_id, 2024, "v1").unwrap();
+        let fid = filing.id.to_string();
+
+        let conn = db.conn.lock().unwrap();
+        let inc_id = upsert_income_entry_with_conn(
+            &conn,
+            &json!({
+                "filingId": fid,
+                "incomeType": "employment",
+                "description": "Salary",
+                "grossAmountNgn": 3_000_000.0
+            }),
+        )
+        .unwrap();
+        let ca_id = upsert_allowance_with_conn(
+            &conn,
+            &json!({
+                "filingId": fid,
+                "assetDescription": "Laptop",
+                "assetType": "computer_laptop",
+                "assetCost": 400_000.0,
+                "acquisitionDate": "2024-01-01",
+                "taxWrittenDownValue": 400_000.0,
+                "annualAllowanceRate": 0.25,
+                "annualAllowanceAmount": 100_000.0
+            }),
+        )
+        .unwrap();
+        let rel_id = upsert_relief_entry_with_conn(
+            &conn,
+            &json!({
+                "filingId": fid,
+                "reliefType": "pension",
+                "claimedAmount": 100_000.0,
+                "approvedAmount": 100_000.0
+            }),
+        )
+        .unwrap();
+
+        // Confirm once: recomputes server-side (3,000,000 - 100,000 CA - 100,000 pension = 2,800,000 -> 56k + 220k = 276,000)
+        let confirmed = confirm_filing_with_conn(&conn, &fid).expect("first confirm must succeed");
+        assert_eq!(confirmed.status, "Confirmed");
+        assert_eq!(confirmed.tax_payable, Some(276_000.0));
+        assert_eq!(confirmed.final_tax_payable, Some(276_000.0));
+        assert_eq!(
+            confirmed.filing_reference.as_deref(),
+            Some("LIRS/REF/2024/00001")
+        );
+
+        // Confirming twice must fail
+        let err_twice = confirm_filing_with_conn(&conn, &fid).expect_err("confirming twice must fail");
+        assert!(err_twice.contains("Only Draft filings"));
+
+        // Mutating entries on Confirmed filing must fail
+        assert!(upsert_income_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid, "incomeType": "business", "grossAmountNgn": 500_000.0 })
+        )
+        .is_err());
+        assert!(delete_income_entry_with_conn(&conn, &inc_id).is_err());
+        assert!(upsert_allowance_with_conn(
+            &conn,
+            &json!({
+                "filingId": fid, "assetDescription": "Monitor", "assetType": "monitor",
+                "assetCost": 200_000.0, "acquisitionDate": "2024-01-01",
+                "taxWrittenDownValue": 200_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 50_000.0
+            })
+        )
+        .is_err());
+        assert!(delete_allowance_with_conn(&conn, &ca_id).is_err());
+        assert!(upsert_relief_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid, "reliefType": "nhf", "claimedAmount": 50_000.0, "approvedAmount": 50_000.0 })
+        )
+        .is_err());
+        assert!(delete_relief_entry_with_conn(&conn, &rel_id).is_err());
+
+        // Mark submitted records submitted_at
+        let submitted = mark_filing_submitted_with_conn(&conn, &fid).unwrap();
+        assert_eq!(submitted.status, "Submitted");
+        assert!(submitted.submitted_at.is_some());
+
+        // Export JSON contains non-null taxPayable and submittedAt
+        let json_path = dir.join("filing.json");
+        export_filing_json_with_conn(&conn, &fid, json_path.to_str().unwrap()).unwrap();
+        let exported: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(exported["filing"]["taxPayable"].as_f64(), Some(276_000.0));
+        assert!(exported["filing"]["submittedAt"].as_str().is_some());
+
+        (fid, inc_id, ca_id, rel_id)
+    };
+
+    // Attaching a document to an entry of a Submitted filing must fail
+    let dummy_file = dir.join("note.txt");
+    std::fs::write(&dummy_file, b"cannot attach").unwrap();
+    let att_err = attach_document_in_dir(
+        &dir,
+        &income_id,
+        "income_entry",
+        dummy_file.to_str().unwrap(),
+        "note.txt",
+        "txt",
+        13,
+        &state,
+    )
+    .expect_err("attaching document to Submitted filing must fail");
+    assert!(att_err.contains("Only Draft filings"));
+
+    // PDF export contains the formatted tax_payable figure (276,000.00)
+    let pdf_path = dir.join("filing.pdf");
+    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
+        .unwrap();
+    let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+    let all_text: String = pdf_doc
+        .get_pages()
+        .keys()
+        .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all_text.contains("276,000.00"),
+        "PDF must render saved tax_payable (276,000.00), got: {all_text}"
+    );
+
+    let _ = (ca_id, relief_id);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_s12_two_confirmations_never_share_a_reference() {
+    use lagosfile_lib::commands::filing::confirm_filing_with_conn;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let tp_id = create_taxpayer(&db);
+    let f1 = FilingService::create_draft(&db, tp_id, 2024, "v1").unwrap();
+    let f2 = FilingService::create_draft(&db, tp_id, 2024, "v1").unwrap();
+
+    let conn = db.conn.lock().unwrap();
+    let c1 = confirm_filing_with_conn(&conn, &f1.id.to_string()).unwrap();
+    // Even if the first confirmed row were removed from filing table, counter still increments!
+    conn.execute(
+        "DELETE FROM filing WHERE id=?1",
+        rusqlite::params![f1.id.to_string()],
+    )
+    .unwrap();
+    let c2 = confirm_filing_with_conn(&conn, &f2.id.to_string()).unwrap();
+
+    assert_eq!(c1.filing_reference.as_deref(), Some("LIRS/REF/2024/00001"));
+    assert_eq!(c2.filing_reference.as_deref(), Some("LIRS/REF/2024/00002"));
+    assert_ne!(c1.filing_reference, c2.filing_reference);
+}

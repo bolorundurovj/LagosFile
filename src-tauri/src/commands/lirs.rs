@@ -95,6 +95,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|d| d.with_timezone(&Utc)),
+                    submitted_at: None,
                     total_income_ngn: row.get(8)?,
                     chargeable_income: row.get(9)?,
                     tax_payable: row.get(10)?,

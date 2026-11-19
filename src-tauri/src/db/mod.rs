@@ -98,6 +98,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("filing", "payment_reference", "TEXT"),
     ("filing", "amount_paid", "REAL"),
     ("filing", "tax_config_id", "TEXT"),
+    ("filing", "submitted_at", "TEXT"),
 ];
 
 pub fn get_migration_notices(conn: &Connection) -> Vec<String> {
@@ -205,6 +206,37 @@ fn backfill_filing_tax_config_ids(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn seed_filing_ref_counter(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT year_of_assessment, filing_reference FROM filing
+         WHERE filing_reference IS NOT NULL AND filing_reference != ''",
+    )?;
+    let mut max_by_year: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, i32>(0)?, r.get::<_, String>(1)?)))?;
+    for row in rows.flatten() {
+        let (yoa, reference) = row;
+        let parsed_seq = reference
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        let entry = max_by_year.entry(yoa).or_insert(0);
+        if parsed_seq > *entry {
+            *entry = parsed_seq;
+        }
+    }
+    drop(stmt);
+
+    for (yoa, seq) in max_by_year {
+        conn.execute(
+            "INSERT INTO filing_ref_counter (year_of_assessment, last_seq) VALUES (?1, ?2)
+             ON CONFLICT(year_of_assessment) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq)",
+            rusqlite::params![yoa, seq],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -218,6 +250,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
     }
     backfill_filing_tax_config_ids(conn)?;
+    seed_filing_ref_counter(conn)?;
     Ok(())
 }
 

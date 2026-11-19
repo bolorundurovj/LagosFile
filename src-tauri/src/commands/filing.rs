@@ -63,6 +63,10 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
             .get::<_, Option<String>>(7)?
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
             .map(|d| d.with_timezone(&Utc)),
+        submitted_at: row
+            .get::<_, Option<String>>(20)?
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&Utc)),
         total_income_ngn: row.get(8)?,
         chargeable_income: row.get(9)?,
         tax_payable: row.get(10)?,
@@ -86,20 +90,116 @@ fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig
     ConfigService::get_active_conn(conn).map_err(|_| rusqlite::Error::QueryReturnedNoRows)
 }
 
+const FILING_SELECT_COLS: &str = "id,taxpayer_id,parent_filing_id,year_of_assessment,status,
+                    filing_reference,created_at,confirmed_at,total_income_ngn,
+                    chargeable_income,tax_payable,wht_credit,net_tax_payable,
+                    minimum_tax,final_tax_payable,tax_config_version,
+                    payment_date,payment_reference,amount_paid,tax_config_id,submitted_at";
+
+pub fn get_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<Filing, String> {
+    conn.query_row(
+        &format!("SELECT {FILING_SELECT_COLS} FROM filing WHERE id=?1"),
+        params![id],
+        row_to_filing,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Ensures the filing exists and is currently in `Draft` status.
+pub fn require_draft_filing(conn: &rusqlite::Connection, filing_id: &str) -> Result<(), String> {
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM filing WHERE id=?1",
+            params![filing_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| format!("Filing '{filing_id}' not found."))?;
+    if status != "Draft" {
+        return Err(format!(
+            "Only Draft filings can be modified (this filing is '{status}'). Create an amendment instead."
+        ));
+    }
+    Ok(())
+}
+
+/// Ensures the parent entry's filing (across income_entry / capital_allowance / relief_entry) is a Draft.
+pub fn require_draft_for_parent_entry(
+    conn: &rusqlite::Connection,
+    parent_entry_id: &str,
+    parent_entry_type: &str,
+) -> Result<(), String> {
+    let table = match parent_entry_type {
+        "income_entry" => Some("income_entry"),
+        "capital_allowance" => Some("capital_allowance"),
+        "relief_entry" => Some("relief_entry"),
+        _ => None,
+    };
+
+    let filing_id: Option<String> = if let Some(t) = table {
+        conn.query_row(
+            &format!("SELECT filing_id FROM {t} WHERE id=?1"),
+            params![parent_entry_id],
+            |r| r.get(0),
+        )
+        .ok()
+    } else {
+        ["income_entry", "capital_allowance", "relief_entry"]
+            .iter()
+            .find_map(|t| {
+                conn.query_row(
+                    &format!("SELECT filing_id FROM {t} WHERE id=?1"),
+                    params![parent_entry_id],
+                    |r| r.get(0),
+                )
+                .ok()
+            })
+    };
+
+    let filing_id = filing_id
+        .ok_or_else(|| format!("Parent entry '{parent_entry_id}' not found."))?;
+    require_draft_filing(conn, &filing_id)
+}
+
+fn require_draft_for_entry_id(
+    conn: &rusqlite::Connection,
+    table: &str,
+    entry_id: &str,
+) -> Result<(), String> {
+    let filing_id: Option<String> = conn
+        .query_row(
+            &format!("SELECT filing_id FROM {table} WHERE id=?1"),
+            params![entry_id],
+            |r| r.get(0),
+        )
+        .ok();
+    if let Some(fid) = filing_id {
+        require_draft_filing(conn, &fid)?;
+    }
+    Ok(())
+}
+
+fn next_filing_reference(conn: &rusqlite::Connection, yoa: i32) -> Result<String, String> {
+    let seq: i64 = conn
+        .query_row(
+            "INSERT INTO filing_ref_counter (year_of_assessment, last_seq) VALUES (?1, 1)
+             ON CONFLICT(year_of_assessment) DO UPDATE SET last_seq = last_seq + 1
+             RETURNING last_seq",
+            params![yoa],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(format!("LIRS/REF/{}/{:05}", yoa, seq))
+}
+
 #[tauri::command]
 pub async fn list_filings(state: State<'_, AppState>) -> Result<Vec<Filing>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare(
-            "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
-                    filing_reference,created_at,confirmed_at,total_income_ngn,
-                    chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                    minimum_tax,final_tax_payable,tax_config_version,
-                    payment_date,payment_reference,amount_paid,tax_config_id
-             FROM filing ORDER BY year_of_assessment DESC, created_at DESC",
-        )
+        .prepare(&format!(
+            "SELECT {FILING_SELECT_COLS} FROM filing ORDER BY year_of_assessment DESC, created_at DESC"
+        ))
         .map_err(|e| e.to_string())?;
     let filings = stmt
         .query_map([], row_to_filing)
@@ -114,17 +214,7 @@ pub async fn get_filing(id: String, state: State<'_, AppState>) -> Result<Filing
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.query_row(
-        "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
-                filing_reference,created_at,confirmed_at,total_income_ngn,
-                chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                minimum_tax,final_tax_payable,tax_config_version,
-                payment_date,payment_reference,amount_paid,tax_config_id
-         FROM filing WHERE id=?1",
-        params![id],
-        row_to_filing,
-    )
-    .map_err(|e| e.to_string())
+    get_filing_with_conn(&conn, &id)
 }
 
 #[tauri::command]
@@ -182,53 +272,82 @@ pub async fn create_draft_filing(
     get_filing(id.to_string(), state).await
 }
 
+/// Confirms a Draft filing by recomputing all figures server-side against the filing's
+/// pinned tax configuration, persisting `tax_payable` and generating a unique reference
+/// from `filing_ref_counter`. Refuses non-Draft filings.
+pub fn confirm_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<Filing, String> {
+    require_draft_filing(conn, id)?;
+
+    let yoa: i32 = conn
+        .query_row(
+            "SELECT year_of_assessment FROM filing WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let computed = compute_filing_with_conn(conn, id)?;
+    let filing_ref = next_filing_reference(conn, yoa)?;
+    let now = Utc::now();
+
+    conn.execute(
+        "UPDATE filing SET status='Confirmed',confirmed_at=?1,filing_reference=?2,
+         total_income_ngn=?3,chargeable_income=?4,tax_payable=?5,
+         net_tax_payable=?6,minimum_tax=?7,final_tax_payable=?8,wht_credit=?9
+         WHERE id=?10",
+        params![
+            now.to_rfc3339(),
+            filing_ref,
+            computed.total_gross_income,
+            computed.chargeable_income,
+            computed.graduated_tax,
+            computed.net_tax_payable,
+            computed.minimum_tax,
+            computed.final_tax_payable,
+            computed.wht_credits,
+            id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    get_filing_with_conn(conn, id)
+}
+
 #[tauri::command]
 pub async fn confirm_filing(
     id: String,
-    result: ComputationResult,
+    #[allow(unused_variables)] result: Option<serde_json::Value>,
     state: State<'_, AppState>,
 ) -> Result<Filing, String> {
-    let now = Utc::now();
-    {
+    let filing = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let yoa: i32 = conn
-            .query_row(
-                "SELECT year_of_assessment FROM filing WHERE id=?1",
-                params![id],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let count: i32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM filing WHERE status IN ('Confirmed','Submitted')",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let filing_ref = format!("LIRS/REF/{}/{:05}", yoa, count + 1);
-        conn.execute(
-            "UPDATE filing SET status='Confirmed',confirmed_at=?1,filing_reference=?2,
-             total_income_ngn=?3,chargeable_income=?4,net_tax_payable=?5,
-             minimum_tax=?6,final_tax_payable=?7,wht_credit=?8
-             WHERE id=?9",
-            params![
-                now.to_rfc3339(),
-                filing_ref,
-                result.total_gross_income,
-                result.chargeable_income,
-                result.net_tax_payable,
-                result.minimum_tax,
-                result.final_tax_payable,
-                result.wht_credits,
-                id,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+        confirm_filing_with_conn(&conn, &id)?
+    };
     persist_db(&state).await?;
-    get_filing(id, state).await
+    Ok(filing)
+}
+
+pub fn mark_filing_submitted_with_conn(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<Filing, String> {
+    let status: String = conn
+        .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| format!("Filing '{id}' not found."))?;
+    if status == "Draft" {
+        return Err("Only Confirmed filings can be marked as submitted.".to_string());
+    }
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE filing SET status='Submitted', submitted_at=COALESCE(submitted_at, ?1) WHERE id=?2",
+        params![now, id],
+    )
+    .map_err(|e| e.to_string())?;
+    get_filing_with_conn(conn, id)
 }
 
 #[tauri::command]
@@ -236,18 +355,14 @@ pub async fn mark_filing_submitted(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<Filing, String> {
-    {
+    let filing = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "UPDATE filing SET status='Submitted' WHERE id=?1",
-            params![id],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+        mark_filing_submitted_with_conn(&conn, &id)?
+    };
     persist_db(&state).await?;
-    get_filing(id, state).await
+    Ok(filing)
 }
 
 #[tauri::command]
@@ -478,50 +593,69 @@ pub async fn list_income_entries(
     Ok(entries)
 }
 
+pub fn upsert_income_entry_with_conn(
+    conn: &rusqlite::Connection,
+    entry: &serde_json::Value,
+) -> Result<String, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
+    let filing_id = entry["filingId"].as_str().unwrap_or("");
+    require_draft_filing(conn, filing_id)?;
+    require_draft_for_entry_id(conn, "income_entry", &id)?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO income_entry
+         (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+          foreign_currency,foreign_amount,income_date,fx_rate_fetched,
+          fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
+          is_cgt_exempt,cgt_proceeds,cgt_gain)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+        params![
+            id,
+            filing_id,
+            entry["incomeType"].as_str().unwrap_or("other"),
+            entry["description"].as_str(),
+            entry["grossAmountNgn"].as_f64().unwrap_or(0.0),
+            entry["isForeign"].as_bool().unwrap_or(false) as i32,
+            entry["foreignCurrency"].as_str(),
+            entry["foreignAmount"].as_f64(),
+            entry["incomeDate"].as_str(),
+            entry["fxRateFetched"].as_f64(),
+            entry["fxRateCbnOverride"].as_f64(),
+            entry["fxRateUsed"].as_f64(),
+            entry["fxRateSource"].as_str(),
+            entry["foreignTaxPaidNgn"].as_f64(),
+            entry["isCgtExempt"].as_bool().unwrap_or(false) as i32,
+            entry["cgtProceeds"].as_f64(),
+            entry["cgtGain"].as_f64(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn upsert_income_entry(
     entry: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let id = entry["id"]
-        .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
-    {
+    let id = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT OR REPLACE INTO income_entry
-             (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
-              foreign_currency,foreign_amount,income_date,fx_rate_fetched,
-              fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-              is_cgt_exempt,cgt_proceeds,cgt_gain)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
-            params![
-                id,
-                entry["filingId"].as_str().unwrap_or(""),
-                entry["incomeType"].as_str().unwrap_or("other"),
-                entry["description"].as_str(),
-                entry["grossAmountNgn"].as_f64().unwrap_or(0.0),
-                entry["isForeign"].as_bool().unwrap_or(false) as i32,
-                entry["foreignCurrency"].as_str(),
-                entry["foreignAmount"].as_f64(),
-                entry["incomeDate"].as_str(),
-                entry["fxRateFetched"].as_f64(),
-                entry["fxRateCbnOverride"].as_f64(),
-                entry["fxRateUsed"].as_f64(),
-                entry["fxRateSource"].as_str(),
-                entry["foreignTaxPaidNgn"].as_f64(),
-                entry["isCgtExempt"].as_bool().unwrap_or(false) as i32,
-                entry["cgtProceeds"].as_f64(),
-                entry["cgtGain"].as_f64(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+        upsert_income_entry_with_conn(&conn, &entry)?
+    };
     persist_db(&state).await?;
     Ok(serde_json::json!({ "id": id }))
+}
+
+pub fn delete_income_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    require_draft_for_entry_id(conn, "income_entry", id)?;
+    conn.execute("DELETE FROM income_entry WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -530,8 +664,7 @@ pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Resu
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM income_entry WHERE id=?1", params![id])
-            .map_err(|e| e.to_string())?;
+        delete_income_entry_with_conn(&conn, &id)?;
     }
     persist_db(&state).await
 }
@@ -580,40 +713,59 @@ pub async fn list_allowances(
     Ok(entries)
 }
 
+pub fn upsert_allowance_with_conn(
+    conn: &rusqlite::Connection,
+    entry: &serde_json::Value,
+) -> Result<String, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
+    let filing_id = entry["filingId"].as_str().unwrap_or("");
+    require_draft_filing(conn, filing_id)?;
+    require_draft_for_entry_id(conn, "capital_allowance", &id)?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO capital_allowance
+         (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+          tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![
+            id,
+            filing_id,
+            entry["assetDescription"].as_str().unwrap_or(""),
+            entry["assetType"].as_str().unwrap_or("other"),
+            entry["assetCost"].as_f64().unwrap_or(0.0),
+            entry["acquisitionDate"].as_str().unwrap_or(""),
+            entry["taxWrittenDownValue"].as_f64().unwrap_or(0.0),
+            entry["annualAllowanceRate"].as_f64().unwrap_or(0.0),
+            entry["annualAllowanceAmount"].as_f64().unwrap_or(0.0),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn upsert_allowance(
     entry: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let id = entry["id"]
-        .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
-    {
+    let id = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT OR REPLACE INTO capital_allowance
-             (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
-              tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![
-                id,
-                entry["filingId"].as_str().unwrap_or(""),
-                entry["assetDescription"].as_str().unwrap_or(""),
-                entry["assetType"].as_str().unwrap_or("other"),
-                entry["assetCost"].as_f64().unwrap_or(0.0),
-                entry["acquisitionDate"].as_str().unwrap_or(""),
-                entry["taxWrittenDownValue"].as_f64().unwrap_or(0.0),
-                entry["annualAllowanceRate"].as_f64().unwrap_or(0.0),
-                entry["annualAllowanceAmount"].as_f64().unwrap_or(0.0),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-    }
+        upsert_allowance_with_conn(&conn, &entry)?
+    };
     persist_db(&state).await?;
     Ok(serde_json::json!({ "id": id }))
+}
+
+pub fn delete_allowance_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    require_draft_for_entry_id(conn, "capital_allowance", id)?;
+    conn.execute("DELETE FROM capital_allowance WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -622,8 +774,7 @@ pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM capital_allowance WHERE id=?1", params![id])
-            .map_err(|e| e.to_string())?;
+        delete_allowance_with_conn(&conn, &id)?;
     }
     persist_db(&state).await
 }
@@ -735,37 +886,58 @@ pub async fn list_relief_entries(
     Ok(entries)
 }
 
+pub fn upsert_relief_entry_with_conn(
+    conn: &rusqlite::Connection,
+    entry: &serde_json::Value,
+) -> Result<String, String> {
+    let id = entry["id"]
+        .as_str()
+        .unwrap_or(&Uuid::new_v4().to_string())
+        .to_string();
+    let filing_id = entry["filingId"].as_str().unwrap_or("");
+    require_draft_filing(conn, filing_id)?;
+    require_draft_for_entry_id(conn, "relief_entry", &id)?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO relief_entry
+         (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![
+            id,
+            filing_id,
+            entry["reliefType"].as_str().unwrap_or("other_approved"),
+            entry["claimedAmount"].as_f64().unwrap_or(0.0),
+            entry["approvedAmount"].as_f64().unwrap_or(0.0),
+            entry["whtRef"].as_str(),
+            entry["whtIncomeType"].as_str(),
+            entry["whtDate"].as_str(),
+            entry["description"].as_str(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn upsert_relief_entry(
     entry: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let id = entry["id"]
-        .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
-    {
+    let id = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT OR REPLACE INTO relief_entry
-             (id,filing_id,relief_type,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date,description)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![
-                id, entry["filingId"].as_str().unwrap_or(""),
-                entry["reliefType"].as_str().unwrap_or("other_approved"),
-                entry["claimedAmount"].as_f64().unwrap_or(0.0),
-                entry["approvedAmount"].as_f64().unwrap_or(0.0),
-                entry["whtRef"].as_str(),
-                entry["whtIncomeType"].as_str(),
-                entry["whtDate"].as_str(),
-                entry["description"].as_str(),
-            ],
-        ).map_err(|e| e.to_string())?;
-    }
+        upsert_relief_entry_with_conn(&conn, &entry)?
+    };
     persist_db(&state).await?;
     Ok(serde_json::json!({ "id": id }))
+}
+
+pub fn delete_relief_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
+    require_draft_for_entry_id(conn, "relief_entry", id)?;
+    conn.execute("DELETE FROM relief_entry WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -774,8 +946,7 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM relief_entry WHERE id=?1", params![id])
-            .map_err(|e| e.to_string())?;
+        delete_relief_entry_with_conn(&conn, &id)?;
     }
     persist_db(&state).await
 }

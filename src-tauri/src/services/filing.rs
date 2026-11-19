@@ -23,6 +23,7 @@ impl FilingService {
             filing_reference: None,
             created_at: Utc::now(),
             confirmed_at: None,
+            submitted_at: None,
             total_income_ngn: None,
             chargeable_income: None,
             tax_payable: None,
@@ -58,7 +59,7 @@ impl FilingService {
         let mut stmt = conn.prepare(
             "SELECT id, taxpayer_id, parent_filing_id, year_of_assessment, status, filing_reference, 
                     created_at, confirmed_at, total_income_ngn, chargeable_income, tax_payable, 
-                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id 
+                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id, submitted_at 
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC"
         )?;
 
@@ -78,6 +79,10 @@ impl FilingService {
                     .with_timezone(&Utc),
                 confirmed_at: row
                     .get::<_, Option<String>>(7)?
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
+                submitted_at: row
+                    .get::<_, Option<String>>(17)?
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                     .map(|d| d.with_timezone(&Utc)),
                 total_income_ngn: row.get(8)?,
@@ -120,8 +125,8 @@ impl FilingService {
     pub fn mark_submitted(db: &AppDb, id: &str) -> Result<()> {
         let conn = db.conn.lock().unwrap();
         conn.execute(
-            "UPDATE filing SET status='Submitted' WHERE id=?1",
-            params![id],
+            "UPDATE filing SET status='Submitted', submitted_at=?1 WHERE id=?2",
+            params![Utc::now().to_rfc3339(), id],
         )?;
         Ok(())
     }

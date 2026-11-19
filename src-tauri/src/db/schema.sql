@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS filing (
     filing_reference    TEXT,
     created_at          TEXT NOT NULL,
     confirmed_at        TEXT,
+    submitted_at        TEXT,
     total_income_ngn    REAL,
     chargeable_income   REAL,
     tax_payable         REAL,
@@ -35,6 +36,11 @@ CREATE TABLE IF NOT EXISTS filing (
     final_tax_payable   REAL,
     tax_config_version  TEXT NOT NULL DEFAULT 'default',
     tax_config_id       TEXT REFERENCES tax_config(id)
+);
+
+CREATE TABLE IF NOT EXISTS filing_ref_counter (
+    year_of_assessment  INTEGER PRIMARY KEY,
+    last_seq            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS income_entry (

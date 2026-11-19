@@ -26,7 +26,7 @@ fn seed_taxpayer_and_filing(state: &AppState) -> (String, String) {
     .unwrap();
     conn.execute(
         "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, created_at, total_income_ngn, chargeable_income, tax_payable, wht_credit, net_tax_payable, minimum_tax, final_tax_payable)
-         VALUES (?1, ?2, 2025, 'Confirmed', '2026-01-10T00:00:00Z', 5000000.0, 5000000.0, 628000.0, 0.0, 628000.0, 50000.0, 628000.0)",
+         VALUES (?1, ?2, 2025, 'Draft', '2026-01-10T00:00:00Z', 5000000.0, 5000000.0, 628000.0, 0.0, 628000.0, 50000.0, 628000.0)",
         params![filing_id, tp_id],
     )
     .unwrap();

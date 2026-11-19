@@ -1,8 +1,11 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { DatePipe } from '@angular/common';
 import { FilingService } from '../../core/services/filing.service';
 import { ToastService } from '../../core/services/toast.service';
+import { CapitalAllowance, Filing, IncomeEntry, ReliefEntry } from '../../core/models';
+import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { StepIncomeComponent } from './steps/step-income/step-income.component';
 import { StepAllowancesComponent } from './steps/step-allowances/step-allowances.component';
 import { StepDeductionsComponent } from './steps/step-deductions/step-deductions.component';
@@ -11,7 +14,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 type WizardStep = 1 | 2 | 3 | 4;
-type WizardMode = 'selecting-year' | 'active';
+type WizardMode = 'selecting-year' | 'active' | 'readonly';
 
 const STEPS = [
   { step: 1 as WizardStep, title: 'Income Sources',        subtitle: 'Domestic & foreign income' },
@@ -25,6 +28,8 @@ const STEPS = [
   standalone: true,
   imports: [
     FormsModule,
+    DatePipe,
+    NairaPipe,
     StepIncomeComponent,
     StepAllowancesComponent,
     StepDeductionsComponent,
@@ -69,7 +74,92 @@ const STEPS = [
       </div>
     }
 
-    <!-- ── Active wizard ── -->
+    <!-- ── Read-only summary (Confirmed / Submitted filings) ── -->
+    @if (mode() === 'readonly' && readonlyFiling(); as filing) {
+      <div class="readonly-filing" data-testid="readonly-filing-summary">
+        <div class="readonly-filing__header">
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
+              <span class="wizard__yoa-badge">YOA {{ filing.yearOfAssessment }}</span>
+              <span class="badge" [class.badge--confirmed]="filing.status === 'Confirmed'" [class.badge--submitted]="filing.status === 'Submitted'">
+                {{ filing.status }}
+              </span>
+            </div>
+            <h1 class="headline-sm">{{ filing.filingReference || 'Filed Return' }}</h1>
+            <p class="body-sm text-muted" style="margin-top:var(--space-1)">
+              This return is final and read-only. To make changes, create an amendment.
+            </p>
+          </div>
+          <div style="display:flex;gap:var(--space-3);align-items:center">
+            <button class="btn btn--secondary" type="button" (click)="goToHistory()">Back to History</button>
+            <button class="btn btn--primary" type="button" (click)="amendReadonlyFiling()" [disabled]="amending()">
+              @if (amending()) { Creating Amendment… } @else { Amend }
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="title-md" style="margin-bottom:var(--space-4)">Tax Computation Summary</h2>
+          <div class="readonly-grid">
+            <div class="readonly-row"><span>Total Gross Income</span><strong class="financial-value">{{ filing.totalIncomeNgn ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Chargeable Income</span><strong class="financial-value">{{ filing.chargeableIncome ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Gross Tax Payable</span><strong class="financial-value">{{ filing.taxPayable ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>WHT Credits</span><strong class="financial-value">{{ filing.whtCredit ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Net Tax Payable</span><strong class="financial-value">{{ filing.netTaxPayable ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Minimum Tax</span><strong class="financial-value">{{ filing.minimumTax ?? 0 | naira }}</strong></div>
+            <div class="readonly-row readonly-row--total"><span>Final Tax Payable</span><strong class="financial-value">{{ filing.finalTaxPayable ?? 0 | naira }}</strong></div>
+          </div>
+
+          <div class="readonly-meta">
+            <div><span class="text-muted">Tax Config:</span> {{ filing.taxConfigVersion }}</div>
+            @if (filing.confirmedAt) {
+              <div><span class="text-muted">Confirmed:</span> {{ filing.confirmedAt | date:'dd MMM yyyy, HH:mm' }}</div>
+            }
+            @if (filing.submittedAt) {
+              <div><span class="text-muted">Submitted:</span> {{ filing.submittedAt | date:'dd MMM yyyy, HH:mm' }}</div>
+            }
+          </div>
+        </div>
+
+        @if (readonlyIncome().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Income Entries ({{ readonlyIncome().length }})</h2>
+            @for (item of readonlyIncome(); track item.id) {
+              <div class="readonly-row">
+                <span>{{ item.description || item.incomeType }}</span>
+                <span class="financial-value">{{ item.grossAmountNgn | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+
+        @if (readonlyAllowances().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Capital Allowances ({{ readonlyAllowances().length }})</h2>
+            @for (ca of readonlyAllowances(); track ca.id) {
+              <div class="readonly-row">
+                <span>{{ ca.assetDescription }} ({{ ca.assetType }})</span>
+                <span class="financial-value">{{ ca.annualAllowanceAmount | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+
+        @if (readonlyReliefs().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Deductions & Reliefs ({{ readonlyReliefs().length }})</h2>
+            @for (r of readonlyReliefs(); track r.id) {
+              <div class="readonly-row">
+                <span>{{ r.description || r.reliefType }}</span>
+                <span class="financial-value">{{ r.approvedAmount | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <!-- ── Active wizard (Draft filings only) ── -->
     @if (mode() === 'active') {
       <div class="wizard">
         <!-- Left: vertical progress strip -->
@@ -169,6 +259,50 @@ const STEPS = [
       display: flex;
       gap: var(--space-3);
       justify-content: flex-end;
+    }
+
+    /* ── Read-only summary ── */
+    .readonly-filing {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-5);
+      padding-bottom: var(--space-8);
+    }
+    .readonly-filing__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: var(--space-4);
+    }
+    .readonly-grid {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+    .readonly-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--space-2) 0;
+      border-bottom: 1px solid var(--color-surface-container);
+      font-size: var(--text-body-md);
+    }
+    .readonly-row:last-child { border-bottom: none; }
+    .readonly-row--total {
+      border-top: 2px solid var(--color-outline-variant);
+      padding-top: var(--space-3);
+      font-size: var(--text-title-sm);
+    }
+    .readonly-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-5);
+      margin-top: var(--space-4);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--color-surface-container);
+      font-size: var(--text-label-md);
     }
 
     /* ── Wizard ── */
@@ -275,7 +409,6 @@ const STEPS = [
       transition: all var(--transition-fast);
     }
 
-
     .progress-strip__item--active .progress-strip__step-num {
       background: var(--color-primary);
       color: white;
@@ -328,6 +461,12 @@ export class FilingWizardComponent implements OnInit {
   currentStep = signal<WizardStep>(1);
   loading = signal(true);
   starting = signal(false);
+  amending = signal(false);
+
+  readonlyFiling = signal<Filing | null>(null);
+  readonlyIncome = signal<IncomeEntry[]>([]);
+  readonlyAllowances = signal<CapitalAllowance[]>([]);
+  readonlyReliefs = signal<ReliefEntry[]>([]);
 
   readonly currentYear = new Date().getFullYear();
 
@@ -344,11 +483,30 @@ export class FilingWizardComponent implements OnInit {
     const id = this.route.snapshot.paramMap.get('id');
     if (id) {
       this.loading.set(true);
-      const filing = await this.filingService.getFiling(id);
-      this.filingId.set(filing.id);
-      this.yearOfAssessment.set(filing.yearOfAssessment);
-      this.mode.set('active');
-      this.loading.set(false);
+      try {
+        const filing = await this.filingService.getFiling(id);
+        this.filingId.set(filing.id);
+        this.yearOfAssessment.set(filing.yearOfAssessment);
+        if (filing.status !== 'Draft') {
+          this.readonlyFiling.set(filing);
+          const [income, allowances, reliefs] = await Promise.all([
+            this.filingService.listIncomeEntries(filing.id),
+            this.filingService.listAllowances(filing.id),
+            this.filingService.listReliefEntries(filing.id),
+          ]);
+          this.readonlyIncome.set(income);
+          this.readonlyAllowances.set(allowances);
+          this.readonlyReliefs.set(reliefs);
+          this.mode.set('readonly');
+        } else {
+          this.mode.set('active');
+        }
+      } catch (err: unknown) {
+        this.toast.error('Failed to load filing: ' + (err instanceof Error ? err.message : String(err)));
+        this.router.navigate(['/history']);
+      } finally {
+        this.loading.set(false);
+      }
     } else {
       this.mode.set('selecting-year');
       this.loading.set(false);
@@ -370,6 +528,27 @@ export class FilingWizardComponent implements OnInit {
       this.starting.set(false);
     }
   }
+
+  async amendReadonlyFiling(): Promise<void> {
+    const filing = this.readonlyFiling();
+    if (!filing || this.amending()) return;
+    this.amending.set(true);
+    try {
+      const amended = await this.filingService.amendFiling(filing.id);
+      this.filingId.set(amended.id);
+      this.yearOfAssessment.set(amended.yearOfAssessment);
+      this.readonlyFiling.set(null);
+      this.currentStep.set(1);
+      this.mode.set('active');
+      this.router.navigate(['/filing', amended.id]);
+    } catch (err: unknown) {
+      this.toast.error('Failed to create amendment: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.amending.set(false);
+    }
+  }
+
+  goToHistory(): void { this.router.navigate(['/history']); }
 
   cancel(): void { this.router.navigate(['/dashboard']); }
 

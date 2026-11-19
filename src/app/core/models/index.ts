@@ -20,6 +20,7 @@ export interface Filing {
   filingReference?: string;
   createdAt: string;
   confirmedAt?: string;
+  submittedAt?: string;
   totalIncomeNgn?: number;
   chargeableIncome?: number;
   taxPayable?: number;

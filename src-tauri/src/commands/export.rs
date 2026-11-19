@@ -23,6 +23,7 @@ struct FilingSummary {
     full_name: String,
     tin: String,
     confirmed_at: Option<String>,
+    submitted_at: Option<String>,
 }
 
 fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSummary, String> {
@@ -31,7 +32,7 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
                 f.total_income_ngn, f.chargeable_income, f.tax_payable,
                 f.wht_credit, f.net_tax_payable, f.minimum_tax, f.final_tax_payable,
                 f.tax_config_version, f.confirmed_at,
-                t.full_name, t.tin
+                t.full_name, t.tin, f.submitted_at
          FROM filing f JOIN taxpayer t ON t.id = f.taxpayer_id
          WHERE f.id = ?1",
         params![filing_id],
@@ -50,6 +51,7 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
                 confirmed_at: row.get(10)?,
                 full_name: row.get(11)?,
                 tin: row.get(12)?,
+                submitted_at: row.get(13)?,
             })
         },
     )
@@ -960,17 +962,12 @@ pub async fn export_filing_csv(
     Ok(save_path)
 }
 
-#[tauri::command]
-pub async fn export_filing_json(
-    filing_id: String,
-    save_path: String,
-    state: State<'_, AppState>,
+pub fn export_filing_json_with_conn(
+    conn: &rusqlite::Connection,
+    filing_id: &str,
+    save_path: &str,
 ) -> Result<String, String> {
-    let guard = state.db.lock().map_err(|e| e.to_string())?;
-    let db = guard.as_ref().ok_or("Database not unlocked")?;
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
-    let summary = load_summary(&conn, &filing_id)?;
+    let summary = load_summary(conn, filing_id)?;
 
     let mut income_stmt = conn
         .prepare(
@@ -1014,6 +1011,7 @@ pub async fn export_filing_json(
             "yearOfAssessment": summary.year_of_assessment,
             "filingReference":  summary.filing_reference,
             "confirmedAt":      summary.confirmed_at,
+            "submittedAt":      summary.submitted_at,
             "taxConfigVersion": summary.tax_config_version,
             "totalIncomeNgn":   summary.total_income_ngn,
             "chargeableIncome": summary.chargeable_income,
@@ -1027,9 +1025,21 @@ pub async fn export_filing_json(
     });
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
-    ensure_parent(&save_path)?;
-    std::fs::write(&save_path, json.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(save_path)
+    ensure_parent(save_path)?;
+    std::fs::write(save_path, json.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(save_path.to_string())
+}
+
+#[tauri::command]
+pub async fn export_filing_json(
+    filing_id: String,
+    save_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    export_filing_json_with_conn(&conn, &filing_id, &save_path)
 }
 
 #[tauri::command]

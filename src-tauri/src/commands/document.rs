@@ -37,14 +37,21 @@ pub fn attach_document_in_dir(
         return Err("File exceeds the 100MB limit. Please attach a smaller file.".to_string());
     }
 
-    let plaintext = std::fs::read(src).map_err(|e| e.to_string())?;
-    let actual_size = plaintext.len() as i64;
-
-    let doc_key = {
+    let (doc_key, plaintext, actual_size) = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
+        {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::commands::filing::require_draft_for_parent_entry(
+                &conn,
+                parent_entry_id,
+                parent_entry_type,
+            )?;
+        }
+        let plaintext = std::fs::read(src).map_err(|e| e.to_string())?;
+        let actual_size = plaintext.len() as i64;
         let (key, _created) = doc_store::get_or_create_doc_key(db)?;
-        key
+        (key, plaintext, actual_size)
     };
 
     // Store encrypted file under <dir>/documents/<parent_entry_id>/<uuid>_<file_name>.enc
@@ -143,14 +150,14 @@ pub async fn list_documents(
 }
 
 pub fn delete_document_in_dir(dir: &Path, id: &str, state: &AppState) -> Result<(), String> {
-    let stored_path: Option<String> = {
+    let doc_meta: Option<(String, String, String)> = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
-            "SELECT file_path FROM document WHERE id=?1",
+            "SELECT file_path, parent_entry_id, parent_entry_type FROM document WHERE id=?1",
             params![id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .ok()
     };
@@ -159,12 +166,19 @@ pub fn delete_document_in_dir(dir: &Path, id: &str, state: &AppState) -> Result<
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        if let Some((_, ref parent_id, ref parent_type)) = doc_meta {
+            crate::commands::filing::require_draft_for_parent_entry(
+                &conn,
+                parent_id,
+                parent_type,
+            )?;
+        }
         conn.execute("DELETE FROM document WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
     }
     persist_db_in_dir(dir, state)?;
 
-    if let Some(path) = stored_path {
+    if let Some((path, _, _)) = doc_meta {
         let full = doc_store::resolve_doc_path(dir, &path);
         let _ = std::fs::remove_file(full);
     }

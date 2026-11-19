@@ -56,6 +56,7 @@ pub struct Filing {
     pub filing_reference: Option<String>,
     pub created_at: DateTime<Utc>,
     pub confirmed_at: Option<DateTime<Utc>>,
+    pub submitted_at: Option<DateTime<Utc>>,
     pub total_income_ngn: Option<f64>,
     pub chargeable_income: Option<f64>,
     pub tax_payable: Option<f64>,
