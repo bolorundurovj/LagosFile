@@ -416,22 +416,71 @@ fn embed_image_page(
     image_bytes: &[u8],
     file_name: &str,
 ) -> Result<(), String> {
-    use ::image::GenericImageView;
+    use ::image::{GenericImageView, ImageDecoder};
 
-    let img = ::image::load_from_memory(image_bytes)
-        .map_err(|e| format!("Cannot decode '{}': {}", file_name, e))?;
-    let (w_px, h_px) = img.dimensions();
-    let rgb = img.to_rgb8();
+    let (w_px, h_px, image_xobj) = if matches!(
+        ::image::guess_format(image_bytes),
+        Ok(::image::ImageFormat::Jpeg)
+    ) {
+        // Fast path: embed original JPEG bytes directly as a PDF DCTDecode stream
+        // without inflating to raw RGB pixels.
+        let dct_meta = ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(image_bytes))
+            .ok()
+            .and_then(|decoder| {
+                let (w, h) = decoder.dimensions();
+                let cs = match decoder.color_type() {
+                    ::image::ColorType::L8 => Some(ColorSpace::Greyscale),
+                    ::image::ColorType::Rgb8 => Some(ColorSpace::Rgb),
+                    _ => None,
+                }?;
+                Some((w, h, cs))
+            });
 
-    let image_xobj = ImageXObject {
-        width: Px(w_px as usize),
-        height: Px(h_px as usize),
-        color_space: ColorSpace::Rgb,
-        bits_per_component: ColorBits::Bit8,
-        interpolate: true,
-        image_data: rgb.into_raw(),
-        image_filter: None,
-        clipping_bbox: None,
+        if let Some((w_px, h_px, color_space)) = dct_meta {
+            let xobj = ImageXObject {
+                width: Px(w_px as usize),
+                height: Px(h_px as usize),
+                color_space,
+                bits_per_component: ColorBits::Bit8,
+                interpolate: true,
+                image_data: image_bytes.to_vec(),
+                image_filter: Some(ImageFilter::DCT),
+                clipping_bbox: None,
+            };
+            (w_px, h_px, xobj)
+        } else {
+            let img = ::image::load_from_memory(image_bytes)
+                .map_err(|e| format!("Cannot decode '{}': {}", file_name, e))?;
+            let (w_px, h_px) = img.dimensions();
+            let rgb = img.to_rgb8();
+            let xobj = ImageXObject {
+                width: Px(w_px as usize),
+                height: Px(h_px as usize),
+                color_space: ColorSpace::Rgb,
+                bits_per_component: ColorBits::Bit8,
+                interpolate: true,
+                image_data: rgb.into_raw(),
+                image_filter: None,
+                clipping_bbox: None,
+            };
+            (w_px, h_px, xobj)
+        }
+    } else {
+        let img = ::image::load_from_memory(image_bytes)
+            .map_err(|e| format!("Cannot decode '{}': {}", file_name, e))?;
+        let (w_px, h_px) = img.dimensions();
+        let rgb = img.to_rgb8();
+        let xobj = ImageXObject {
+            width: Px(w_px as usize),
+            height: Px(h_px as usize),
+            color_space: ColorSpace::Rgb,
+            bits_per_component: ColorBits::Bit8,
+            interpolate: true,
+            image_data: rgb.into_raw(),
+            image_filter: None,
+            clipping_bbox: None,
+        };
+        (w_px, h_px, xobj)
     };
     let pdf_image = Image::from(image_xobj);
 
@@ -464,6 +513,24 @@ fn embed_image_page(
     Ok(())
 }
 
+fn snapshot_pdf_inputs(
+    filing_id: &str,
+    include_attachments: bool,
+    state: &AppState,
+) -> Result<(FilingSummary, Vec<DocRecord>, [u8; 32]), String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let doc_key = doc_store::get_doc_key(db)?.unwrap_or([0u8; 32]);
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let summary = load_summary(&conn, filing_id)?;
+    let docs = if include_attachments {
+        load_filing_documents(&conn, filing_id).unwrap_or_default()
+    } else {
+        vec![]
+    };
+    Ok((summary, docs, doc_key))
+}
+
 pub fn export_filing_pdf_in_dir(
     app_dir: &Path,
     filing_id: &str,
@@ -472,20 +539,27 @@ pub fn export_filing_pdf_in_dir(
     letterhead_style: Option<&str>,
     state: &AppState,
 ) -> Result<String, String> {
-    let (summary, documents, doc_key) = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let doc_key = doc_store::get_doc_key(db)?.unwrap_or([0u8; 32]);
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let summary = load_summary(&conn, filing_id)?;
-        let docs = if include_attachments {
-            load_filing_documents(&conn, filing_id).unwrap_or_default()
-        } else {
-            vec![]
-        };
-        (summary, docs, doc_key)
-    };
+    let (summary, documents, doc_key) = snapshot_pdf_inputs(filing_id, include_attachments, state)?;
+    render_filing_pdf(
+        app_dir,
+        summary,
+        documents,
+        doc_key,
+        save_path,
+        include_attachments,
+        letterhead_style,
+    )
+}
 
+fn render_filing_pdf(
+    app_dir: &Path,
+    summary: FilingSummary,
+    documents: Vec<DocRecord>,
+    doc_key: [u8; 32],
+    save_path: &str,
+    include_attachments: bool,
+    letterhead_style: Option<&str>,
+) -> Result<String, String> {
     ensure_parent(save_path)?;
 
     let is_alt_fills = letterhead_style == Some("alt-fills");
@@ -990,14 +1064,22 @@ pub async fn export_filing_pdf(
     letterhead_style: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    export_filing_pdf_in_dir(
-        &db::app_dir(),
-        &filing_id,
-        &save_path,
-        include_attachments,
-        letterhead_style.as_deref(),
-        &state,
-    )
+    let (summary, documents, doc_key) =
+        snapshot_pdf_inputs(&filing_id, include_attachments, &state)?;
+    let app_dir = db::app_dir();
+    tokio::task::spawn_blocking(move || {
+        render_filing_pdf(
+            &app_dir,
+            summary,
+            documents,
+            doc_key,
+            &save_path,
+            include_attachments,
+            letterhead_style.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 pub fn export_filing_csv_with_conn(
@@ -1709,6 +1791,102 @@ mod tests {
         let att_dir = dir.join("return_attachments");
         let copied_count = std::fs::read_dir(&att_dir).unwrap().count();
         assert_eq!(copied_count, 30, "duplicate filenames must not overwrite each other");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_s26_pdf_with_3mb_jpeg_embeds_dct_and_stays_under_5mb() {
+        use crate::commands::{
+            auth::setup_pin_in_dir,
+            document::attach_document_in_dir,
+            filing::{create_draft_filing_with_conn, upsert_income_entry_with_conn},
+        };
+        use crate::services::profile::ProfileService;
+        use serde_json::json;
+
+        let dir = std::env::temp_dir().join(format!("lagosfile-s26-jpeg-{}", uuid::Uuid::new_v4()));
+        let state = AppState::default();
+        setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+        let (fid, entry_id) = {
+            let guard = state.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            ProfileService::create(
+                db,
+                json!({ "fullName": "Photo Taxpayer", "tin": "1234567890123" }),
+            )
+            .unwrap();
+            let conn = db.conn.lock().unwrap();
+            let draft = create_draft_filing_with_conn(&conn, 2025).unwrap();
+            let fid = draft.id.to_string();
+            let eid = upsert_income_entry_with_conn(
+                &conn,
+                &json!({ "filingId": fid, "incomeType": "employment", "grossAmountNgn": 3_000_000.0 }),
+            )
+            .unwrap();
+            (fid, eid)
+        };
+
+        // Build a deterministic high-entropy ~3MB RGB JPEG (raw RGB = 8.4MB)
+        let w: u32 = 2000;
+        let h: u32 = 1400;
+        let mut raw_rgb = vec![0u8; (w * h * 3) as usize];
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        for b in raw_rgb.iter_mut() {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *b = (seed >> 56) as u8;
+        }
+        let mut jpeg_bytes = Vec::new();
+        {
+            let mut enc = ::image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 75);
+            enc.encode(&raw_rgb, w, h, ::image::ExtendedColorType::Rgb8)
+                .unwrap();
+        }
+        assert!(
+            jpeg_bytes.len() >= 2_500_000 && jpeg_bytes.len() <= 3_800_000,
+            "generated test JPEG should be ~3MB, got {} bytes",
+            jpeg_bytes.len()
+        );
+
+        let src_jpg = dir.join("receipt_large.jpg");
+        std::fs::write(&src_jpg, &jpeg_bytes).unwrap();
+        attach_document_in_dir(
+            &dir,
+            &entry_id,
+            "income_entry",
+            src_jpg.to_str().unwrap(),
+            "receipt_large.jpg",
+            "jpg",
+            jpeg_bytes.len() as i64,
+            &state,
+        )
+        .unwrap();
+
+        let pdf_path = dir.join("large_jpeg_return.pdf");
+        export_filing_pdf_in_dir(&dir, &fid, pdf_path.to_str().unwrap(), true, None, &state)
+            .unwrap();
+
+        let pdf_len = std::fs::metadata(&pdf_path).unwrap().len();
+        assert!(
+            pdf_len < 5 * 1024 * 1024,
+            "PDF with ~3MB JPEG must stay under 5MB via DCT embedding (got {} bytes for {} byte JPEG)",
+            pdf_len,
+            jpeg_bytes.len()
+        );
+
+        // Verify the PDF loads validly and contains a DCTDecode stream
+        let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+        let has_dct = pdf_doc.objects.values().any(|obj| {
+            if let lopdf::Object::Stream(ref stream) = obj {
+                if let Ok(filter) = stream.dict.get(b"Filter") {
+                    let s = format!("{:?}", filter);
+                    return s.contains("DCTDecode");
+                }
+            }
+            false
+        });
+        assert!(has_dct, "JPEG attachment must be embedded with DCTDecode filter");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

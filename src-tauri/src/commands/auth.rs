@@ -272,10 +272,15 @@ pub async fn unlock_with_biometric(
 
     verify_biometric_internal(window).await?;
     let dir = db::app_dir();
-    let raw = std::fs::read(vault::vault_path(&dir)).map_err(|e| e.to_string())?;
-    let legacy_salt_file = vault::legacy_salt_path(&dir);
-    let decoded = vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file))
-        .map_err(|_| "Biometric unlock failed: could not decrypt database.".to_string())?;
+    let dir_clone = dir.clone();
+    let decoded = tokio::task::spawn_blocking(move || {
+        let raw = std::fs::read(vault::vault_path(&dir_clone)).map_err(|e| e.to_string())?;
+        let legacy_salt_file = vault::legacy_salt_path(&dir_clone);
+        vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file))
+            .map_err(|_| "Biometric unlock failed: could not decrypt database.".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     db.load_from_bytes(&decoded.plaintext)
@@ -338,7 +343,27 @@ pub fn setup_pin_in_dir(dir: &Path, pin: &str, state: &AppState) -> Result<(), S
 #[tauri::command]
 pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    setup_pin_in_dir(&db::app_dir(), &pin, &state)
+    let dir = db::app_dir();
+    if vault::vault_path(&dir).exists() {
+        return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
+    }
+
+    let (new_db, key, salt) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let salt = security::generate_salt();
+        let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+        let bytes = new_db.serialize().map_err(|e| e.to_string())?;
+        let key = security::derive_key(&pin, &salt);
+        vault::write_new_exclusive(&dir, &bytes, &key, &salt)?;
+        Ok((new_db, key, salt))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    *state.db.lock().unwrap() = Some(new_db);
+    *state.key.lock().unwrap() = Some(key);
+    *state.salt.lock().unwrap() = Some(salt);
+    *state.recovery_verified.lock().unwrap() = false;
+    Ok(())
 }
 
 pub fn unlock_db_in_dir(
@@ -371,9 +396,14 @@ pub async fn unlock_db(
 ) -> Result<Option<Taxpayer>, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let dir = db::app_dir();
-    let raw = std::fs::read(vault::vault_path(&dir)).map_err(|e| e.to_string())?;
-    let legacy_salt_file = vault::legacy_salt_path(&dir);
-    let decoded = vault::decode_with_pin(&raw, &pin, None, Some(&legacy_salt_file))?;
+    let dir_clone = dir.clone();
+    let decoded = tokio::task::spawn_blocking(move || {
+        let raw = std::fs::read(vault::vault_path(&dir_clone)).map_err(|e| e.to_string())?;
+        let legacy_salt_file = vault::legacy_salt_path(&dir_clone);
+        vault::decode_with_pin(&raw, &pin, None, Some(&legacy_salt_file))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     db.load_from_bytes(&decoded.plaintext)
@@ -412,12 +442,38 @@ pub fn persist_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
     persist_db_in_dir_with_hook(dir, state, |_| Ok(()))
 }
 
+pub async fn persist_db_in_dir_async(
+    dir: std::path::PathBuf,
+    state: &AppState,
+) -> Result<(), String> {
+    let snapshot = {
+        let guard = state.db.lock().unwrap();
+        let key_guard = state.key.lock().unwrap();
+        let salt_guard = state.salt.lock().unwrap();
+        if let (Some(db), Some(key), Some(salt)) =
+            (guard.as_ref(), key_guard.as_ref(), salt_guard.as_ref())
+        {
+            let bytes = db.serialize().map_err(|e| e.to_string())?;
+            Some((bytes, *key, *salt))
+        } else {
+            None
+        }
+    };
+
+    if let Some((bytes, key, salt)) = snapshot {
+        tokio::task::spawn_blocking(move || vault::write_atomic(&dir, &bytes, &key, &salt))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    Ok(())
+}
+
 pub async fn persist_db(state: &AppState) -> Result<(), String> {
-    persist_db_in_dir(&db::app_dir(), state)
+    persist_db_in_dir_async(db::app_dir(), state).await
 }
 
 pub async fn lock_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
-    persist_db_in_dir(dir, state)?;
+    persist_db_in_dir_async(dir.to_path_buf(), state).await?;
     crate::commands::lirs::stop_bridge(state);
     doc_store::cleanup_temp_previews(state);
     let _ = std::fs::remove_file(dir.join("pending_filing.json"));
@@ -443,25 +499,29 @@ pub async fn setup_recovery(
     answer_3: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let key_guard = state.key.lock().unwrap();
-    let db_key = key_guard.as_ref().ok_or("Database not unlocked")?;
-
-    let salt = security::generate_salt();
-    let answers = vec![answer_1, answer_2, answer_3];
-    let ak = answer_key(&answers, &salt);
-
-    let blob = security::encrypt(db_key, &ak).map_err(|e| e.to_string())?;
-
-    let data = RecoveryData {
-        question_1,
-        question_2,
-        question_3,
-        answer_salt: hex::encode(salt),
-        recovery_blob: hex::encode(&blob),
+    let db_key = {
+        let key_guard = state.key.lock().unwrap();
+        *key_guard.as_ref().ok_or("Database not unlocked")?
     };
-    let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
-    std::fs::write(recovery_path(), json).map_err(|e| e.to_string())?;
-    Ok(())
+
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let salt = security::generate_salt();
+        let answers = vec![answer_1, answer_2, answer_3];
+        let ak = answer_key(&answers, &salt);
+        let blob = security::encrypt(&db_key, &ak).map_err(|e| e.to_string())?;
+        let data = RecoveryData {
+            question_1,
+            question_2,
+            question_3,
+            answer_salt: hex::encode(salt),
+            recovery_blob: hex::encode(&blob),
+        };
+        let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+        std::fs::write(recovery_path(), json).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -527,9 +587,45 @@ pub async fn recover_with_answers(
     state: State<'_, AppState>,
 ) -> Result<Option<Taxpayer>, String> {
     let dir = db::app_dir();
-    let tp = recover_with_answers_in_dir(&dir, &[answer_1, answer_2, answer_3], &state)?;
+    let dir_clone = dir.clone();
+    let answers = vec![answer_1, answer_2, answer_3];
+
+    let (db_key, decoded) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let json = std::fs::read_to_string(recovery_path_in_dir(&dir_clone))
+            .map_err(|_| "No recovery data found.".to_string())?;
+        let data: RecoveryData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        let ans_salt = hex::decode(&data.answer_salt).map_err(|e| e.to_string())?;
+        let blob = hex::decode(&data.recovery_blob).map_err(|e| e.to_string())?;
+
+        let ak = answer_key(&answers, &ans_salt);
+        let key_bytes = security::decrypt(&blob, &ak)
+            .map_err(|_| "Incorrect answers. Please try again.".to_string())?;
+        if key_bytes.len() != 32 {
+            return Err("Recovery data is corrupt.".to_string());
+        }
+        let mut db_key = [0u8; 32];
+        db_key.copy_from_slice(&key_bytes);
+
+        let raw = std::fs::read(vault::vault_path(&dir_clone)).map_err(|e| e.to_string())?;
+        let legacy_salt_file = vault::legacy_salt_path(&dir_clone);
+        let decoded = vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file))
+            .map_err(|_| "Recovery failed: could not decrypt database.".to_string())?;
+        Ok((db_key, decoded))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    db.load_from_bytes(&decoded.plaintext)
+        .map_err(|e| e.to_string())?;
+
+    let taxpayer = load_taxpayer(&db);
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(db_key);
+    *state.salt.lock().unwrap() = Some(decoded.salt);
+    *state.recovery_verified.lock().unwrap() = true;
     run_doc_migration_with_events(&dir, &state, &app)?;
-    Ok(tp)
+    Ok(taxpayer)
 }
 
 pub fn reset_pin_with_deps<F>(
@@ -572,7 +668,33 @@ pub fn reset_pin_in_dir(dir: &Path, new_pin: &str, state: &AppState) -> Result<b
 
 #[tauri::command]
 pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<bool, String> {
-    reset_pin_in_dir(&db::app_dir(), &new_pin, &state)
+    if !*state.recovery_verified.lock().unwrap() {
+        return Err("PIN reset is only allowed immediately after account recovery.".to_string());
+    }
+    let bytes = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        db.serialize().map_err(|e| e.to_string())?
+    };
+    let dir = db::app_dir();
+    let dir_clone = dir.clone();
+
+    let (new_key, new_salt) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let new_salt = security::generate_salt();
+        let new_key = security::derive_key(&new_pin, &new_salt);
+        vault::write_atomic(&dir_clone, &bytes, &new_key, &new_salt)?;
+        Ok((new_key, new_salt))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    *state.key.lock().unwrap() = Some(new_key);
+    *state.salt.lock().unwrap() = Some(new_salt);
+    *state.recovery_verified.lock().unwrap() = false;
+
+    let biometric_enabled = sync_biometric_keyring(&OsKeyringStore, &new_key);
+    let _ = std::fs::remove_file(recovery_path_in_dir(&dir));
+    Ok(biometric_enabled)
 }
 
 pub fn change_pin_with_deps<F>(
@@ -633,7 +755,38 @@ pub async fn change_pin(
     new_pin: String,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    change_pin_in_dir(&db::app_dir(), &current_pin, &new_pin, &state)
+    let (current_salt, active_key, bytes) = {
+        let salt_guard = state.salt.lock().unwrap();
+        let key_guard = state.key.lock().unwrap();
+        let db_guard = state.db.lock().unwrap();
+        let salt = *salt_guard.as_ref().ok_or("Database not unlocked")?;
+        let key = *key_guard.as_ref().ok_or("Database not unlocked")?;
+        let db = db_guard.as_ref().ok_or("Database not unlocked")?;
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        (salt, key, bytes)
+    };
+    let dir = db::app_dir();
+    let dir_clone = dir.clone();
+
+    let (new_key, new_salt) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let derived = security::derive_key(&current_pin, &current_salt);
+        if derived != active_key {
+            return Err("Current PIN is incorrect.".to_string());
+        }
+        let new_salt = security::generate_salt();
+        let new_key = security::derive_key(&new_pin, &new_salt);
+        vault::write_atomic(&dir_clone, &bytes, &new_key, &new_salt)?;
+        Ok((new_key, new_salt))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    *state.key.lock().unwrap() = Some(new_key);
+    *state.salt.lock().unwrap() = Some(new_salt);
+
+    let biometric_enabled = sync_biometric_keyring(&OsKeyringStore, &new_key);
+    let _ = std::fs::remove_file(recovery_path_in_dir(&dir));
+    Ok(biometric_enabled)
 }
 
 pub fn backup_db_to_path_in_dir(
@@ -663,7 +816,25 @@ pub fn backup_db_to_path(dest_path: &Path, state: &AppState) -> Result<(), Strin
 #[tauri::command]
 pub async fn backup_db(dest_path: String, state: State<'_, AppState>) -> Result<(), String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    backup_db_to_path_in_dir(&db::app_dir(), Path::new(&dest_path), &state)
+    let dir = db::app_dir();
+    let (bytes, key, salt, docs) = {
+        let guard = state.db.lock().unwrap();
+        let key_guard = state.key.lock().unwrap();
+        let salt_guard = state.salt.lock().unwrap();
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let key = *key_guard.as_ref().ok_or("Database not unlocked")?;
+        let salt = *salt_guard.as_ref().ok_or("Database not unlocked")?;
+        let docs = doc_store::collect_backup_documents(&dir, db)?;
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        (bytes, key, salt, docs)
+    };
+    tokio::task::spawn_blocking(move || {
+        let vault_bytes = vault::encode(&bytes, &key, &salt)?;
+        let archive = doc_store::encode_backup_archive(&vault_bytes, &docs);
+        doc_store::write_archive_to_path(Path::new(&dest_path), &archive)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Restores a backup (LGFA archive or standalone LGFV/legacy vault) into an already-unlocked vault (Settings flow).
@@ -712,7 +883,37 @@ pub async fn restore_db(
     pin: String,
     state: State<'_, AppState>,
 ) -> Result<Option<Taxpayer>, String> {
-    restore_db_in_dir(&db::app_dir(), Path::new(&src_path), &pin, &state)
+    let (current_key, current_salt) = {
+        let key_guard = state.key.lock().unwrap();
+        let salt_guard = state.salt.lock().unwrap();
+        let key = *key_guard.as_ref().ok_or("Database not unlocked")?;
+        let salt = *salt_guard.as_ref().ok_or("Database not unlocked")?;
+        (key, salt)
+    };
+    let dir = db::app_dir();
+
+    let (new_db, taxpayer) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let raw = std::fs::read(Path::new(&src_path)).map_err(|e| e.to_string())?;
+        let archive = doc_store::decode_backup_archive(&raw)?;
+        let decoded =
+            vault::decode_with_pin(archive.vault_bytes, &pin, Some(&current_salt), None).map_err(
+                |_| "Invalid backup — the PIN may be incorrect or the file is corrupt.".to_string(),
+            )?;
+        let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+        new_db
+            .load_from_bytes(&decoded.plaintext)
+            .map_err(|e| format!("Backup database is corrupt: {}", e))?;
+        let reserialized = new_db.serialize().map_err(|e| e.to_string())?;
+        vault::write_atomic(&dir, &reserialized, &current_key, &current_salt)?;
+        doc_store::unpack_backup_documents(&dir, &archive.documents)?;
+        let taxpayer = load_taxpayer(&new_db);
+        Ok((new_db, taxpayer))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    *state.db.lock().unwrap() = Some(new_db);
+    Ok(taxpayer)
 }
 
 /// Restores a self-describing backup (LGFA archive or standalone LGFV vault) on a fresh installation (`/setup-pin` flow).
@@ -765,5 +966,37 @@ pub async fn restore_backup_fresh(
     state: State<'_, AppState>,
 ) -> Result<Option<Taxpayer>, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    restore_backup_fresh_in_dir(&db::app_dir(), Path::new(&src_path), &pin, &state)
+    let dir = db::app_dir();
+    if vault::vault_path(&dir).exists() {
+        return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
+    }
+
+    let (db, key, salt, taxpayer) = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let raw = std::fs::read(Path::new(&src_path)).map_err(|e| e.to_string())?;
+        let archive = doc_store::decode_backup_archive(&raw)?;
+        let decoded =
+            vault::decode_with_pin(archive.vault_bytes, &pin, None, None).map_err(|e| {
+                if e.contains("older format") {
+                    e
+                } else {
+                    "Invalid backup — the PIN may be incorrect or the file is corrupt.".to_string()
+                }
+            })?;
+        let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+        db.load_from_bytes(&decoded.plaintext)
+            .map_err(|e| format!("Backup database is corrupt: {}", e))?;
+        let reserialized = db.serialize().map_err(|e| e.to_string())?;
+        vault::write_new_exclusive(&dir, &reserialized, &decoded.key, &decoded.salt)?;
+        doc_store::unpack_backup_documents(&dir, &archive.documents)?;
+        let taxpayer = load_taxpayer(&db);
+        Ok((db, decoded.key, decoded.salt, taxpayer))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(key);
+    *state.salt.lock().unwrap() = Some(salt);
+    *state.recovery_verified.lock().unwrap() = false;
+    Ok(taxpayer)
 }

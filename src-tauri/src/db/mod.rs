@@ -604,6 +604,16 @@ fn migrate_filing_parent_on_delete_set_null(conn: &Connection) -> Result<()> {
     rebuild_res
 }
 
+fn ensure_indexes(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_income_entry_filing_id ON income_entry(filing_id);
+         CREATE INDEX IF NOT EXISTS idx_capital_allowance_filing_id ON capital_allowance(filing_id);
+         CREATE INDEX IF NOT EXISTS idx_relief_entry_filing_id ON relief_entry(filing_id);
+         CREATE INDEX IF NOT EXISTS idx_document_parent_entry_id ON document(parent_entry_id);",
+    )?;
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -617,6 +627,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
     }
     migrate_filing_parent_on_delete_set_null(conn)?;
+    ensure_indexes(conn)?;
     backfill_filing_tax_config_ids(conn)?;
     ensure_nta_and_pita_configs(conn)?;
     migrate_foreign_tax_reliefs(conn)?;

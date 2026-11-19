@@ -104,6 +104,11 @@ CREATE TABLE IF NOT EXISTS document (
     uploaded_at         TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_income_entry_filing_id ON income_entry(filing_id);
+CREATE INDEX IF NOT EXISTS idx_capital_allowance_filing_id ON capital_allowance(filing_id);
+CREATE INDEX IF NOT EXISTS idx_relief_entry_filing_id ON relief_entry(filing_id);
+CREATE INDEX IF NOT EXISTS idx_document_parent_entry_id ON document(parent_entry_id);
+
 CREATE TABLE IF NOT EXISTS fx_cache (
     id              TEXT PRIMARY KEY,
     base_currency   TEXT NOT NULL,
