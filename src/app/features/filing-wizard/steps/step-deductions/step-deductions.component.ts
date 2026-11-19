@@ -433,8 +433,8 @@ export class StepDeductionsComponent implements OnInit {
     this.saving.set(true);
     try {
       const fid = this.filingId();
-      for (const id of this.removedIds) await this.filingService.deleteReliefEntry(id);
-      this.removedIds = [];
+      const deleteIds: string[] = [...this.removedIds];
+      const deletedStandardIds: string[] = [];
 
       const entries: ReliefEntry[] = [...this.whtEntries(), ...this.otherEntries()];
       for (const [type, key] of Object.entries(STANDARD_FIELDS) as [StandardRelief, FieldKey][]) {
@@ -444,23 +444,32 @@ export class StepDeductionsComponent implements OnInit {
         const hasDocs = (entry.documents?.length ?? 0) > 0;
         if (amount <= 0 && !hasDocs) {
           if (this.persistedStandardIds.has(entry.id)) {
-            await this.filingService.deleteReliefEntry(entry.id);
-            this.persistedStandardIds.delete(entry.id);
+            deleteIds.push(entry.id);
+            deletedStandardIds.push(entry.id);
           }
           continue;
         }
         entries.push(entry);
       }
 
-      const failed: string[] = [];
-      for (const entry of entries) {
+      const toSave: ReliefEntry[] = entries.map(entry => {
         if (entry.reliefType === 'wht' || entry.reliefType === 'other_approved') {
           entry.approvedAmount = entry.claimedAmount;
         }
-        await this.filingService.upsertReliefEntry({ ...entry, filingId: fid });
+        return { ...entry, filingId: fid };
+      });
+
+      await this.filingService.saveReliefEntries(fid, toSave, deleteIds);
+      this.removedIds = [];
+      for (const id of deletedStandardIds) this.persistedStandardIds.delete(id);
+      for (const entry of entries) {
         if (entry.reliefType in STANDARD_FIELDS) {
           this.persistedStandardIds.add(entry.id);
         }
+      }
+
+      const failed: string[] = [];
+      for (const entry of entries) {
         failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));

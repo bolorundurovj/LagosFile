@@ -142,10 +142,13 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
       'listIncomeEntries',
       'upsertIncomeEntry',
       'deleteIncomeEntry',
+      'saveIncomeEntries',
       'listAllowances',
+      'saveAllowances',
       'listReliefEntries',
       'upsertReliefEntry',
       'deleteReliefEntry',
+      'saveReliefEntries',
       'amendFiling',
       'createDraft',
       'compute',
@@ -159,8 +162,11 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
     filingServiceSpy.getFiling.and.resolveTo(draftFiling);
     filingServiceSpy.listIncomeEntries.and.resolveTo([]);
     filingServiceSpy.upsertIncomeEntry.and.callFake(async (e: IncomeEntry) => e);
+    filingServiceSpy.saveIncomeEntries.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
     filingServiceSpy.listAllowances.and.resolveTo([]);
+    filingServiceSpy.saveAllowances.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
     filingServiceSpy.listReliefEntries.and.resolveTo([]);
+    filingServiceSpy.saveReliefEntries.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
     filingServiceSpy.listFilings.and.resolveTo([]);
 
     await TestBed.configureTestingModule({
@@ -202,11 +208,18 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
   it('saves dirty income edits when navigating via sidebar to step 3 and preserves them on return', async () => {
     const savedStore: IncomeEntry[] = [];
     filingServiceSpy.listIncomeEntries.and.callFake(async () => savedStore.map(e => ({ ...e, documents: [...e.documents] })));
-    filingServiceSpy.upsertIncomeEntry.and.callFake(async (e: IncomeEntry) => {
-      const idx = savedStore.findIndex(x => x.id === e.id);
-      if (idx >= 0) savedStore[idx] = { ...e };
-      else savedStore.push({ ...e });
-      return e;
+    filingServiceSpy.saveIncomeEntries.and.callFake(async (_fid, upserts, deleteIds) => {
+      for (const delId of deleteIds) {
+        const idx = savedStore.findIndex(x => x.id === delId);
+        if (idx >= 0) savedStore.splice(idx, 1);
+      }
+      for (const u of upserts) {
+        const e = u as IncomeEntry;
+        const idx = savedStore.findIndex(x => x.id === e.id);
+        if (idx >= 0) savedStore[idx] = { ...e };
+        else savedStore.push({ ...e });
+      }
+      return upserts.map(u => u.id ?? '');
     });
 
     const fixture = TestBed.createComponent(FilingWizardComponent);
@@ -233,7 +246,7 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
     fixture.detectChanges();
 
     expect(comp.currentStep()).toBe(3);
-    expect(filingServiceSpy.upsertIncomeEntry).toHaveBeenCalled();
+    expect(filingServiceSpy.saveIncomeEntries).toHaveBeenCalledTimes(1);
     expect(savedStore.length).toBe(1);
     expect(savedStore[0].grossAmountNgn).toBe(4_200_000);
 

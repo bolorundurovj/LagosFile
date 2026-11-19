@@ -388,7 +388,14 @@ pub async fn unlock_db(
     Ok(taxpayer)
 }
 
-pub fn persist_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+pub fn persist_db_in_dir_with_hook<F>(
+    dir: &Path,
+    state: &AppState,
+    before_rename: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
     let guard = state.db.lock().unwrap();
     let key_guard = state.key.lock().unwrap();
     let salt_guard = state.salt.lock().unwrap();
@@ -396,9 +403,13 @@ pub fn persist_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
         (guard.as_ref(), key_guard.as_ref(), salt_guard.as_ref())
     {
         let bytes = db.serialize().map_err(|e| e.to_string())?;
-        vault::write_atomic(dir, &bytes, key, salt)?;
+        vault::write_atomic_with_hook(dir, &bytes, key, salt, before_rename)?;
     }
     Ok(())
+}
+
+pub fn persist_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+    persist_db_in_dir_with_hook(dir, state, |_| Ok(()))
 }
 
 pub async fn persist_db(state: &AppState) -> Result<(), String> {

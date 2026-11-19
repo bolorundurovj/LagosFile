@@ -71,6 +71,14 @@ export class FilingService {
     return this.tauri.invoke('delete_income_entry', { id });
   }
 
+  async saveIncomeEntries(
+    filingId: string,
+    upserts: (Partial<IncomeEntry> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_income_entries', { filingId, upserts, deleteIds });
+  }
+
   async listAllowances(filingId: string): Promise<CapitalAllowance[]> {
     return this.tauri.invoke<CapitalAllowance[]>('list_allowances', { filingId });
   }
@@ -81,6 +89,14 @@ export class FilingService {
 
   async deleteAllowance(id: string): Promise<void> {
     return this.tauri.invoke('delete_allowance', { id });
+  }
+
+  async saveAllowances(
+    filingId: string,
+    upserts: (Partial<CapitalAllowance> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_allowances', { filingId, upserts, deleteIds });
   }
 
   /** Returns CA entries from the most recent confirmed filing for yearOfAssessment-1,
@@ -101,6 +117,14 @@ export class FilingService {
 
   async deleteReliefEntry(id: string): Promise<void> {
     return this.tauri.invoke('delete_relief_entry', { id });
+  }
+
+  async saveReliefEntries(
+    filingId: string,
+    upserts: (Partial<ReliefEntry> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_relief_entries', { filingId, upserts, deleteIds });
   }
 
   async attachDocument(

@@ -381,12 +381,17 @@ export class StepAllowancesComponent implements OnInit {
   async save(): Promise<boolean> {
     this.saving.set(true);
     try {
-      for (const id of this.removedIds) await this.filingService.deleteAllowance(id);
-      this.removedIds = [];
-      const failed: string[] = [];
+      const fid = this.filingId();
+      const toSave: CapitalAllowance[] = [];
       for (const entry of this.entries()) {
         this.recalculate(entry);
-        await this.filingService.upsertAllowance({ ...entry, filingId: this.filingId() });
+        toSave.push({ ...entry, filingId: fid });
+      }
+      await this.filingService.saveAllowances(fid, toSave, [...this.removedIds]);
+      this.removedIds = [];
+
+      const failed: string[] = [];
+      for (const entry of this.entries()) {
         failed.push(...await flushDocuments(this.filingService, entry, 'capital_allowance'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));

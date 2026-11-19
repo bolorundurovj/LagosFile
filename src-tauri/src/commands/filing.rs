@@ -1304,6 +1304,303 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
     delete_relief_entry_in_dir(&crate::db::app_dir(), &id, &state)
 }
 
+fn collect_and_delete_entry_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    table: &str,
+    id: &str,
+) -> Result<Vec<String>, String> {
+    require_draft_for_entry_id(tx, table, id)?;
+    let paths: Vec<String> = {
+        let mut stmt = tx
+            .prepare("SELECT file_path FROM document WHERE parent_entry_id=?1")
+            .map_err(|e| e.to_string())?;
+        let collected = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        collected
+    };
+    tx.execute("DELETE FROM document WHERE parent_entry_id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(paths)
+}
+
+fn normalize_batch_entry(
+    filing_id: &str,
+    entry: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut obj = entry
+        .as_object()
+        .ok_or_else(|| "Batch entry must be a JSON object.".to_string())?
+        .clone();
+    if let Some(fid_val) = obj.get("filingId").and_then(|v| v.as_str()) {
+        if !fid_val.is_empty() && fid_val != filing_id {
+            return Err(format!(
+                "Entry filingId '{}' does not match target filing '{}'.",
+                fid_val, filing_id
+            ));
+        }
+    }
+    obj.insert(
+        "filingId".to_string(),
+        serde_json::Value::String(filing_id.to_string()),
+    );
+    Ok(serde_json::Value::Object(obj))
+}
+
+fn validate_income_entry(entry: &serde_json::Value) -> Result<(), String> {
+    let income_type = entry["incomeType"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Income entry requires a non-empty incomeType.".to_string())?;
+    let gross = entry["grossAmountNgn"]
+        .as_f64()
+        .ok_or_else(|| "Income entry requires a numeric grossAmountNgn.".to_string())?;
+    if !gross.is_finite() {
+        return Err("Income entry grossAmountNgn must be finite.".to_string());
+    }
+    if income_type != "digital_asset" && income_type != "capital_gain_shares" && gross < 0.0 {
+        return Err("Income entry grossAmountNgn cannot be negative.".to_string());
+    }
+    Ok(())
+}
+
+fn validate_allowance_entry(entry: &serde_json::Value) -> Result<(), String> {
+    let asset_type = entry["assetType"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Capital allowance requires a non-empty assetType.".to_string())?;
+    let _ = asset_type;
+    let cost = entry["assetCost"]
+        .as_f64()
+        .ok_or_else(|| "Capital allowance requires a numeric assetCost.".to_string())?;
+    let wdv = entry["taxWrittenDownValue"].as_f64().unwrap_or(0.0);
+    let rate = entry["annualAllowanceRate"].as_f64().unwrap_or(0.0);
+    if !cost.is_finite() || cost < 0.0 {
+        return Err("Capital allowance assetCost must be a non-negative finite number.".to_string());
+    }
+    if !wdv.is_finite() || wdv < 0.0 {
+        return Err(
+            "Capital allowance taxWrittenDownValue must be a non-negative finite number."
+                .to_string(),
+        );
+    }
+    if !rate.is_finite() || !(0.0..=1.0).contains(&rate) {
+        return Err("Capital allowance rate must be between 0 and 1.".to_string());
+    }
+    Ok(())
+}
+
+fn validate_relief_entry(entry: &serde_json::Value) -> Result<(), String> {
+    let _relief_type = entry["reliefType"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Relief entry requires a non-empty reliefType.".to_string())?;
+    let claimed = entry["claimedAmount"]
+        .as_f64()
+        .ok_or_else(|| "Relief entry requires a numeric claimedAmount.".to_string())?;
+    let approved = entry["approvedAmount"].as_f64().unwrap_or(claimed);
+    if !claimed.is_finite() || claimed < 0.0 {
+        return Err("Relief entry claimedAmount must be a non-negative finite number.".to_string());
+    }
+    if !approved.is_finite() || approved < 0.0 {
+        return Err("Relief entry approvedAmount must be a non-negative finite number.".to_string());
+    }
+    Ok(())
+}
+
+struct BatchSaveRequest<'a> {
+    dir: &'a std::path::Path,
+    table: &'a str,
+    filing_id: &'a str,
+    upserts: &'a [serde_json::Value],
+    delete_ids: &'a [String],
+    state: &'a AppState,
+}
+
+fn save_batch_in_dir_with_hook<F, V, U>(
+    req: BatchSaveRequest<'_>,
+    validate: V,
+    upsert: U,
+    on_vault_write: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(), String>,
+    V: Fn(&serde_json::Value) -> Result<(), String>,
+    U: Fn(&rusqlite::Connection, &serde_json::Value) -> Result<String, String>,
+{
+    let (saved_ids, candidate_paths) = {
+        let guard = req.state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        require_draft_filing(&tx, req.filing_id)?;
+
+        let mut candidate_paths = Vec::new();
+        for del_id in req.delete_ids {
+            candidate_paths.extend(collect_and_delete_entry_in_tx(&tx, req.table, del_id)?);
+        }
+
+        let mut saved_ids = Vec::with_capacity(req.upserts.len());
+        for raw_entry in req.upserts {
+            let normalized = normalize_batch_entry(req.filing_id, raw_entry)?;
+            validate(&normalized)?;
+            let id = upsert(&tx, &normalized)?;
+            saved_ids.push(id);
+        }
+
+        tx.commit().map_err(|e| e.to_string())?;
+        (saved_ids, candidate_paths)
+    };
+
+    crate::commands::auth::persist_db_in_dir_with_hook(req.dir, req.state, on_vault_write)?;
+
+    if !candidate_paths.is_empty() {
+        let guard = req.state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(req.dir, &conn, &candidate_paths);
+        }
+    }
+
+    Ok(saved_ids)
+}
+
+pub fn save_income_entries_in_dir_with_hook<F>(
+    dir: &std::path::Path,
+    filing_id: &str,
+    upserts: &[serde_json::Value],
+    delete_ids: &[String],
+    state: &AppState,
+    on_vault_write: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(), String>,
+{
+    save_batch_in_dir_with_hook(
+        BatchSaveRequest {
+            dir,
+            table: "income_entry",
+            filing_id,
+            upserts,
+            delete_ids,
+            state,
+        },
+        validate_income_entry,
+        upsert_income_entry_with_conn,
+        on_vault_write,
+    )
+}
+
+pub fn save_allowances_in_dir_with_hook<F>(
+    dir: &std::path::Path,
+    filing_id: &str,
+    upserts: &[serde_json::Value],
+    delete_ids: &[String],
+    state: &AppState,
+    on_vault_write: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(), String>,
+{
+    save_batch_in_dir_with_hook(
+        BatchSaveRequest {
+            dir,
+            table: "capital_allowance",
+            filing_id,
+            upserts,
+            delete_ids,
+            state,
+        },
+        validate_allowance_entry,
+        upsert_allowance_with_conn,
+        on_vault_write,
+    )
+}
+
+pub fn save_relief_entries_in_dir_with_hook<F>(
+    dir: &std::path::Path,
+    filing_id: &str,
+    upserts: &[serde_json::Value],
+    delete_ids: &[String],
+    state: &AppState,
+    on_vault_write: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&std::path::Path) -> Result<(), String>,
+{
+    save_batch_in_dir_with_hook(
+        BatchSaveRequest {
+            dir,
+            table: "relief_entry",
+            filing_id,
+            upserts,
+            delete_ids,
+            state,
+        },
+        validate_relief_entry,
+        upsert_relief_entry_with_conn,
+        on_vault_write,
+    )
+}
+
+#[tauri::command]
+pub async fn save_income_entries(
+    filing_id: String,
+    upserts: Vec<serde_json::Value>,
+    delete_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    save_income_entries_in_dir_with_hook(
+        &crate::db::app_dir(),
+        &filing_id,
+        &upserts,
+        &delete_ids,
+        &state,
+        |_| Ok(()),
+    )
+}
+
+#[tauri::command]
+pub async fn save_allowances(
+    filing_id: String,
+    upserts: Vec<serde_json::Value>,
+    delete_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    save_allowances_in_dir_with_hook(
+        &crate::db::app_dir(),
+        &filing_id,
+        &upserts,
+        &delete_ids,
+        &state,
+        |_| Ok(()),
+    )
+}
+
+#[tauri::command]
+pub async fn save_relief_entries(
+    filing_id: String,
+    upserts: Vec<serde_json::Value>,
+    delete_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    save_relief_entries_in_dir_with_hook(
+        &crate::db::app_dir(),
+        &filing_id,
+        &upserts,
+        &delete_ids,
+        &state,
+        |_| Ok(()),
+    )
+}
+
 pub fn compute_filing_with_conn(
     conn: &rusqlite::Connection,
     filing_id: &str,

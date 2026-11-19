@@ -693,3 +693,232 @@ fn test_estimate_entries_use_config_allowance_rate() {
     let r2 = ComputationEngine::compute(&income2, &allowances2, &reliefs2, &config).unwrap();
     assert!((r2.total_capital_allowances - 99_000.0).abs() < 1e-6);
 }
+
+#[test]
+fn test_s25_batch_saves_execute_one_vault_write_per_step_and_rollback_on_invalid_entry() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{setup_pin_in_dir, unlock_db_in_dir},
+            filing::{
+                create_draft_filing_with_conn, save_allowances_in_dir_with_hook,
+                save_income_entries_in_dir_with_hook, save_relief_entries_in_dir_with_hook,
+            },
+        },
+        AppState,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s25-{}", Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let filing_id = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        ProfileService::create(
+            db,
+            json!({ "fullName": "Batch User", "tin": "1234567890123" }),
+        )
+        .unwrap();
+        let conn = db.conn.lock().unwrap();
+        create_draft_filing_with_conn(&conn, 2025)
+            .unwrap()
+            .id
+            .to_string()
+    };
+
+    // Seed one income entry so we can test upsert + delete in one batch
+    let seed_inc_id = Uuid::new_v4().to_string();
+    let write_count = AtomicUsize::new(0);
+    save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[json!({
+            "id": seed_inc_id,
+            "filingId": filing_id,
+            "incomeType": "employment",
+            "grossAmountNgn": 1_000_000.0
+        })],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // 1. Batch with invalid entry must roll back BOTH the delete of seed_inc_id and the earlier valid insert,
+    //    and make ZERO vault writes.
+    write_count.store(0, Ordering::SeqCst);
+    let bad_income = save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({
+                "id": Uuid::new_v4().to_string(),
+                "filingId": filing_id,
+                "incomeType": "employment",
+                "grossAmountNgn": 2_000_000.0
+            }),
+            json!({
+                "id": Uuid::new_v4().to_string(),
+                "filingId": filing_id,
+                "incomeType": "employment",
+                "grossAmountNgn": -500.0
+            }),
+        ],
+        std::slice::from_ref(&seed_inc_id),
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    assert!(bad_income.is_err());
+    assert_eq!(
+        write_count.load(Ordering::SeqCst),
+        0,
+        "failed batch must not write vault"
+    );
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE filing_id=?1",
+                rusqlite::params![filing_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "rollback must leave only the original seeded entry");
+        let still_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE id=?1",
+                rusqlite::params![seed_inc_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_exists, 1, "rollback must restore the deleted entry");
+    }
+
+    // 2. Valid batch with 4 upserts + 1 delete executes EXACTLY 1 vault write
+    write_count.store(0, Ordering::SeqCst);
+    save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "employment", "grossAmountNgn": 2_000_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "business", "grossAmountNgn": 1_500_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "dividend", "grossAmountNgn": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "interest", "grossAmountNgn": 100_000.0 }),
+        ],
+        &[seed_inc_id],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        write_count.load(Ordering::SeqCst),
+        1,
+        "income batch of 4 upserts + 1 delete must write vault exactly once"
+    );
+
+    // 3. Allowances: invalid rate rolls back (0 writes), valid batch of 3 upserts writes vault once
+    write_count.store(0, Ordering::SeqCst);
+    assert!(save_allowances_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 100_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 2.5, "annualAllowanceAmount": 100_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .is_err());
+    assert_eq!(write_count.load(Ordering::SeqCst), 0);
+
+    save_allowances_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "computer_laptop", "assetCost": 1_000_000.0, "taxWrittenDownValue": 1_000_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 250_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 100_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // 4. Reliefs: invalid negative amount rolls back (0 writes), valid batch of 4 upserts writes vault once
+    write_count.store(0, Ordering::SeqCst);
+    assert!(save_relief_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "pension", "claimedAmount": 300_000.0, "approvedAmount": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "nhf", "claimedAmount": -100.0, "approvedAmount": 0.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .is_err());
+    assert_eq!(write_count.load(Ordering::SeqCst), 0);
+
+    save_relief_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "pension", "claimedAmount": 300_000.0, "approvedAmount": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "nhf", "claimedAmount": 100_000.0, "approvedAmount": 100_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "rent", "claimedAmount": 1_500_000.0, "approvedAmount": 1_500_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "wht", "claimedAmount": 50_000.0, "approvedAmount": 50_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // Reload from disk to confirm all batch writes persisted
+    let reloaded = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &reloaded).unwrap();
+    let guard = reloaded.db.lock().unwrap();
+    let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+    let inc_cnt: i64 = conn
+        .query_row("SELECT COUNT(*) FROM income_entry WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .unwrap();
+    let ca_cnt: i64 = conn
+        .query_row("SELECT COUNT(*) FROM capital_allowance WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .unwrap();
+    let rel_cnt: i64 = conn
+        .query_row("SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(inc_cnt, 4);
+    assert_eq!(ca_cnt, 2);
+    assert_eq!(rel_cnt, 4);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

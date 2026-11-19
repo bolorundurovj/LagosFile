@@ -612,10 +612,9 @@ export class StepIncomeComponent implements OnInit {
   async save(): Promise<boolean> {
     this.saving.set(true);
     try {
-      for (const id of this.removedIds) await this.filingService.deleteIncomeEntry(id);
-      this.removedIds = [];
+      const fid = this.filingId();
       const exempt = this.cgtSummary().exempt;
-      const failed: string[] = [];
+      const toSave: IncomeEntry[] = [];
       for (const entry of this.entries()) {
         if (entry.incomeType === 'benefits_in_kind') {
           entry.isForeign = false;
@@ -627,7 +626,13 @@ export class StepIncomeComponent implements OnInit {
           entry.grossAmountNgn = entry.cgtGain ?? 0;
           entry.isCgtExempt = exempt;
         }
-        await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
+        toSave.push({ ...entry, filingId: fid });
+      }
+      await this.filingService.saveIncomeEntries(fid, toSave, [...this.removedIds]);
+      this.removedIds = [];
+
+      const failed: string[] = [];
+      for (const entry of this.entries()) {
         failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));

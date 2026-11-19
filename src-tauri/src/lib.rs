@@ -65,15 +65,18 @@ pub fn run() {
             commands::filing::list_income_entries,
             commands::filing::upsert_income_entry,
             commands::filing::delete_income_entry,
+            commands::filing::save_income_entries,
             // Capital allowances
             commands::filing::list_allowances,
             commands::filing::upsert_allowance,
             commands::filing::delete_allowance,
+            commands::filing::save_allowances,
             commands::filing::get_prior_year_allowances,
             // Relief entries
             commands::filing::list_relief_entries,
             commands::filing::upsert_relief_entry,
             commands::filing::delete_relief_entry,
+            commands::filing::save_relief_entries,
             // Computation
             commands::filing::compute_filing,
             commands::filing::estimate_tax,

@@ -23,6 +23,7 @@ describe('StepAllowancesComponent', () => {
       'listAllowances',
       'upsertAllowance',
       'deleteAllowance',
+      'saveAllowances',
       'getPriorYearAllowances',
       'attachDocument',
     ]);
@@ -30,6 +31,7 @@ describe('StepAllowancesComponent', () => {
     filingServiceSpy.listAllowances.and.resolveTo([]);
     filingServiceSpy.upsertAllowance.and.callFake(async (a: CapitalAllowance) => a);
     filingServiceSpy.deleteAllowance.and.resolveTo();
+    filingServiceSpy.saveAllowances.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
 
     await TestBed.configureTestingModule({
       imports: [StepAllowancesComponent],
@@ -124,5 +126,31 @@ describe('StepAllowancesComponent', () => {
     // Calling again skips everything already present
     await comp.loadFromPriorYear();
     expect(comp.entries().length).toBe(2);
+  });
+
+  it('saves multiple allowances and deletes in a single batch invoke', async () => {
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    comp.addEntry();
+    comp.entries()[0].assetCost = 1_000_000;
+    comp.addEntry();
+    comp.entries()[1].assetCost = 500_000;
+    const removedId = comp.entries()[0].id;
+    comp.removeEntry(removedId);
+    comp.addEntry();
+    comp.entries()[1].assetCost = 750_000;
+
+    await comp.save();
+
+    expect(filingServiceSpy.saveAllowances).toHaveBeenCalledTimes(1);
+    expect(filingServiceSpy.upsertAllowance).not.toHaveBeenCalled();
+    expect(filingServiceSpy.deleteAllowance).not.toHaveBeenCalled();
+    const [fid, upserts, deleteIds] = filingServiceSpy.saveAllowances.calls.mostRecent().args;
+    expect(fid).toBe('filing-1');
+    expect(upserts.length).toBe(2);
+    expect(deleteIds).toEqual([removedId]);
   });
 });

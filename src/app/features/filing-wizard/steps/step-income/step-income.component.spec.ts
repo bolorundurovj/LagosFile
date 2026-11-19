@@ -48,6 +48,7 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
       'listIncomeEntries',
       'upsertIncomeEntry',
       'deleteIncomeEntry',
+      'saveIncomeEntries',
       'attachDocument',
       'deleteDocument',
     ]);
@@ -57,6 +58,7 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
 
     filingServiceSpy.listIncomeEntries.and.resolveTo([]);
     filingServiceSpy.upsertIncomeEntry.and.callFake(async (e: IncomeEntry) => e);
+    filingServiceSpy.saveIncomeEntries.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
 
     await TestBed.configureTestingModule({
       imports: [StepIncomeComponent],
@@ -159,8 +161,10 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     expect(entry.grossAmountNgn).toBe(15_000_000);
 
     await comp.saveAndNext();
-    expect(filingServiceSpy.upsertIncomeEntry).toHaveBeenCalled();
-    const saved = filingServiceSpy.upsertIncomeEntry.calls.mostRecent().args[0];
+    expect(filingServiceSpy.saveIncomeEntries).toHaveBeenCalledTimes(1);
+    const [, savedEntries] = filingServiceSpy.saveIncomeEntries.calls.mostRecent().args;
+    expect(savedEntries.length).toBe(1);
+    const saved = savedEntries[0];
     expect(saved.grossAmountNgn).toBe(15_000_000);
     expect(saved.cgtGain).toBe(15_000_000);
     expect(saved.isCgtExempt).toBeFalse();
@@ -268,5 +272,39 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     await comp.onRemoveDocument(entry, entry.documents[0].id);
     expect(filingServiceSpy.deleteDocument).toHaveBeenCalledWith('real-db-doc-99');
     expect(entry.documents.length).toBe(0);
+  });
+
+  it('saves multiple income upserts and deletes in a single batch invoke', async () => {
+    const existing: IncomeEntry = {
+      id: 'inc-old',
+      filingId: 'filing-1',
+      incomeType: 'employment',
+      grossAmountNgn: 1_000_000,
+      isForeign: false,
+      isCgtExempt: false,
+      documents: [],
+    };
+    filingServiceSpy.listIncomeEntries.and.resolveTo([existing]);
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    comp.removeEntry('inc-old');
+    comp.addEntry();
+    comp.entries()[0].grossAmountNgn = 2_000_000;
+    comp.addEntry();
+    comp.entries()[1].grossAmountNgn = 3_000_000;
+
+    await comp.save();
+
+    expect(filingServiceSpy.saveIncomeEntries).toHaveBeenCalledTimes(1);
+    expect(filingServiceSpy.upsertIncomeEntry).not.toHaveBeenCalled();
+    expect(filingServiceSpy.deleteIncomeEntry).not.toHaveBeenCalled();
+    const [fid, upserts, deleteIds] = filingServiceSpy.saveIncomeEntries.calls.mostRecent().args;
+    expect(fid).toBe('filing-1');
+    expect(upserts.length).toBe(2);
+    expect(deleteIds).toEqual(['inc-old']);
   });
 });

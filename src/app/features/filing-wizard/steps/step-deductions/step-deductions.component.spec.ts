@@ -23,12 +23,14 @@ describe('StepDeductionsComponent', () => {
       'listReliefEntries',
       'upsertReliefEntry',
       'deleteReliefEntry',
+      'saveReliefEntries',
       'attachDocument',
     ]);
     toastSpy = jasmine.createSpyObj('ToastService', ['error', 'success', 'info', 'warning']);
     filingServiceSpy.listReliefEntries.and.resolveTo([]);
     filingServiceSpy.upsertReliefEntry.and.callFake(async (e: ReliefEntry) => e);
     filingServiceSpy.deleteReliefEntry.and.resolveTo();
+    filingServiceSpy.saveReliefEntries.and.callFake(async (_fid, upserts) => upserts.map(u => u.id ?? ''));
 
     await TestBed.configureTestingModule({
       imports: [StepDeductionsComponent],
@@ -98,11 +100,14 @@ describe('StepDeductionsComponent', () => {
 
     await comp.save();
 
-    // Only rent (non-zero) should be upserted
-    expect(filingServiceSpy.upsertReliefEntry.calls.count()).toBe(1);
-    expect(filingServiceSpy.upsertReliefEntry.calls.mostRecent().args[0].reliefType).toBe('rent');
-    // Both previously persisted zero rows (pension + nhf) should be deleted
-    const deletedIds = filingServiceSpy.deleteReliefEntry.calls.allArgs().map(a => a[0]);
+    // Single batch invoke: only rent (non-zero) upserted; both zeroed persisted rows deleted
+    expect(filingServiceSpy.saveReliefEntries).toHaveBeenCalledTimes(1);
+    expect(filingServiceSpy.upsertReliefEntry).not.toHaveBeenCalled();
+    expect(filingServiceSpy.deleteReliefEntry).not.toHaveBeenCalled();
+    const [fid, upserts, deletedIds] = filingServiceSpy.saveReliefEntries.calls.mostRecent().args;
+    expect(fid).toBe('filing-1');
+    expect(upserts.length).toBe(1);
+    expect(upserts[0].reliefType).toBe('rent');
     expect(deletedIds).toContain('rel-pension-1');
     expect(deletedIds).toContain('rel-nhf-1');
   });
