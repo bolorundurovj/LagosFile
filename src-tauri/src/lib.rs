@@ -5,9 +5,12 @@ pub mod services;
 
 use db::AppDb;
 use std::sync::Mutex;
+
+#[derive(Default)]
 pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
+    pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,10 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .manage(AppState {
-            db: Mutex::new(None),
-            key: Mutex::new(None),
-        })
+        .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // Auth
             commands::auth::check_app_status,

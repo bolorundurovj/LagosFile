@@ -4,13 +4,49 @@ use rusqlite::params;
 use std::{
     io::{Read, Write},
     net::TcpListener,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tauri::State;
 use uuid::Uuid;
 
 const LIRS_BRIDGE_PORT: u16 = 19876;
-const LIRS_BRIDGE_TIMEOUT_SECS: u64 = 600; // 10 minutes
+const LIRS_BRIDGE_IDLE_TIMEOUT_SECS: u64 = 600; // 10 minutes
+const LIRS_BRIDGE_MAX_LIFETIME_SECS: u64 = 3600; // 60 minutes hard cap
+
+pub struct BridgeHandle {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    pub port: u16,
+}
+
+impl BridgeHandle {
+    pub fn stop(mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for BridgeHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+pub fn stop_bridge(state: &AppState) {
+    let existing = state.bridge.lock().unwrap().take();
+    if let Some(handle) = existing {
+        handle.stop();
+    }
+}
 
 fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig> {
     conn.query_row(
@@ -421,15 +457,42 @@ pub fn log_automation_failure(filing_id: &str, reason: &str) {
     }
 }
 
-pub fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
+pub fn is_allowed_origin(origin: &str) -> bool {
+    if origin.contains('\r') || origin.contains('\n') {
+        return false;
+    }
+    origin == "https://etax.lirs.net"
+        || origin == "https://etax.lirs.gov.ng"
+        || (origin.starts_with("chrome-extension://") && origin.len() > "chrome-extension://".len())
+        || (origin.starts_with("moz-extension://") && origin.len() > "moz-extension://".len())
+}
+
+pub fn is_allowed_host(host: &str, port: u16) -> bool {
+    host.eq_ignore_ascii_case(&format!("127.0.0.1:{}", port))
+}
+
+pub fn build_http_response(
+    status: u16,
+    content_type: &str,
+    body: &str,
+    allowed_origin: Option<&str>,
+) -> String {
     let status_text = match status {
         200 => "OK",
+        403 => "Forbidden",
         404 => "Not Found",
         _ => "Error",
     };
-    let cors = "Access-Control-Allow-Origin: *\r\n\
-                Access-Control-Allow-Methods: GET, OPTIONS\r\n\
-                Access-Control-Allow-Headers: Content-Type\r\n";
+    let cors = match allowed_origin {
+        Some(orig) => format!(
+            "Access-Control-Allow-Origin: {}\r\n\
+             Vary: Origin\r\n\
+             Access-Control-Allow-Methods: GET, OPTIONS\r\n\
+             Access-Control-Allow-Headers: Content-Type\r\n",
+            orig
+        ),
+        None => String::new(),
+    };
     format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
@@ -441,69 +504,179 @@ pub fn build_http_response(status: u16, content_type: &str, body: &str) -> Strin
     )
 }
 
-fn start_bridge_server(filings_array_json: String, primary_json: String) {
-    std::thread::spawn(move || {
-        let listener = match TcpListener::bind(("127.0.0.1", LIRS_BRIDGE_PORT)) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!(
-                    "[LagosFile] LIRS bridge port {} already in use: {}",
-                    LIRS_BRIDGE_PORT, e
-                );
-                return;
-            }
-        };
-        listener.set_nonblocking(true).ok();
-        println!(
-            "[LagosFile] LIRS bridge started on http://127.0.0.1:{}",
-            LIRS_BRIDGE_PORT
-        );
+pub fn handle_bridge_request(
+    request: &str,
+    port: u16,
+    filings_array_json: &str,
+    primary_json: &str,
+) -> (String, bool) {
+    let mut lines = request.lines();
+    let first_line = lines.next().unwrap_or("");
 
+    let mut host: Option<&str> = None;
+    let mut origin: Option<&str> = None;
+
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            let name_trimmed = name.trim();
+            let val_trimmed = value.trim();
+            if name_trimmed.eq_ignore_ascii_case("host") {
+                host = Some(val_trimmed);
+            } else if name_trimmed.eq_ignore_ascii_case("origin") {
+                origin = Some(val_trimmed);
+            }
+        }
+    }
+
+    match host {
+        Some(h) if is_allowed_host(h, port) => {}
+        _ => return (build_http_response(403, "text/plain", "", None), false),
+    }
+
+    let cors_origin = match origin {
+        Some(orig) => {
+            if is_allowed_origin(orig) {
+                Some(orig)
+            } else {
+                return (build_http_response(403, "text/plain", "", None), false);
+            }
+        }
+        None => None,
+    };
+
+    let response = if first_line.starts_with("OPTIONS") {
+        build_http_response(200, "text/plain", "", cors_origin)
+    } else if first_line.starts_with("GET /filings") {
+        build_http_response(200, "application/json", filings_array_json, cors_origin)
+    } else if first_line.starts_with("GET /filing") {
+        build_http_response(200, "application/json", primary_json, cors_origin)
+    } else if first_line.starts_with("GET /health") {
+        build_http_response(200, "application/json", r#"{"status":"ok"}"#, cors_origin)
+    } else {
+        build_http_response(404, "text/plain", "not found", cors_origin)
+    };
+
+    (response, true)
+}
+
+pub fn start_bridge_on_port(
+    state: &AppState,
+    port: u16,
+    filings_array_json: String,
+    primary_json: String,
+) -> Result<u16, String> {
+    stop_bridge(state);
+
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| format!("Failed to bind LIRS bridge on port {}: {}", port, e))?;
+    let bound_port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = Arc::clone(&stop);
+
+    println!(
+        "[LagosFile] LIRS bridge started on http://127.0.0.1:{}",
+        bound_port
+    );
+
+    let handle = std::thread::spawn(move || {
+        let started_at = Instant::now();
         let mut last_request = Instant::now();
 
         loop {
-            if last_request.elapsed() > Duration::from_secs(LIRS_BRIDGE_TIMEOUT_SECS) {
-                println!("[LagosFile] LIRS bridge idle timeout — shutting down.");
+            if stop_flag.load(Ordering::SeqCst) {
+                println!("[LagosFile] LIRS bridge stopped.");
+                break;
+            }
+            if started_at.elapsed() > Duration::from_secs(LIRS_BRIDGE_MAX_LIFETIME_SECS)
+                || last_request.elapsed() > Duration::from_secs(LIRS_BRIDGE_IDLE_TIMEOUT_SECS)
+            {
+                println!("[LagosFile] LIRS bridge timeout — shutting down.");
                 break;
             }
 
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
-                    last_request = Instant::now();
-
-                    let mut buf = [0u8; 2048];
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                    let mut buf = [0u8; 4096];
                     let n = stream.read(&mut buf).unwrap_or(0);
                     if n == 0 {
                         continue;
                     }
 
                     let request = String::from_utf8_lossy(&buf[..n]);
-                    let first_line = request.lines().next().unwrap_or("");
-
-                    let response = if first_line.starts_with("OPTIONS") {
-                        build_http_response(200, "text/plain", "")
-                    } else if first_line.starts_with("GET /filings") {
-                        build_http_response(200, "application/json", &filings_array_json)
-                    } else if first_line.starts_with("GET /filing") {
-                        build_http_response(200, "application/json", &primary_json)
-                    } else if first_line.starts_with("GET /health") {
-                        build_http_response(200, "application/json", r#"{"status":"ok"}"#)
-                    } else {
-                        build_http_response(404, "text/plain", "not found")
-                    };
+                    let (response, valid) = handle_bridge_request(
+                        &request,
+                        bound_port,
+                        &filings_array_json,
+                        &primary_json,
+                    );
+                    if valid {
+                        last_request = Instant::now();
+                    }
 
                     let _ = stream.write_all(response.as_bytes());
                     let _ = stream.flush();
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(200));
+                    std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => {
-                    std::thread::sleep(Duration::from_millis(200));
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
     });
+
+    *state.bridge.lock().unwrap() = Some(BridgeHandle {
+        stop,
+        handle: Some(handle),
+        port: bound_port,
+    });
+    Ok(bound_port)
+}
+
+pub fn build_all_pending_filings(conn: &rusqlite::Connection) -> Result<Vec<PendingFiling>, String> {
+    let ids: Vec<String> = conn
+        .prepare("SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if ids.is_empty() {
+        return Err(
+            "No confirmed filings found. Confirm a filing before using the LIRS extension."
+                .to_string(),
+        );
+    }
+
+    let mut filings = Vec::new();
+    let mut first_err: Option<String> = None;
+    for id in &ids {
+        match build_pending_filing(conn, id) {
+            Ok(f) => filings.push(f),
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+
+    if filings.is_empty() {
+        return Err(format!(
+            "Could not build any confirmed filings for LIRS: {}",
+            first_err.unwrap_or_else(|| "unknown error".to_string())
+        ));
+    }
+
+    Ok(filings)
 }
 
 #[tauri::command]
@@ -549,7 +722,7 @@ pub async fn open_lirs_portal(
 
     let filings_json = serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
 
-    start_bridge_server(filings_json, primary_json);
+    start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
     if let Err(e) = open::that(portal_url) {
@@ -579,34 +752,14 @@ pub async fn open_lirs_portal_all(
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
-        let ids: Vec<String> = conn
-            .prepare(
-                "SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
-            )
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        if ids.is_empty() {
-            return Err(
-                "No confirmed filings found. Confirm a filing before using the LIRS extension."
-                    .to_string(),
-            );
-        }
-
-        ids.iter()
-            .filter_map(|id| build_pending_filing(&conn, id).ok())
-            .collect::<Vec<_>>()
+        build_all_pending_filings(&conn)?
     };
 
     let count = filings.len();
     let primary_json = serde_json::to_string(&filings[0]).map_err(|e| e.to_string())?;
     let filings_json = serde_json::to_string(&filings).map_err(|e| e.to_string())?;
 
-    start_bridge_server(filings_json, primary_json);
+    start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
     let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
     if let Err(e) = open::that(portal_url) {

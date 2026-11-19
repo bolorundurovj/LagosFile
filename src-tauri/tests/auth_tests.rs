@@ -229,22 +229,15 @@ fn test_different_pins_produce_different_ciphertexts() {
 #[test]
 fn test_setup_pin_refuses_overwrite_and_leaves_files_unchanged() {
     use lagosfile_lib::{commands::auth::setup_pin_in_dir, AppState};
-    use std::sync::Mutex;
 
     let dir = std::env::temp_dir().join(format!("lagosfile-s1-overwrite-{}", uuid::Uuid::new_v4()));
-    let state = AppState {
-        db: Mutex::new(None),
-        key: Mutex::new(None),
-    };
+    let state = AppState::default();
 
     setup_pin_in_dir(&dir, "1234", &state).expect("first setup should succeed");
     let db_bytes_before = std::fs::read(dir.join("lagosfile.db.enc")).unwrap();
     let salt_bytes_before = std::fs::read(dir.join(".salt")).unwrap();
 
-    let state2 = AppState {
-        db: Mutex::new(None),
-        key: Mutex::new(None),
-    };
+    let state2 = AppState::default();
     let err = setup_pin_in_dir(&dir, "9999", &state2).expect_err("second setup must fail");
     assert!(err.contains("already exists"), "unexpected error: {err}");
 
@@ -259,7 +252,7 @@ fn test_setup_pin_refuses_overwrite_and_leaves_files_unchanged() {
 #[test]
 fn test_setup_pin_concurrent_calls_produce_exactly_one_vault() {
     use lagosfile_lib::{commands::auth::setup_pin_in_dir, AppState};
-    use std::sync::{Arc, Barrier, Mutex};
+    use std::sync::{Arc, Barrier};
 
     let dir = std::env::temp_dir().join(format!("lagosfile-s1-race-{}", uuid::Uuid::new_v4()));
     let barrier = Arc::new(Barrier::new(2));
@@ -269,10 +262,7 @@ fn test_setup_pin_concurrent_calls_produce_exactly_one_vault() {
             let d = dir.clone();
             let b = Arc::clone(&barrier);
             std::thread::spawn(move || {
-                let state = AppState {
-                    db: Mutex::new(None),
-                    key: Mutex::new(None),
-                };
+                let state = AppState::default();
                 b.wait();
                 setup_pin_in_dir(&d, if i == 0 { "1234" } else { "5678" }, &state)
             })
@@ -301,17 +291,13 @@ fn test_setup_pin_concurrent_calls_produce_exactly_one_vault() {
 #[test]
 fn test_setup_pin_allows_retry_with_leftover_salt_file() {
     use lagosfile_lib::{commands::auth::setup_pin_in_dir, AppState};
-    use std::sync::Mutex;
 
     let dir = std::env::temp_dir().join(format!("lagosfile-s1-salt-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let stale_salt = [0xAAu8; 16];
     std::fs::write(dir.join(".salt"), stale_salt).unwrap();
 
-    let state = AppState {
-        db: Mutex::new(None),
-        key: Mutex::new(None),
-    };
+    let state = AppState::default();
     setup_pin_in_dir(&dir, "4321", &state).expect("setup should succeed with lone .salt");
 
     let salt = std::fs::read(dir.join(".salt")).unwrap();

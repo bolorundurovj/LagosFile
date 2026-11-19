@@ -301,12 +301,19 @@ pub async fn unlock_db(
     Ok(taxpayer)
 }
 
-#[tauri::command]
-pub async fn lock_db(state: State<'_, AppState>) -> Result<(), String> {
-    persist_db(&state).await?;
+pub async fn lock_db_in_dir(dir: &std::path::Path, state: &AppState) -> Result<(), String> {
+    persist_db(state).await?;
+    crate::commands::lirs::stop_bridge(state);
+    let _ = std::fs::remove_file(dir.join("pending_filing.json"));
     *state.db.lock().unwrap() = None;
     *state.key.lock().unwrap() = None;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn lock_db(state: State<'_, AppState>) -> Result<(), String> {
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    lock_db_in_dir(&home.join("LagosFile"), &state).await
 }
 
 #[tauri::command]
