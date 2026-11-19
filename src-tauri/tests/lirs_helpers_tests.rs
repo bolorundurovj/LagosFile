@@ -83,7 +83,7 @@ fn test_build_http_response_cors_headers() {
     assert!(response.contains("Access-Control-Allow-Origin: chrome-extension://abcdefghijklmnop"));
     assert!(response.contains("Vary: Origin"));
     assert!(response.contains("Access-Control-Allow-Methods: GET, OPTIONS"));
-    assert!(response.contains("Access-Control-Allow-Headers: Content-Type"));
+    assert!(response.contains("Access-Control-Allow-Headers: Content-Type, X-LagosFile-Token"));
 }
 
 #[test]
@@ -109,11 +109,16 @@ fn test_format_payer_id_preserves_full_c_prefix() {
 fn test_bridge_rejects_foreign_origin_and_wrong_host() {
     let filings = r#"[{"taxpayer":{"tin":"1234567890123"}}]"#;
     let primary = r#"{"taxpayer":{"tin":"1234567890123"}}"#;
+    let token = "deadbeef0123456789abcdef0123456789abcdef0123456789abcdef01234567";
 
     // Foreign Origin gets 403 with empty body and no filing data
     let (resp, valid) = lirs::handle_bridge_request(
-        "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://evil.example\r\n\r\n",
+        &format!(
+            "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://evil.example\r\nX-LagosFile-Token: {}\r\n\r\n",
+            token
+        ),
         19876,
+        token,
         filings,
         primary,
     );
@@ -124,8 +129,12 @@ fn test_bridge_rejects_foreign_origin_and_wrong_host() {
 
     // Wrong Host (DNS rebinding) gets 403 with empty body and no filing data
     let (resp, valid) = lirs::handle_bridge_request(
-        "GET /filings HTTP/1.1\r\nHost: evil.example:19876\r\n\r\n",
+        &format!(
+            "GET /filings HTTP/1.1\r\nHost: evil.example:19876\r\nX-LagosFile-Token: {}\r\n\r\n",
+            token
+        ),
         19876,
+        token,
         filings,
         primary,
     );
@@ -133,10 +142,14 @@ fn test_bridge_rejects_foreign_origin_and_wrong_host() {
     assert!(resp.starts_with("HTTP/1.1 403 Forbidden\r\n"));
     assert!(!resp.contains("1234567890123"));
 
-    // Allowed portal origin echoes origin and returns data
+    // Allowed portal origin with valid token echoes origin and returns data
     let (resp, valid) = lirs::handle_bridge_request(
-        "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\n\r\n",
+        &format!(
+            "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\nX-LagosFile-Token: {}\r\n\r\n",
+            token
+        ),
         19876,
+        token,
         filings,
         primary,
     );
@@ -144,6 +157,44 @@ fn test_bridge_rejects_foreign_origin_and_wrong_host() {
     assert!(resp.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(resp.contains("Access-Control-Allow-Origin: https://etax.lirs.net\r\n"));
     assert!(resp.contains("1234567890123"));
+
+    // Missing token gets 403 with empty body and does not reset idle timer
+    let (resp, valid) = lirs::handle_bridge_request(
+        "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\n\r\n",
+        19876,
+        token,
+        filings,
+        primary,
+    );
+    assert!(!valid);
+    assert!(resp.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(resp.contains("Content-Length: 0\r\n"));
+    assert!(!resp.contains("1234567890123"));
+
+    // Wrong token gets 403 with empty body and does not reset idle timer
+    let (resp, valid) = lirs::handle_bridge_request(
+        "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\nX-LagosFile-Token: wrong-token\r\n\r\n",
+        19876,
+        token,
+        filings,
+        primary,
+    );
+    assert!(!valid);
+    assert!(resp.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(resp.contains("Content-Length: 0\r\n"));
+    assert!(!resp.contains("1234567890123"));
+
+    // OPTIONS preflight returns 200 with CORS headers but does NOT reset idle timer
+    let (resp, valid) = lirs::handle_bridge_request(
+        "OPTIONS /filings HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\n\r\n",
+        19876,
+        token,
+        filings,
+        primary,
+    );
+    assert!(!valid);
+    assert!(resp.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(resp.contains("X-LagosFile-Token"));
 
     // Extension origins allowed by scheme
     assert!(lirs::is_allowed_origin("chrome-extension://abcdef123456"));
@@ -165,19 +216,24 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
     std::fs::write(&pending_file, r#"{"old":true}"#).unwrap();
 
     // Start first bridge on an ephemeral port
-    let port = lirs::start_bridge_on_port(
+    let (port, token1) = lirs::start_bridge_on_port(
         &state,
         0,
         r#"[{"version":1}]"#.to_string(),
         r#"{"version":1}"#.to_string(),
     )
     .expect("first bridge start");
+    assert_eq!(token1.len(), 64);
 
-    let fetch = |p: u16| -> Result<String, std::io::Error> {
+    let fetch = |p: u16, tok: Option<&str>| -> Result<String, std::io::Error> {
         let mut s = TcpStream::connect(("127.0.0.1", p))?;
+        let token_hdr = match tok {
+            Some(t) => format!("X-LagosFile-Token: {}\r\n", t),
+            None => String::new(),
+        };
         let req = format!(
-            "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: https://etax.lirs.net\r\n\r\n",
-            p
+            "GET /filings HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: https://etax.lirs.net\r\n{}\r\n",
+            p, token_hdr
         );
         s.write_all(req.as_bytes())?;
         let mut resp = String::new();
@@ -185,11 +241,17 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
         Ok(resp)
     };
 
-    let resp1 = fetch(port).expect("fetch v1");
+    // Without token -> 403 empty body, no data
+    let unauth = fetch(port, None).expect("fetch without token");
+    assert!(unauth.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(!unauth.contains("version"));
+
+    // With valid token -> 200 and v1 data
+    let resp1 = fetch(port, Some(&token1)).expect("fetch v1");
     assert!(resp1.contains(r#"[{"version":1}]"#));
 
-    // Starting a second bridge on the same port stops the old one and serves new data
-    let port2 = lirs::start_bridge_on_port(
+    // Starting a second bridge on the same port stops the old one, rotates the token, and serves new data
+    let (port2, token2) = lirs::start_bridge_on_port(
         &state,
         port,
         r#"[{"version":2}]"#.to_string(),
@@ -197,8 +259,15 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
     )
     .expect("second bridge start on same port");
     assert_eq!(port, port2);
+    assert_ne!(token1, token2, "each bridge start must generate a fresh token");
 
-    let resp2 = fetch(port).expect("fetch v2");
+    // Old token is rejected
+    let stale_tok = fetch(port, Some(&token1)).expect("fetch with old token");
+    assert!(stale_tok.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+    assert!(!stale_tok.contains("version"));
+
+    // New token succeeds
+    let resp2 = fetch(port, Some(&token2)).expect("fetch v2");
     assert!(resp2.contains(r#"[{"version":2}]"#));
 
     // Locking the vault stops the bridge and deletes pending_filing.json

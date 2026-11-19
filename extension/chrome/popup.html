@@ -50,10 +50,16 @@
     <div class="steps-grid">
       <button type="button" id="fill-income-btn"      class="btn btn--primary btn--full">Fill Income</button>
       <button type="button" id="fill-deductions-btn"  class="btn btn--secondary btn--full">Fill Deductions</button>
+      <button type="button" id="fill-adjustments-btn" class="btn btn--secondary btn--full">Fill Adjustments</button>
       <button type="button" id="fill-reliefs-btn"     class="btn btn--secondary btn--full">Fill Reliefs</button>
       <button type="button" id="fill-wht-btn"         class="btn btn--secondary btn--full">Fill Withheld Taxes</button>
-      <button type="button" id="fill-adjustments-btn" class="btn btn--secondary btn--full">Fill Adjustments</button>
+      <button type="button" id="fill-others-btn"      class="btn btn--secondary btn--full">Fill Others (PAYE / DTR)</button>
       <button type="button" id="fill-all-btn"         class="btn btn--accent btn--full">Auto-Fill All Tabs</button>
+    </div>
+
+    <div id="manual-section" class="manual-section hidden">
+      <div class="manual-header">Enter Manually</div>
+      <div id="manual-fields"></div>
     </div>
 
     <details class="copy-section">
@@ -88,11 +94,12 @@
   </div>
 
   <footer class="popup-footer">
-    <span>v1.1.0</span>
+    <span>v1.3.0</span>
     <span id="status-text">Connecting…</span>
   </footer>
 
   <input type="file" id="file-input" accept=".json" class="hidden">
+  <script src="autofill-core.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -1,7 +1,9 @@
 (function () {
   'use strict';
 
-  const BRIDGE_URL = 'http://127.0.0.1:19876';
+  const core = window.LagosFileCore;
+  const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
+  const tabs = (typeof browser !== 'undefined') ? browser.tabs : chrome.tabs;
 
   let allFilings = [];
   let filingData = null;
@@ -9,7 +11,23 @@
   const $ = (id) => document.getElementById(id);
 
   function sendMsg(msg) {
-    return browser.runtime.sendMessage(msg);
+    return new Promise(function (resolve) {
+      let settled = false;
+      const done = function (resp) {
+        if (settled) return;
+        settled = true;
+        resolve(resp);
+      };
+      try {
+        if (typeof browser !== 'undefined') {
+          browser.runtime.sendMessage(msg).then(done).catch(function () { done(null); });
+        } else {
+          chrome.runtime.sendMessage(msg, done);
+        }
+      } catch (_) {
+        done(null);
+      }
+    });
   }
 
   function showLoading() {
@@ -44,6 +62,7 @@
       '<div class="sf-meta">YOA ' + esc(yoa) + ' · Ref: ' + esc(ref) + '</div>' +
       '<div class="sf-tax">' + fmtNaira(tax) + ' due</div>';
     $('status-text').textContent = tp + ' · ' + yoa;
+    buildManualFields();
     buildCopyFields();
   }
 
@@ -56,16 +75,17 @@
   }
 
   function syncSelectedToBackground() {
-    sendMsg({ type: 'SET_FILING_DATA', data: filingData || null }).catch(() => {});
+    sendMsg({ type: 'SET_FILING_DATA', data: filingData || null });
   }
 
   function reconcileSelectionFromAllFilings() {
     if (!filingData || !filingData.filingId) return;
-    const m = allFilings.find((f) => f.filingId === filingData.filingId);
+    const m = allFilings.find(function (f) { return f.filingId === filingData.filingId; });
     filingData = m || null;
   }
 
-  function applyFilingsPayloadFromNetwork(silent) {
+  function applyFilingsPayloadFromNetwork(options) {
+    const silent = options && options.silent;
     reconcileSelectionFromAllFilings();
 
     if (allFilings.length === 1) {
@@ -75,12 +95,13 @@
       return;
     }
 
-    const still = filingData &&
+    const still =
+      filingData &&
       filingData.filingId &&
-      allFilings.some((f) => f.filingId === filingData.filingId);
+      allFilings.some(function (f) { return f.filingId === filingData.filingId; });
 
     if (still) {
-      filingData = allFilings.find((f) => f.filingId === filingData.filingId);
+      filingData = allFilings.find(function (f) { return f.filingId === filingData.filingId; });
       syncSelectedToBackground();
       showFillState();
       return;
@@ -88,105 +109,96 @@
 
     filingData = null;
     syncSelectedToBackground();
-    if (!silent || allFilings.length > 0) showPickState();
+    if (!silent || allFilings.length > 0) {
+      showPickState();
+    }
   }
 
-  async function bootstrap() {
-    try {
-      const [cachedList, cachedSelected] = await Promise.all([
-        sendMsg({ type: 'GET_FILINGS_DATA' }),
-        sendMsg({ type: 'GET_FILING_DATA' }),
-      ]);
+  async function bootstrapFromCache() {
+    const cachedList = await sendMsg({ type: 'GET_FILINGS_DATA' });
+    const cachedSelected = await sendMsg({ type: 'GET_FILING_DATA' });
+    const listOk = Array.isArray(cachedList) && cachedList.length > 0;
 
-      const listOk = cachedList && cachedList.length > 0;
+    if (!listOk) {
+      showLoading();
+      await fetchFilings({ silent: false });
+      return;
+    }
 
-      if (!listOk) {
-        showLoading();
-        await fetchFilings(false);
-        return;
-      }
+    allFilings = cachedList;
 
-      allFilings = cachedList;
+    const match =
+      cachedSelected &&
+      cachedSelected.filingId &&
+      allFilings.find(function (f) { return f.filingId === cachedSelected.filingId; });
 
-      const match = cachedSelected &&
-        cachedSelected.filingId &&
-        allFilings.find((f) => f.filingId === cachedSelected.filingId);
+    if (match) {
+      filingData = match;
+      syncSelectedToBackground();
+      showFillState();
+      fetchFilings({ silent: true });
+      return;
+    }
 
-      if (match) {
-        filingData = match;
-        syncSelectedToBackground();
-        showFillState();
-        fetchFilings(true).catch(() => {});
-        return;
-      }
+    if (allFilings.length === 1) {
+      filingData = allFilings[0];
+      syncSelectedToBackground();
+      showFillState();
+      fetchFilings({ silent: true });
+      return;
+    }
 
+    filingData = null;
+    syncSelectedToBackground();
+    showPickState();
+    fetchFilings({ silent: true });
+  }
+
+  async function fetchFilings(options) {
+    const silent = options && options.silent;
+    if (!silent) showLoading();
+
+    const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
+    if (resp && resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+      allFilings = resp.data;
+      await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      applyFilingsPayloadFromNetwork({ silent: silent });
+      return;
+    }
+
+    if (silent) return;
+
+    const respSingle = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
+    if (respSingle && respSingle.ok && respSingle.data) {
+      allFilings = [respSingle.data];
+      filingData = respSingle.data;
+      await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      syncSelectedToBackground();
+      showFillState();
+      return;
+    }
+
+    const cached = await sendMsg({ type: 'GET_FILINGS_DATA' });
+    if (Array.isArray(cached) && cached.length > 0) {
+      allFilings = cached;
       if (allFilings.length === 1) {
         filingData = allFilings[0];
         syncSelectedToBackground();
         showFillState();
-        fetchFilings(true).catch(() => {});
-        return;
-      }
-
-      filingData = null;
-      syncSelectedToBackground();
-      showPickState();
-      fetchFilings(true).catch(() => {});
-    } catch (err) {
-      showLoading();
-      fetchFilings(false).catch(() => showOffline());
-    }
-  }
-
-  async function fetchFilings(silent) {
-    if (!silent) showLoading();
-    try {
-      const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
-      if (!resp || !resp.ok) throw new Error(resp && resp.error || 'fetch failed');
-      const data = resp.data;
-      if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
-      allFilings = data;
-      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings }).catch(() => {});
-      applyFilingsPayloadFromNetwork(silent);
-    } catch (_) {
-      try {
-        const resp2 = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
-        if (!resp2 || !resp2.ok) throw new Error('fetch failed');
-        const single = resp2.data;
-        allFilings = [single];
-        filingData = single;
-        sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings }).catch(() => {});
+      } else {
+        filingData = null;
         syncSelectedToBackground();
-        showFillState();
-      } catch (__) {
-        if (silent) return;
-        try {
-          const cached = await sendMsg({ type: 'GET_FILINGS_DATA' });
-          if (cached && cached.length > 0) {
-            allFilings = cached;
-            if (allFilings.length === 1) {
-              filingData = allFilings[0];
-              syncSelectedToBackground();
-              showFillState();
-            } else {
-              filingData = null;
-              syncSelectedToBackground();
-              showPickState();
-            }
-          } else {
-            showOffline();
-          }
-        } catch (___) {
-          showOffline();
-        }
+        showPickState();
       }
+    } else {
+      showOffline();
     }
   }
 
   function renderFilingList() {
     const container = $('filing-list');
     container.innerHTML = '';
-    allFilings.forEach((f) => {
+    allFilings.forEach(function (f) {
       const card = document.createElement('div');
       card.className = 'filing-card';
       const tax = f.computation?.finalTaxPayable;
@@ -198,12 +210,42 @@
         '</div>' +
         '<div class="filing-tax">' + fmtNaira(tax) + '</div>' +
         '<button type="button" class="filing-select-btn">Select</button>';
-      card.querySelector('.filing-select-btn').addEventListener('click', () => {
+      card.querySelector('.filing-select-btn').addEventListener('click', function () {
         filingData = f;
         syncSelectedToBackground();
         showFillState();
       });
       container.appendChild(card);
+    });
+  }
+
+  function buildManualFields() {
+    const section = $('manual-section');
+    const container = $('manual-fields');
+    container.innerHTML = '';
+    const items = core ? core.getManualFields(filingData) : [];
+    if (items.length === 0) {
+      section.classList.add('hidden');
+      return;
+    }
+    section.classList.remove('hidden');
+    items.forEach(function (item) {
+      const row = document.createElement('div');
+      row.className = 'manual-field';
+      row.innerHTML =
+        '<div class="manual-row">' +
+          '<span class="copy-field-label">' + esc(item.label) + '</span>' +
+          '<span class="copy-field-value">' + esc(item.displayValue) + '</span>' +
+          '<button type="button" class="copy-btn">cp</button>' +
+        '</div>' +
+        '<div class="manual-hint">' + esc(item.hint) + '</div>';
+      row.querySelector('.copy-btn').addEventListener('click', function () {
+        navigator.clipboard.writeText(item.rawValue).catch(function () {});
+        const btn = row.querySelector('.copy-btn');
+        btn.textContent = 'ok';
+        setTimeout(function () { btn.textContent = 'cp'; }, 1200);
+      });
+      container.appendChild(row);
     });
   }
 
@@ -213,25 +255,30 @@
     if (!filingData) return;
 
     const groups = [
-      { label: 'Payer ID',          value: filingData.taxpayer?.payerId || fmtPayerId(filingData.taxpayer?.tin) },
-      { label: 'TIN',               value: filingData.taxpayer?.tin },
-      { label: 'Employment',        value: fmtNum(filingData.income?.employment) },
-      { label: 'Trade / Business',  value: fmtNum(filingData.income?.business) },
-      { label: 'Dividend',          value: fmtNum(filingData.income?.dividend) },
-      { label: 'Interest',          value: fmtNum(filingData.income?.interest) },
-      { label: 'Royalty',           value: fmtNum(filingData.income?.royalty) },
-      { label: 'Rent',              value: fmtNum(filingData.income?.rental) },
-      { label: 'Pension',           value: fmtNum(filingData.deductions?.pension) },
-      { label: 'NHF',               value: fmtNum(filingData.deductions?.nhf) },
-      { label: 'NHIS',              value: fmtNum(filingData.deductions?.nhis) },
-      { label: 'Life Assurance',    value: fmtNum(filingData.deductions?.lifeAssurance) },
-      { label: 'Capital Allowance', value: fmtNum(filingData.computation?.totalCapitalAllowances) },
-      { label: 'WHT Credits',       value: fmtNum(filingData.computation?.whtCredits) },
-      { label: 'Chargeable Income', value: fmtNum(filingData.computation?.chargeableIncome) },
-      { label: 'Final Tax Payable', value: fmtNum(filingData.computation?.finalTaxPayable) },
-    ].filter((f) => f.value != null && f.value !== '');
+      { label: 'Payer ID',                value: filingData.taxpayer?.payerId || fmtPayerId(filingData.taxpayer?.tin) },
+      { label: 'TIN',                     value: filingData.taxpayer?.tin },
+      { label: 'Employment',              value: fmtNum(filingData.income?.employment) },
+      { label: 'Benefits in Kind (BIK)',  value: fmtNum(filingData.income?.benefitsInKind) },
+      { label: 'Trade / Business',        value: fmtNum(filingData.income?.business) },
+      { label: 'Dividend',                value: fmtNum(filingData.income?.dividend) },
+      { label: 'Interest',                value: fmtNum(filingData.income?.interest) },
+      { label: 'Royalty',                 value: fmtNum(filingData.income?.royalty) },
+      { label: 'Rent',                    value: fmtNum(filingData.income?.rental) },
+      { label: 'Pension',                 value: fmtNum(filingData.deductions?.pension) },
+      { label: 'Other Deductions',        value: fmtNum(filingData.deductions?.otherApproved) },
+      { label: 'NHF',                     value: fmtNum(filingData.deductions?.nhf) },
+      { label: 'NHIS',                    value: fmtNum(filingData.deductions?.nhis) },
+      { label: 'Life Assurance',          value: fmtNum(filingData.deductions?.lifeAssurance) },
+      { label: 'Rent Relief Applied',     value: fmtNum(filingData.deductions?.rentReliefApplied) },
+      { label: 'Capital Allowance',       value: fmtNum(filingData.computation?.totalCapitalAllowances) },
+      { label: 'WHT Credits',             value: fmtNum(filingData.computation?.whtCredits) },
+      { label: 'PAYE Credits',            value: fmtNum(filingData.computation?.payeCredits) },
+      { label: 'Double Taxation Reliefs', value: fmtNum(filingData.computation?.foreignTaxCredits) },
+      { label: 'Chargeable Income',       value: fmtNum(filingData.computation?.chargeableIncome) },
+      { label: 'Final Tax Payable',       value: fmtNum(filingData.computation?.finalTaxPayable) },
+    ].filter(function (f) { return f.value != null && f.value !== ''; });
 
-    groups.forEach((f) => {
+    groups.forEach(function (f) {
       const row = document.createElement('div');
       row.className = 'copy-field';
       const raw = String(f.value).replace(/,/g, '');
@@ -239,60 +286,103 @@
         '<span class="copy-field-label">' + esc(f.label) + '</span>' +
         '<span class="copy-field-value">' + esc(f.value) + '</span>' +
         '<button type="button" class="copy-btn">cp</button>';
-      row.querySelector('.copy-btn').addEventListener('click', () => {
-        navigator.clipboard.writeText(raw).catch(() => {});
+      row.querySelector('.copy-btn').addEventListener('click', function () {
+        navigator.clipboard.writeText(raw).catch(function () {});
         const btn = row.querySelector('.copy-btn');
         btn.textContent = 'ok';
-        setTimeout(() => { btn.textContent = 'cp'; }, 1200);
+        setTimeout(function () { btn.textContent = 'cp'; }, 1200);
       });
       container.appendChild(row);
     });
   }
 
-  const STEPS = ['income', 'deductions', 'reliefs', 'wht', 'adjustments'];
-
-  function injectStep(step) {
-    if (!filingData) { alert('No filing selected. Choose a filing first.'); return; }
-    browser.tabs.query({ active: true, currentWindow: true })
-      .then((tabs) => {
-        if (!tabs[0]) return;
-        sendMsg({ type: 'INJECT_STEP', step, data: filingData }).catch(() => {});
-      });
+  function fmtNaira(n) {
+    if (n == null || isNaN(n)) return '—';
+    return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
   }
 
-  $('fill-income-btn').addEventListener('click',      () => injectStep('income'));
-  $('fill-deductions-btn').addEventListener('click',  () => injectStep('deductions'));
-  $('fill-reliefs-btn').addEventListener('click',     () => injectStep('reliefs'));
-  $('fill-wht-btn').addEventListener('click',         () => injectStep('wht'));
-  $('fill-adjustments-btn').addEventListener('click', () => injectStep('adjustments'));
-  $('fill-all-btn').addEventListener('click', () => {
-    STEPS.forEach((step, i) => setTimeout(() => injectStep(step), i * 900));
-  });
+  function fmtNum(n) {
+    if (n == null || n === 0) return null;
+    return n.toLocaleString('en-NG');
+  }
 
-  $('back-btn').addEventListener('click', () => {
+  function fmtPayerId(tin) {
+    if (!tin) return '';
+    return tin.startsWith('N-') || tin.startsWith('C-') ? tin : 'N-' + tin;
+  }
+
+  function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = String(str ?? '');
+    return d.innerHTML;
+  }
+
+  $('fill-income-btn').addEventListener('click',      function () { injectStep('income'); });
+  $('fill-deductions-btn').addEventListener('click',  function () { injectStep('deductions'); });
+  $('fill-adjustments-btn').addEventListener('click', function () { injectStep('adjustments'); });
+  $('fill-reliefs-btn').addEventListener('click',     function () { injectStep('reliefs'); });
+  $('fill-wht-btn').addEventListener('click',         function () { injectStep('wht'); });
+  $('fill-others-btn').addEventListener('click',      function () { injectStep('others'); });
+  $('fill-all-btn').addEventListener('click',         function () { injectAll(); });
+
+  function queryActiveTab(cb) {
+    if (typeof browser !== 'undefined') {
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(function (foundTabs) { cb(foundTabs && foundTabs[0]); })
+        .catch(function () { cb(null); });
+    } else {
+      chrome.tabs.query({ active: true, currentWindow: true }, function (foundTabs) {
+        cb(foundTabs && foundTabs[0]);
+      });
+    }
+  }
+
+  function injectStep(step) {
+    if (!filingData) {
+      alert('No filing selected. Choose a filing first.');
+      return;
+    }
+    queryActiveTab(function (tab) {
+      if (!tab) return;
+      sendMsg({ type: 'INJECT_STEP', step: step, data: filingData });
+    });
+  }
+
+  function injectAll() {
+    if (!filingData) {
+      alert('No filing selected. Choose a filing first.');
+      return;
+    }
+    queryActiveTab(function (tab) {
+      if (!tab) return;
+      sendMsg({ type: 'INJECT_ALL', data: filingData });
+    });
+  }
+
+  $('back-btn').addEventListener('click', function () {
     filingData = null;
     syncSelectedToBackground();
     showPickState();
   });
 
-  $('pick-refresh-btn').addEventListener('click',    () => fetchFilings(false));
-  $('fill-refresh-btn').addEventListener('click',    () => fetchFilings(false));
-  $('offline-refresh-btn').addEventListener('click', () => fetchFilings(false));
+  $('pick-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
+  $('fill-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
+  $('offline-refresh-btn').addEventListener('click', function () { fetchFilings({ silent: false }); });
 
-  $('pick-manual-btn').addEventListener('click', () => {
+  $('pick-manual-btn').addEventListener('click', function () {
     filingData = null;
     allFilings = [];
-    sendMsg({ type: 'CLEAR_FILING_DATA' }).catch(() => {});
+    sendMsg({ type: 'CLEAR_FILING_DATA' });
     showOffline();
   });
 
-  $('load-file-btn').addEventListener('click', () => $('file-input').click());
+  $('load-file-btn').addEventListener('click', function () { $('file-input').click(); });
 
-  $('file-input').addEventListener('change', (e) => {
+  $('file-input').addEventListener('change', function (e) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = function (evt) {
       $('json-input').value = evt.target.result;
       $('parse-json-btn').click();
     };
@@ -300,7 +390,7 @@
     $('file-input').value = '';
   });
 
-  $('parse-json-btn').addEventListener('click', () => {
+  $('parse-json-btn').addEventListener('click', function () {
     const raw = $('json-input').value.trim();
     if (!raw) { showParseError('Paste JSON first.'); return; }
     try {
@@ -309,10 +399,12 @@
         if (parsed.length === 0) throw new Error('Empty array.');
         allFilings = parsed;
       } else {
-        if (!parsed.taxpayer || !parsed.computation) throw new Error('Missing taxpayer or computation fields.');
+        if (!parsed.taxpayer || !parsed.computation) {
+          throw new Error('Missing taxpayer or computation fields.');
+        }
         allFilings = [parsed];
       }
-      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings }).catch(() => {});
+      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       hideParseError();
       $('json-input').value = '';
       if (allFilings.length === 1) {
@@ -337,27 +429,5 @@
     $('parse-error').classList.add('hidden');
   }
 
-  function fmtNaira(n) {
-    if (n == null || isNaN(n)) return '—';
-    return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
-  }
-
-  function fmtNum(n) {
-    if (n == null || n === 0) return null;
-    return n.toLocaleString('en-NG');
-  }
-
-  function fmtPayerId(tin) {
-    if (!tin) return '';
-    return tin.startsWith('N-') || tin.startsWith('C-') ? tin : 'N-' + tin;
-  }
-
-  function esc(str) {
-    const d = document.createElement('div');
-    d.textContent = String(str ?? '');
-    return d.innerHTML;
-  }
-
-  bootstrap();
-
+  bootstrapFromCache();
 })();

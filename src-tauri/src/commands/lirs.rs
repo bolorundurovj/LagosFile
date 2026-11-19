@@ -29,6 +29,25 @@ pub struct BridgeHandle {
     stop: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
     pub port: u16,
+    pub token: String,
+}
+
+fn generate_bridge_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 impl BridgeHandle {
@@ -529,7 +548,7 @@ pub fn build_http_response(
             "Access-Control-Allow-Origin: {}\r\n\
              Vary: Origin\r\n\
              Access-Control-Allow-Methods: GET, OPTIONS\r\n\
-             Access-Control-Allow-Headers: Content-Type\r\n",
+             Access-Control-Allow-Headers: Content-Type, X-LagosFile-Token\r\n",
             orig
         ),
         None => String::new(),
@@ -548,6 +567,7 @@ pub fn build_http_response(
 pub fn handle_bridge_request(
     request: &str,
     port: u16,
+    expected_token: &str,
     filings_array_json: &str,
     primary_json: &str,
 ) -> (String, bool) {
@@ -556,6 +576,7 @@ pub fn handle_bridge_request(
 
     let mut host: Option<&str> = None;
     let mut origin: Option<&str> = None;
+    let mut token: Option<&str> = None;
 
     for line in lines {
         if line.is_empty() {
@@ -568,6 +589,8 @@ pub fn handle_bridge_request(
                 host = Some(val_trimmed);
             } else if name_trimmed.eq_ignore_ascii_case("origin") {
                 origin = Some(val_trimmed);
+            } else if name_trimmed.eq_ignore_ascii_case("x-lagosfile-token") {
+                token = Some(val_trimmed);
             }
         }
     }
@@ -588,19 +611,45 @@ pub fn handle_bridge_request(
         None => None,
     };
 
-    let response = if first_line.starts_with("OPTIONS") {
-        build_http_response(200, "text/plain", "", cors_origin)
-    } else if first_line.starts_with("GET /filings") {
-        build_http_response(200, "application/json", filings_array_json, cors_origin)
+    // Preflight OPTIONS does not carry the custom token and must NOT reset the idle timer.
+    if first_line.starts_with("OPTIONS") {
+        return (build_http_response(200, "text/plain", "", cors_origin), false);
+    }
+
+    // Every data/health request must present the current session token.
+    let token_valid = match token {
+        Some(provided) if !expected_token.is_empty() => {
+            constant_time_eq(provided.as_bytes(), expected_token.as_bytes())
+        }
+        _ => false,
+    };
+    if !token_valid {
+        return (build_http_response(403, "text/plain", "", cors_origin), false);
+    }
+
+    let (response, reset_idle) = if first_line.starts_with("GET /filings") {
+        (
+            build_http_response(200, "application/json", filings_array_json, cors_origin),
+            true,
+        )
     } else if first_line.starts_with("GET /filing") {
-        build_http_response(200, "application/json", primary_json, cors_origin)
+        (
+            build_http_response(200, "application/json", primary_json, cors_origin),
+            true,
+        )
     } else if first_line.starts_with("GET /health") {
-        build_http_response(200, "application/json", r#"{"status":"ok"}"#, cors_origin)
+        (
+            build_http_response(200, "application/json", r#"{"status":"ok"}"#, cors_origin),
+            true,
+        )
     } else {
-        build_http_response(404, "text/plain", "not found", cors_origin)
+        (
+            build_http_response(404, "text/plain", "not found", cors_origin),
+            false,
+        )
     };
 
-    (response, true)
+    (response, reset_idle)
 }
 
 pub fn start_bridge_on_port(
@@ -608,7 +657,7 @@ pub fn start_bridge_on_port(
     port: u16,
     filings_array_json: String,
     primary_json: String,
-) -> Result<u16, String> {
+) -> Result<(u16, String), String> {
     stop_bridge(state);
 
     let listener = TcpListener::bind(("127.0.0.1", port))
@@ -616,6 +665,8 @@ pub fn start_bridge_on_port(
     let bound_port = listener.local_addr().map_err(|e| e.to_string())?.port();
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
 
+    let token = generate_bridge_token();
+    let thread_token = token.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_flag = Arc::clone(&stop);
 
@@ -650,13 +701,14 @@ pub fn start_bridge_on_port(
                     }
 
                     let request = String::from_utf8_lossy(&buf[..n]);
-                    let (response, valid) = handle_bridge_request(
+                    let (response, authenticated) = handle_bridge_request(
                         &request,
                         bound_port,
+                        &thread_token,
                         &filings_array_json,
                         &primary_json,
                     );
-                    if valid {
+                    if authenticated {
                         last_request = Instant::now();
                     }
 
@@ -677,8 +729,9 @@ pub fn start_bridge_on_port(
         stop,
         handle: Some(handle),
         port: bound_port,
+        token: token.clone(),
     });
-    Ok(bound_port)
+    Ok((bound_port, token))
 }
 
 pub fn build_all_pending_filings_detailed(
@@ -803,10 +856,13 @@ pub async fn open_lirs_portal(
 
     let filings_json = serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
 
-    start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) = start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
-    let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    if let Err(e) = open::that(portal_url) {
+    let portal_url = format!(
+        "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",
+        token
+    );
+    if let Err(e) = open::that(&portal_url) {
         let reason = format!("Failed to open browser: {}", e);
         log_automation_failure(&id, &reason);
         return Err(reason);
@@ -851,10 +907,13 @@ pub async fn open_lirs_portal_all(
     let primary_json = serde_json::to_string(&batch.filings[0]).map_err(|e| e.to_string())?;
     let filings_json = serde_json::to_string(&batch.filings).map_err(|e| e.to_string())?;
 
-    start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) = start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
-    let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    if let Err(e) = open::that(portal_url) {
+    let portal_url = format!(
+        "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",
+        token
+    );
+    if let Err(e) = open::that(&portal_url) {
         let reason = format!("Failed to open browser: {}", e);
         log_automation_failure("batch", &reason);
         return Err(reason);

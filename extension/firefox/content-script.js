@@ -1,23 +1,62 @@
 (function () {
   'use strict';
 
+  // Prevent double injection on SPA navigations
   if (document.getElementById('__lf_panel_host')) return;
 
+  const core = window.LagosFileCore;
   const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
-  const BRIDGE  = 'http://127.0.0.1:19876';
 
-  let allFilings     = [];
+  let allFilings = [];
   let selectedFiling = null;
-  let panelOpen      = false;
+  let panelOpen = false;
+
+  function sendMsg(msg) {
+    return new Promise(function (resolve) {
+      let settled = false;
+      const done = function (resp) {
+        if (settled) return;
+        settled = true;
+        resolve(resp);
+      };
+      try {
+        if (typeof browser !== 'undefined') {
+          browser.runtime.sendMessage(msg).then(done).catch(function () { done(null); });
+        } else {
+          chrome.runtime.sendMessage(msg, done);
+        }
+      } catch (_) {
+        done(null);
+      }
+    });
+  }
+
+  // Capture per-session bridge token from URL fragment (#lagosfile=<token>)
+  // and pass it to the background script, then strip it from the URL bar.
+  function captureBridgeTokenFromHash() {
+    if (!core) return Promise.resolve(false);
+    const token = core.extractTokenFromHash(window.location.hash);
+    if (!token) return Promise.resolve(false);
+    try {
+      const cleanUrl = window.location.pathname + window.location.search;
+      window.history.replaceState(null, '', cleanUrl);
+    } catch (_) {}
+    return sendMsg({ type: 'SET_BRIDGE_TOKEN', token: token }).then(function () { return true; });
+  }
+
+  const tokenCapturePromise = captureBridgeTokenFromHash();
+  window.addEventListener('hashchange', function () {
+    captureBridgeTokenFromHash();
+  });
 
   const host = document.createElement('div');
   host.id = '__lf_panel_host';
   Object.assign(host.style, {
     position: 'fixed',
-    right:    '14px',
-    bottom:   '80px',
-    zIndex:   '2147483646',
-    display:  'block',
+    right: '14px',
+    bottom: '80px',
+    zIndex: '2147483646',
+    display: 'block',
   });
   document.body.appendChild(host);
 
@@ -42,7 +81,7 @@
   #panel {
     position: absolute;
     bottom: 52px; right: 0;
-    width: 288px;
+    width: 296px;
     background: #f8f9fb;
     border: 1px solid #d1d8e0;
     border-radius: 12px;
@@ -69,7 +108,7 @@
   }
   .ph-close:hover { color: #fff; }
 
-  .pb { padding: 12px 14px; }
+  .pb { padding: 12px 14px; max-height: 75vh; overflow-y: auto; }
 
   .spinner {
     width: 22px; height: 22px;
@@ -114,7 +153,7 @@
 
   .btn {
     display: block; width: 100%;
-    padding: 8px 12px; border-radius: 6px;
+    padding: 7px 12px; border-radius: 6px;
     font-size: 12px; font-weight: 500; cursor: pointer;
     border: none; text-align: center;
     transition: background 0.12s;
@@ -134,27 +173,45 @@
   .btn-ghost:hover { background: #f1f5f9; }
   .btn-row { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; }
 
+  .manual-box {
+    margin-top: 8px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .manual-hd {
+    padding: 5px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #92400e;
+    background: #fef3c7;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .manual-item {
+    padding: 5px 10px;
+    border-top: 1px solid #fde68a;
+    font-size: 11px;
+  }
+  .manual-item-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .manual-item-hint {
+    font-size: 10px;
+    color: #78350f;
+    margin-top: 1px;
+  }
+
   .offline-icon { font-size: 24px; text-align: center; margin-bottom: 4px; }
   .offline-title { font-size: 13px; font-weight: 600; text-align: center; margin-bottom: 4px; }
   .offline-desc { font-size: 11px; color: #64748b; text-align: center; line-height: 1.5; }
-
-  #toast {
-    position: fixed; bottom: 140px; right: 14px;
-    background: #001e40; color: #fff;
-    padding: 9px 16px; border-radius: 8px;
-    font: 12px/1.4 system-ui, sans-serif;
-    max-width: 260px; pointer-events: none;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    transition: opacity 0.3s;
-    z-index: 2147483647;
-  }
-  #toast.warning { background: #7c3d0f; }
-  #toast.success { background: #14532d; }
-  #toast.hidden  { opacity: 0; }
 </style>
 
 <button id="toggle" title="LagosFile LIRS Assistant">
-  <!-- Single-span mark, white on navy -->
   <svg width="26" height="10" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <path d="M30 46 Q100 -12 170 46 Q100 22 30 46 Z" fill="#4D90CC"/>
     <rect x="0" y="48" width="200" height="5" rx="2.5" fill="rgba(255,255,255,0.45)"/>
@@ -164,7 +221,6 @@
 <div id="panel" class="hidden">
   <div class="ph">
     <div style="display:flex;align-items:center;gap:8px">
-      <!-- AltFills mark, tinted for dark bg -->
       <svg width="36" height="11" viewBox="0 0 200 60" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <path d="M10 46 Q40 -6 70 46 Q40 26 10 46 Z" fill="#4D90CC"/>
         <path d="M65 46 Q100 -12 135 46 Q100 22 65 46 Z" fill="rgba(255,255,255,0.50)"/>
@@ -176,19 +232,14 @@
     </div>
     <button class="ph-close" id="close-btn" title="Close">&#x2715;</button>
   </div>
-  <div class="pb" id="panel-body">
-    <!-- rendered dynamically -->
-  </div>
+  <div class="pb" id="panel-body"></div>
 </div>
-
-<div id="toast" class="hidden"></div>
 `;
 
   const toggleBtn = shadow.getElementById('toggle');
-  const panel     = shadow.getElementById('panel');
-  const body      = shadow.getElementById('panel-body');
-  const closeBtn  = shadow.getElementById('close-btn');
-  const toastEl   = shadow.getElementById('toast');
+  const panel = shadow.getElementById('panel');
+  const body = shadow.getElementById('panel-body');
+  const closeBtn = shadow.getElementById('close-btn');
 
   toggleBtn.addEventListener('click', function () {
     panelOpen = !panelOpen;
@@ -225,14 +276,14 @@
   }
 
   function renderPicker() {
-    var html = '<span class="slabel">Select a filing</span><div class="filing-list" id="fl"></div>' +
+    body.innerHTML =
+      '<span class="slabel">Select a filing</span><div class="filing-list" id="fl"></div>' +
       '<div class="btn-row"><button class="btn btn-ghost" id="pick-refresh">↺ Refresh</button></div>';
-    body.innerHTML = html;
-    var fl = shadow.getElementById('fl');
+    const fl = shadow.getElementById('fl');
     allFilings.forEach(function (f) {
-      var card = document.createElement('div');
+      const card = document.createElement('div');
       card.className = 'fc';
-      var tax = f.computation && f.computation.finalTaxPayable;
+      const tax = f.computation && f.computation.finalTaxPayable;
       card.innerHTML =
         '<div class="fc-body">' +
           '<div class="fc-name">' + esc(f.taxpayer && f.taxpayer.fullName || '—') + '</div>' +
@@ -256,10 +307,23 @@
 
   function renderFill() {
     if (!selectedFiling) { renderPicker(); return; }
-    var tp  = (selectedFiling.taxpayer && selectedFiling.taxpayer.fullName) || '—';
-    var yoa = selectedFiling.yearOfAssessment || '—';
-    var ref = selectedFiling.filingReference  || '—';
-    var tax = selectedFiling.computation && selectedFiling.computation.finalTaxPayable;
+    const tp = (selectedFiling.taxpayer && selectedFiling.taxpayer.fullName) || '—';
+    const yoa = selectedFiling.yearOfAssessment || '—';
+    const ref = selectedFiling.filingReference || '—';
+    const tax = selectedFiling.computation && selectedFiling.computation.finalTaxPayable;
+    const manualItems = core ? core.getManualFields(selectedFiling) : [];
+
+    let manualHtml = '';
+    if (manualItems.length > 0) {
+      manualHtml = '<div class="manual-box"><div class="manual-hd">Enter Manually</div>' +
+        manualItems.map(function (it) {
+          return '<div class="manual-item">' +
+            '<div class="manual-item-top"><span>' + esc(it.label) + '</span><span>' + esc(it.displayValue) + '</span></div>' +
+            '<div class="manual-item-hint">' + esc(it.hint) + '</div>' +
+          '</div>';
+        }).join('') +
+        '</div>';
+    }
 
     body.innerHTML =
       '<div class="sel-box">' +
@@ -270,271 +334,106 @@
       '<span class="slabel">Fill by Tab</span>' +
       '<button class="btn btn-primary"   id="b-income">Fill Income</button>' +
       '<button class="btn btn-secondary" id="b-deductions">Fill Deductions</button>' +
+      '<button class="btn btn-secondary" id="b-adjustments">Fill Adjustments</button>' +
       '<button class="btn btn-secondary" id="b-reliefs">Fill Reliefs</button>' +
       '<button class="btn btn-secondary" id="b-wht">Fill Withheld Taxes</button>' +
-      '<button class="btn btn-secondary" id="b-adjustments">Fill Adjustments</button>' +
+      '<button class="btn btn-secondary" id="b-others">Fill Others (PAYE / DTR)</button>' +
       '<button class="btn btn-accent"    id="b-all">Auto-Fill All Tabs</button>' +
+      manualHtml +
       '<div class="btn-row">' +
         '<button class="btn btn-ghost" id="b-back">← Choose different</button>' +
       '</div>';
 
-    shadow.getElementById('b-income').addEventListener('click',      function () { injectStep('income'); });
-    shadow.getElementById('b-deductions').addEventListener('click',  function () { injectStep('deductions'); });
-    shadow.getElementById('b-reliefs').addEventListener('click',     function () { injectStep('reliefs'); });
-    shadow.getElementById('b-wht').addEventListener('click',         function () { injectStep('wht'); });
-    shadow.getElementById('b-adjustments').addEventListener('click', function () { injectStep('adjustments'); });
-    shadow.getElementById('b-all').addEventListener('click', function () {
-      ['income','deductions','reliefs','wht','adjustments'].forEach(function (s, i) {
-        setTimeout(function () { injectStep(s); }, i * 900);
-      });
-    });
+    shadow.getElementById('b-income').addEventListener('click',      function () { runStep('income'); });
+    shadow.getElementById('b-deductions').addEventListener('click',  function () { runStep('deductions'); });
+    shadow.getElementById('b-adjustments').addEventListener('click', function () { runStep('adjustments'); });
+    shadow.getElementById('b-reliefs').addEventListener('click',     function () { runStep('reliefs'); });
+    shadow.getElementById('b-wht').addEventListener('click',         function () { runStep('wht'); });
+    shadow.getElementById('b-others').addEventListener('click',      function () { runStep('others'); });
+    shadow.getElementById('b-all').addEventListener('click',         function () { runAllSteps(); });
     shadow.getElementById('b-back').addEventListener('click', function () {
       selectedFiling = null;
       renderPicker();
     });
   }
 
-  function loadFilings() {
-    browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filings' })
-      .then(function (resp) {
-        if (!resp || !resp.ok) throw new Error(resp && resp.error || 'fetch failed');
-        var data = resp.data;
-        if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
-        allFilings = data;
-        try { browser.runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
-        if (allFilings.length === 1) {
-          selectedFiling = allFilings[0];
-          renderFill();
-        } else {
-          renderPicker();
-        }
-      })
-      .catch(function () {
-        browser.runtime.sendMessage({ type: 'FETCH_BRIDGE', path: '/filing' })
-          .then(function (resp) {
-            if (!resp || !resp.ok) throw new Error('fetch failed');
-            var single = resp.data;
-            allFilings = [single];
-            selectedFiling = single;
-            try { browser.runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }); } catch (_) {}
-            renderFill();
-          })
-          .catch(function () { renderOffline(); });
-      });
+  async function loadFilings() {
+    await tokenCapturePromise;
+    const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
+    if (resp && resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+      allFilings = resp.data;
+      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      if (allFilings.length === 1) {
+        selectedFiling = allFilings[0];
+        renderFill();
+      } else {
+        renderPicker();
+      }
+      return;
+    }
+
+    const singleResp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
+    if (singleResp && singleResp.ok && singleResp.data) {
+      allFilings = [singleResp.data];
+      selectedFiling = singleResp.data;
+      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      renderFill();
+      return;
+    }
+
+    renderOffline();
   }
 
-  const MAPPINGS = {
-    income: [
-      ['Employment',                   'income.employment'],
-      ['Salary',                       'income.employment'],
-      ['Trade Business or profession', 'income.business'],
-      ['Consultancy',                  'income.business'],
-      ['Trade/Business',               'income.business'],
-      ['Dividend',                     'income.dividend'],
-      ['Interest',                     'income.interest'],
-      ['Royalty',                      'income.royalty'],
-      ['Rent',                         'income.rental'],
-      ['Rental',                       'income.rental'],
-    ],
-    deductions: [
-      ['Pensions',  'deductions.pension'],
-      ['Pension',   'deductions.pension'],
-    ],
-    adjustments: [
-      ['Capital Allowance',  'computation.totalCapitalAllowances'],
-      ['Capital Allowances', 'computation.totalCapitalAllowances'],
-    ],
-    reliefs: [
-      ['National Health Insurance Scheme', 'deductions.nhis'],
-      ['NHIS',                             'deductions.nhis'],
-      ['National Housing Fund',            'deductions.nhf'],
-      ['NHF',                              'deductions.nhf'],
-      ['Life Assurance',                   'deductions.lifeAssurance'],
-      ['National Pension Scheme',          'deductions.pension'],
-      ['Pension Scheme',                   'deductions.pension'],
-    ],
-    wht: [
-      ['WHT Others',      'computation.whtCredits'],
-      ['WHT Credit',      'computation.whtCredits'],
-      ['WHT',             'computation.whtCredits'],
-      ['Withholding Tax', 'computation.whtCredits'],
-      ['Tax Credit',      'computation.whtCredits'],
-    ],
-  };
-
-  const TAB_NAME = {
-    income: 'Income', deductions: 'Deductions',
-    adjustments: 'Adjustments', reliefs: 'Reliefs', wht: 'Withheld Taxes',
-  };
-
-  function injectStep(step) {
+  function runStep(step) {
     if (!selectedFiling) { showToast('No filing selected.', 'warning'); return; }
-    var mappings = MAPPINGS[step];
-    if (!mappings) { showToast('Unknown step: ' + step, 'warning'); return; }
-    var done = 0;
-    var filledEls  = new Set();
-    var filledPaths = new Set();
-
-    mappings.forEach(function (m) {
-      var val = getPath(selectedFiling, m[1]);
-      if (val == null || val === '' || val === 0) return;
-      var el = byLabel(m[0]);
-      if (!el) {
-        if (!filledPaths.has(m[1])) {
-        }
-        return;
+    if (!core) { showToast('Extension core failed to load.', 'error'); return; }
+    const tabSwitched = core.activateTab(step, document);
+    const exec = function () {
+      const res = core.injectStep(step, selectedFiling, document);
+      if (res.done === 0 && res.miss === 0) {
+        showToast('No non-zero values for "' + res.tabName + '".', 'success', 4000);
+      } else if (res.done === 0) {
+        showToast('⚠ No fields found. Navigate to the "' + res.tabName + '" tab first.', 'warning', 7000);
+      } else {
+        showToast(
+          '✔ ' + res.done + ' field' + (res.done !== 1 ? 's' : '') + ' filled on "' + res.tabName + '"' +
+          (res.miss > 0 ? ' · ' + res.miss + ' not found' : ''),
+          res.miss > 0 ? 'warning' : 'success'
+        );
       }
-      if (filledEls.has(el)) return;
-      setFieldValue(el, String(val));
-      filledEls.add(el);
-      filledPaths.add(m[1]);
-      done++;
-    });
-
-    var allPaths = {};
-    mappings.forEach(function (m) {
-      var val = getPath(selectedFiling, m[1]);
-      if (val == null || val === '' || val === 0) return;
-      allPaths[m[1]] = true;
-    });
-    var miss = Object.keys(allPaths).filter(function (p) { return !filledPaths.has(p); }).length;
-
-    if (done === 0) {
-      showToast('⚠ No fields found. Navigate to the "' + TAB_NAME[step] + '" tab first.', 'warning', 7000);
+    };
+    if (tabSwitched) {
+      setTimeout(exec, 180);
     } else {
-      showToast(
-        '✔ ' + done + ' field' + (done !== 1 ? 's' : '') + ' filled on "' + TAB_NAME[step] + '"' +
-        (miss > 0 ? ' · ' + miss + ' not found' : ''),
-        miss > 0 ? 'warning' : 'success'
-      );
+      exec();
     }
   }
 
-  function setFieldValue(el, value) {
-    if (!el) return false;
-    var clean = String(value).replace(/,/g, '').trim();
-    el.focus();
-
-    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value') &&
-                       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    if (nativeSetter) nativeSetter.call(el, clean);
-    else el.value = clean;
-
-    el.dispatchEvent(new InputEvent('input', {
-      bubbles: true, composed: true,
-      inputType: 'insertText', data: clean,
-    }));
-    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-
-    var reactKey = Object.keys(el).find(function (k) {
-      return k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance');
+  function runAllSteps() {
+    if (!selectedFiling) { showToast('No filing selected.', 'warning'); return; }
+    if (!core) { showToast('Extension core failed to load.', 'error'); return; }
+    core.injectAllSteps(selectedFiling, document, 250).then(function (results) {
+      const totalDone = results.reduce(function (s, r) { return s + r.done; }, 0);
+      const totalMiss = results.reduce(function (s, r) { return s + r.miss; }, 0);
+      if (totalDone === 0) {
+        showToast('⚠ No calculator fields found on this page.', 'warning', 7000);
+      } else {
+        showToast(
+          '✔ Auto-filled ' + totalDone + ' field' + (totalDone !== 1 ? 's' : '') + ' across tabs' +
+          (totalMiss > 0 ? ' · ' + totalMiss + ' not found' : ''),
+          totalMiss > 0 ? 'warning' : 'success',
+          6000
+        );
+      }
     });
-    if (reactKey) {
-      var props = el[reactKey] && (el[reactKey].memoizedProps || (el[reactKey].return && el[reactKey].return.memoizedProps));
-      if (props && props.onChange) try { props.onChange({ target: el, type: 'change' }); } catch (_) {}
-    }
-
-    try {
-      var ctx = el.__ngContext__;
-      if (Array.isArray(ctx)) {
-        ctx.forEach(function (item) {
-          if (!item || typeof item !== 'object') return;
-          if (typeof item._onChange === 'function') try { item._onChange(clean); } catch (_) {}
-          else if (typeof item.onChange === 'function') try { item.onChange(clean); } catch (_) {}
-          if (item.control && typeof item.control.setValue === 'function') {
-            try {
-              item.control.setValue(clean, { emitEvent: false, emitViewToModelChange: false });
-              item.control.markAsDirty();
-              item.control.updateValueAndValidity({ emitEvent: false });
-            } catch (_) {}
-          }
-        });
-      }
-    } catch (_) {}
-
-    return true;
-  }
-
-  function byLabel(labelText) {
-    var needle = labelText.toLowerCase();
-
-    function inputNear(labelEl) {
-      var forId = labelEl.getAttribute && labelEl.getAttribute('for');
-      if (forId) {
-        var byFor = document.querySelector('#' + CSS.escape(forId));
-        if (byFor && byFor.tagName === 'INPUT') return byFor;
-      }
-      var sib = labelEl.nextElementSibling;
-      if (sib) {
-        if (sib.tagName === 'INPUT') return sib;
-        var inSib = sib.querySelector('input');
-        if (inSib) return inSib;
-      }
-      for (var up = labelEl.parentElement, depth = 0; up && depth < 5; up = up.parentElement, depth++) {
-        var inUp = up.querySelector('input');
-        if (inUp) return inUp;
-      }
-      return null;
-    }
-
-    var labelSelectors = 'label, mat-label';
-    try {
-      var labelEls = document.querySelectorAll(labelSelectors);
-      for (var i = 0; i < labelEls.length; i++) {
-        var l = labelEls[i];
-        if (!l.textContent.trim().toLowerCase().includes(needle)) continue;
-        var found = inputNear(l);
-        if (found) return found;
-      }
-    } catch (_) {}
-
-    var cells = document.querySelectorAll('td, th');
-    for (var j = 0; j < cells.length; j++) {
-      var cell = cells[j];
-      if (!cell.textContent.trim().toLowerCase().includes(needle)) continue;
-      var nextTd = cell.nextElementSibling;
-      if (nextTd) {
-        var inp = nextTd.querySelector('input');
-        if (inp) return inp;
-      }
-      var row = cell.closest('tr');
-      if (row) {
-        var rowInp = row.querySelector('input');
-        if (rowInp) return rowInp;
-      }
-    }
-
-    var textNodes = document.querySelectorAll('span, div, p, li');
-    for (var k = 0; k < textNodes.length; k++) {
-      var node = textNodes[k];
-      if (node.children.length > 2) continue;
-      var txt = node.textContent.trim().toLowerCase();
-      if (!txt.includes(needle) || txt.length > needle.length + 40) continue;
-      var near = inputNear(node);
-      if (near) return near;
-    }
-
-    var inputs = document.querySelectorAll('input[aria-label], input[placeholder]');
-    for (var m = 0; m < inputs.length; m++) {
-      var inp2 = inputs[m];
-      var aria = (inp2.getAttribute('aria-label') || '').toLowerCase();
-      var ph   = (inp2.getAttribute('placeholder') || '').toLowerCase();
-      if (aria.includes(needle) || ph.includes(needle)) return inp2;
-    }
-
-    return null;
-  }
-
-  function getPath(obj, path) {
-    return path.split('.').reduce(function (o, k) { return o && o[k]; }, obj);
   }
 
   function showToast(msg, type, duration) {
-    var prev = document.getElementById('__lf_toast_outer');
+    const prev = document.getElementById('__lf_toast_outer');
     if (prev) prev.remove();
     duration = duration || 5000;
-    var colors = { success: '#14532d', warning: '#7c3d0f', error: '#7f1d1d' };
-    var t = document.createElement('div');
+    const colors = { success: '#14532d', warning: '#7c3d0f', error: '#7f1d1d' };
+    const t = document.createElement('div');
     t.id = '__lf_toast_outer';
     Object.assign(t.style, {
       position: 'fixed', bottom: '24px', right: '24px',
@@ -556,22 +455,38 @@
   }
 
   function esc(str) {
-    var d = document.createElement('div');
+    const d = document.createElement('div');
     d.textContent = String(str != null ? str : '');
     return d.innerHTML;
   }
 
   function fmtN(n) {
     if (n == null || isNaN(n)) return '—';
-    return Number(n).toLocaleString('en-NG');
+    return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
   }
 
-  browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     if (msg.type === 'INJECT_STEP') {
-      var saved = selectedFiling;
+      const saved = selectedFiling;
       if (msg.data) selectedFiling = msg.data;
-      try { injectStep(msg.step); sendResponse({ ok: true }); }
-      catch (e) { sendResponse({ ok: false, error: String(e) }); }
+      try {
+        runStep(msg.step);
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+      if (!saved && msg.data) selectedFiling = msg.data;
+      return false;
+    }
+    if (msg.type === 'INJECT_ALL') {
+      const saved = selectedFiling;
+      if (msg.data) selectedFiling = msg.data;
+      try {
+        runAllSteps();
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
       if (!saved && msg.data) selectedFiling = msg.data;
       return false;
     }
@@ -580,8 +495,4 @@
       return false;
     }
   });
-
-  init();
-
 })();
-
