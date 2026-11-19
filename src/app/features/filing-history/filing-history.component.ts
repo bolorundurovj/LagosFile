@@ -124,7 +124,7 @@ interface FilingRowAction {
                     (keydown.enter)="viewFiling(f.id)"
                     (keydown.space)="viewFiling(f.id); $event.preventDefault()"
                   >
-                    <td><strong>YOA {{ f.yearOfAssessment }}</strong></td>
+                    <td><strong>Income year {{ f.yearOfAssessment }}</strong> <span class="text-muted">· LIRS YOA {{ f.yearOfAssessment + 1 }}</span></td>
                     <td class="text-muted cell-truncate">{{ f.filingReference ?? '—' }}</td>
                     <td>
                       <span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span>

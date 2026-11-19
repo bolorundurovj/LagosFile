@@ -38,7 +38,8 @@ export class LIRSService {
       section: 'Taxpayer',
       fields: [
         { label: 'Filing Reference', value: filing.filingReference ?? '—', copyText: filing.filingReference ?? '' },
-        { label: 'Year of Assessment', value: filing.yearOfAssessment, copyText: String(filing.yearOfAssessment) },
+        { label: 'Income Year', value: filing.yearOfAssessment, copyText: String(filing.yearOfAssessment) },
+        { label: 'LIRS Year of Assessment', value: filing.yearOfAssessment + 1, copyText: String(filing.yearOfAssessment + 1) },
       ],
     });
 

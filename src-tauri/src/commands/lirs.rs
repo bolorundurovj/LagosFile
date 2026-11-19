@@ -335,7 +335,8 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let computation = ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())?;
 
-    let yoa = filing.year_of_assessment;
+    let income_year = filing.year_of_assessment;
+    let lirs_yoa = income_year + 1;
 
     Ok(PendingFiling {
         filing_id: filing.id.to_string(),
@@ -344,7 +345,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             tin: taxpayer.1.clone(),
             payer_id: format_payer_id(&taxpayer.1),
         },
-        year_of_assessment: yoa,
+        year_of_assessment: lirs_yoa,
         filing_reference: filing.filing_reference.clone(),
         income: PendingFilingIncome {
             employment,
@@ -382,8 +383,8 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             },
             rent_paid: rental,
             rent_paid_by_employer: 0.0,
-            date_started: format!("{}-01-01", yoa),
-            date_end: format!("{}-12-31", yoa),
+            date_started: format!("{}-01-01", income_year),
+            date_end: format!("{}-12-31", income_year),
         },
         deductions: PendingFilingDeductions {
             pension,

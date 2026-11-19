@@ -56,7 +56,7 @@ const STEPS = [
               }
             </select>
             <div class="form-hint" style="margin-top:var(--space-2)">
-              Filing for income earned in {{ selectedYear }}, due 31 March {{ selectedYear + 1 }}.
+              Income year {{ selectedYear }} · LIRS year of assessment {{ selectedYear + 1 }} (due 31 March {{ selectedYear + 1 }}).
             </div>
           </div>
 
@@ -80,7 +80,7 @@ const STEPS = [
         <div class="readonly-filing__header">
           <div>
             <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
-              <span class="wizard__yoa-badge">YOA {{ filing.yearOfAssessment }}</span>
+              <span class="wizard__yoa-badge">Income year {{ filing.yearOfAssessment }} · LIRS year of assessment {{ filing.yearOfAssessment + 1 }}</span>
               <span class="badge" [class.badge--confirmed]="filing.status === 'Confirmed'" [class.badge--submitted]="filing.status === 'Submitted'">
                 {{ filing.status }}
               </span>
@@ -164,7 +164,7 @@ const STEPS = [
       <div class="wizard">
         <!-- Left: vertical progress strip -->
         <aside class="wizard__sidebar">
-          <div class="wizard__yoa-badge">YOA {{ yearOfAssessment() }}</div>
+          <div class="wizard__yoa-badge">Income year {{ yearOfAssessment() }} · LIRS year of assessment {{ yearOfAssessment() + 1 }}</div>
           <nav class="progress-strip" aria-label="Filing steps">
             @for (s of steps; track s.step) {
               <button

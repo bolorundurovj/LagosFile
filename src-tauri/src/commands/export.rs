@@ -571,19 +571,24 @@ pub fn export_filing_pdf_in_dir(
         );
 
         // Main title
+        let income_year = summary.year_of_assessment;
+        let lirs_yoa = income_year + 1;
         cover.use_text(
-            format!("{} Personal Income Tax", summary.year_of_assessment),
+            format!("{} Personal Income Tax", lirs_yoa),
             26.0,
             left,
             div_y - Mm(22.0),
             &font_bold,
         );
         cover.use_text(
-            "\u{2014} Computation Worksheet",
-            26.0,
+            format!(
+                "Income Year {} \u{00B7} LIRS Year of Assessment {}",
+                income_year, lirs_yoa
+            ),
+            11.0,
             left,
-            div_y - Mm(34.0),
-            &font_bold,
+            div_y - Mm(32.0),
+            &font,
         );
 
         // Bottom section: taxpayer info (left) and tax payable (right)
@@ -675,7 +680,11 @@ pub fn export_filing_pdf_in_dir(
     let details: &[(&str, String)] = &[
         ("Taxpayer", summary.full_name.clone()),
         ("TIN", summary.tin.clone()),
-        ("Year of Assessment", summary.year_of_assessment.to_string()),
+        ("Income Year", summary.year_of_assessment.to_string()),
+        (
+            "LIRS Year of Assessment",
+            (summary.year_of_assessment + 1).to_string(),
+        ),
         (
             "Filing Reference",
             summary
@@ -1008,7 +1017,8 @@ pub fn export_filing_json_with_conn(
             "tin":      summary.tin,
         },
         "filing": {
-            "yearOfAssessment": summary.year_of_assessment,
+            "incomeYear":       summary.year_of_assessment,
+            "yearOfAssessment": summary.year_of_assessment + 1,
             "filingReference":  summary.filing_reference,
             "confirmedAt":      summary.confirmed_at,
             "submittedAt":      summary.submitted_at,

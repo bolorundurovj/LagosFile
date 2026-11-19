@@ -246,3 +246,71 @@ fn test_build_all_pending_filings_returns_error_when_all_fail_no_panic() {
     let res = lirs::build_all_pending_filings(&conn);
     assert!(res.is_err(), "all-failing batch must return Err, not panic");
 }
+
+#[test]
+fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_income_year() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            export::{export_filing_json_with_conn, export_filing_pdf_in_dir},
+            filing::{confirm_filing_with_conn, create_draft_filing_with_conn, upsert_income_entry_with_conn},
+        },
+        services::profile::ProfileService,
+        AppState,
+    };
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s10-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let filing_id = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        ProfileService::create(
+            db,
+            json!({ "fullName": "Ngozi Obi", "tin": "1234567890" }),
+        )
+        .unwrap();
+        let conn = db.conn.lock().unwrap();
+        let draft = create_draft_filing_with_conn(&conn, 2025).unwrap();
+        let fid = draft.id.to_string();
+        upsert_income_entry_with_conn(
+            &conn,
+            &json!({ "filingId": fid, "incomeType": "employment", "grossAmountNgn": 4_000_000.0 }),
+        )
+        .unwrap();
+        confirm_filing_with_conn(&conn, &fid).unwrap();
+
+        // Bridge payload for income year 2025 must report LIRS YOA 2026 and accommodation dates in 2025
+        let payload = lirs::build_pending_filing(&conn, &fid).unwrap();
+        assert_eq!(payload.year_of_assessment, 2026);
+        assert_eq!(payload.accommodation.date_started, "2025-01-01");
+        assert_eq!(payload.accommodation.date_end, "2025-12-31");
+
+        // JSON export must show both incomeYear (2025) and yearOfAssessment (2026)
+        let json_path = dir.join("out.json");
+        export_filing_json_with_conn(&conn, &fid, json_path.to_str().unwrap()).unwrap();
+        let exported: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(exported["filing"]["incomeYear"].as_i64(), Some(2025));
+        assert_eq!(exported["filing"]["yearOfAssessment"].as_i64(), Some(2026));
+        fid
+    };
+
+    // PDF export must show both Income Year 2025 and LIRS Year of Assessment 2026
+    let pdf_path = dir.join("out.pdf");
+    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
+        .unwrap();
+    let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+    let text: String = pdf_doc
+        .get_pages()
+        .keys()
+        .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Income Year") && text.contains("2025"), "PDF missing income year 2025: {text}");
+    assert!(text.contains("LIRS Year of Assessment") && text.contains("2026"), "PDF missing LIRS YOA 2026: {text}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -134,7 +134,7 @@ import { buildDeadlineIcs } from '../../core/services/deadline-reminder.service'
             <tbody>
               @for (filing of filings().slice(0, 5); track filing.id) {
                 <tr>
-                  <td><strong>{{ filing.yearOfAssessment }}</strong></td>
+                  <td><strong>Income year {{ filing.yearOfAssessment }}</strong> <span class="text-muted">· LIRS YOA {{ filing.yearOfAssessment + 1 }}</span></td>
                   <td class="text-muted">{{ filing.filingReference ?? '---' }}</td>
                   <td><span class="badge badge--{{ filing.status | lowercase }}">{{ filing.status }}</span></td>
                   <td class="align-right financial-value">{{ filing.finalTaxPayable | naira }}</td>
