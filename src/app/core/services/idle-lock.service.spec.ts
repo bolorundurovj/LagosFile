@@ -1,7 +1,12 @@
 import { TestBed } from '@angular/core/testing';
-import { Router } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
+import { Component } from '@angular/core';
 import { IdleLockService } from './idle-lock.service';
 import { AuthService } from './auth.service';
+import { TauriService } from './tauri.service';
+
+@Component({ standalone: true, template: '' })
+class DummyRouteComponent {}
 
 describe('IdleLockService', () => {
   let service: IdleLockService;
@@ -60,5 +65,64 @@ describe('IdleLockService', () => {
     jasmine.clock().tick(24 * 60 * 60_000);
     expect(auth.lock).not.toHaveBeenCalled();
     expect(localStorage.getItem('lagosfile-idle-lock-minutes')).toBe('0');
+  });
+});
+
+describe('IdleLockService vault lifecycle (S5)', () => {
+  let service: IdleLockService;
+  let auth: AuthService;
+  let tauriSpy: jasmine.SpyObj<TauriService>;
+  let router: Router;
+
+  beforeEach(() => {
+    localStorage.removeItem('lagosfile-idle-lock-minutes');
+    tauriSpy = jasmine.createSpyObj('TauriService', ['invoke']);
+    tauriSpy.invoke.and.resolveTo(undefined);
+
+    TestBed.configureTestingModule({
+      providers: [
+        AuthService,
+        IdleLockService,
+        { provide: TauriService, useValue: tauriSpy },
+        provideRouter([
+          { path: 'setup-recovery', component: DummyRouteComponent },
+          { path: 'unlock', component: DummyRouteComponent },
+        ]),
+      ],
+    });
+
+    auth = TestBed.inject(AuthService);
+    service = TestBed.inject(IdleLockService);
+    router = TestBed.inject(Router);
+    jasmine.clock().install();
+  });
+
+  afterEach(() => {
+    service.stop();
+    jasmine.clock().uninstall();
+    localStorage.removeItem('lagosfile-idle-lock-minutes');
+  });
+
+  it('keeps idle lock active after navigating outside shell to /setup-recovery and invokes lock_db', async () => {
+    service.setMinutes(5);
+    tauriSpy.invoke.and.callFake((async (cmd: string) => {
+      if (cmd === 'unlock_db') {
+        return { id: '1', fullName: 'Ada', tin: '1234567890123', createdAt: '2026-01-01T00:00:00Z' };
+      }
+      return undefined;
+    }) as any);
+
+    await auth.unlock('1234');
+    TestBed.flushEffects();
+
+    await router.navigate(['/setup-recovery']);
+    expect(router.url).toBe('/setup-recovery');
+
+    jasmine.clock().tick(5 * 60_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(tauriSpy.invoke).toHaveBeenCalledWith('lock_db');
+    expect(auth.state()).toBe('locked');
   });
 });

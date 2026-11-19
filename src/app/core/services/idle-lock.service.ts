@@ -1,4 +1,4 @@
-import { Injectable, NgZone, inject, signal } from '@angular/core';
+import { Injectable, NgZone, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { AuthService } from './auth.service';
 
@@ -19,6 +19,18 @@ export class IdleLockService {
   private timer?: ReturnType<typeof setTimeout>;
   private running = false;
   private readonly onActivity = () => this.reset();
+
+  constructor() {
+    if (typeof this.auth.state === 'function') {
+      effect(() => {
+        if (this.auth.state() === 'unlocked') {
+          this.start();
+        } else {
+          this.stop();
+        }
+      });
+    }
+  }
 
   start(): void {
     if (this.running) return;

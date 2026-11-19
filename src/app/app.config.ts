@@ -4,6 +4,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { routes } from './app.routes';
 import { AuthService } from './core/services/auth.service';
 import { ConfigService } from './core/services/config.service';
+import { IdleLockService } from './core/services/idle-lock.service';
 import { ThemeService } from './core/services/theme.service';
 import { LUCIDE_ICONS, LucideIconProvider } from 'lucide-angular';
 import {
@@ -15,9 +16,15 @@ import {
 
 const SPLASH_MIN_MS = 1800; // minimum visible duration for the splash screen
 
-function initApp(auth: AuthService, config: ConfigService, theme: ThemeService) {
+function initApp(
+  auth: AuthService,
+  config: ConfigService,
+  theme: ThemeService,
+  idleLock: IdleLockService,
+) {
   return async () => {
     void theme; // ThemeService self-initialises via its constructor
+    void idleLock; // IdleLockService tracks AuthService.state() globally
     void config;
     // Run auth init and the minimum splash timer in parallel so the splash
     // is always visible for at least SPLASH_MIN_MS, even on a fast machine.
@@ -36,7 +43,7 @@ export const appConfig: ApplicationConfig = {
     {
       provide: APP_INITIALIZER,
       useFactory: initApp,
-      deps: [AuthService, ConfigService, ThemeService],
+      deps: [AuthService, ConfigService, ThemeService, IdleLockService],
       multi: true,
     },
     {
