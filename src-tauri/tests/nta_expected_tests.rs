@@ -559,3 +559,92 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_s13_non_exempt_share_gain_taxes_gain_not_gross_proceeds() {
+    let cfg = nta_2025_config(0.0);
+    // Simulate legacy row where user accidentally typed disposal proceeds (₦200m)
+    // in gross_amount_ngn while recording actual gain (₦15m) in cgt_gain.
+    let mut entry = employment_entry(200_000_000.0);
+    entry.income_type = "capital_gain_shares".to_string();
+    entry.cgt_proceeds = Some(200_000_000.0);
+    entry.cgt_gain = Some(15_000_000.0);
+
+    let res = ComputationEngine::compute(&[entry], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(res.total_gross_income, 15_000_000.0, "taxable share gain");
+    assert_ngn_eq(res.cgt_exempt_amount, 0.0, "not exempt above ₦150m proceeds");
+    // Tax on ₦15m under NTA 2025: 0 + 330,000 + 1,620,000 + (3m * 21% = 630,000) = ₦2,580,000
+    assert_ngn_eq(res.final_tax_payable, 2_580_000.0, "tax on ₦15m share gain");
+}
+
+#[test]
+fn test_s13_share_gain_migration_fixes_drafts_and_notifies_filed() {
+    use lagosfile_lib::db::{get_migration_notices, AppDb};
+    use rusqlite::params;
+
+    // Seed a database with one Draft and one Submitted filing having mismatched share-gain rows
+    let seed = AppDb::open_in_memory().unwrap();
+    let bytes = {
+        let conn = seed.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-1', 'Sade', '1000000001', '2025-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, filing_reference, created_at, confirmed_at, submitted_at, total_income_ngn, final_tax_payable, tax_config_version)
+             VALUES ('f-sub', 'tp-1', 2024, 'Submitted', 'LIRS/REF/2024/00001', '2025-01-02T00:00:00Z', '2025-01-03T00:00:00Z', '2025-01-04T00:00:00Z', 200000000, 45000000, 'NTA 2025')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, created_at, tax_config_version)
+             VALUES ('f-draft', 'tp-1', 2025, 'Draft', '2026-01-02T00:00:00Z', 'NTA 2025')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt, cgt_proceeds, cgt_gain)
+             VALUES ('ie-sub', 'f-sub', 'capital_gain_shares', 'Listed shares', 200000000, 0, 0, 200000000, 15000000)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt, cgt_proceeds, cgt_gain)
+             VALUES ('ie-draft', 'f-draft', 'capital_gain_shares', 'Listed shares', 200000000, 0, 0, 200000000, 15000000)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        seed.serialize().unwrap()
+    };
+
+    // Re-open through load_from_bytes so migrate() runs migrate_share_gain_rows
+    let migrated = AppDb::open_in_memory().unwrap();
+    migrated.load_from_bytes(&bytes).unwrap();
+    let conn = migrated.conn.lock().unwrap();
+
+    let draft_gross: f64 = conn
+        .query_row(
+            "SELECT gross_amount_ngn FROM income_entry WHERE id='ie-draft'",
+            params![],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_ngn_eq(draft_gross, 15_000_000.0, "Draft share-gain row fixed to cgt_gain");
+
+    let sub_gross: f64 = conn
+        .query_row(
+            "SELECT gross_amount_ngn FROM income_entry WHERE id='ie-sub'",
+            params![],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_ngn_eq(sub_gross, 200_000_000.0, "Submitted share-gain row must remain untouched");
+
+    let notices = get_migration_notices(&conn);
+    assert!(
+        notices.iter().any(|n| n.contains("LIRS/REF/2024/00001")),
+        "expected migration notice mentioning Submitted filing, got: {notices:?}"
+    );
+}

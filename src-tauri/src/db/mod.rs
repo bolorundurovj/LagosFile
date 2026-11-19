@@ -93,6 +93,7 @@ pub const PITA_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000003";
 const META_MIGRATION_NOTICES: &str = "migration_notices";
 const META_NTA_MIGRATED: &str = "nta_2025_config_migrated";
 const META_FOREIGN_TAX_MIGRATED: &str = "foreign_tax_relief_migrated";
+const META_SHARE_GAIN_MIGRATED: &str = "share_gain_mismatch_migrated";
 
 /// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` leaves
 /// existing databases untouched, so they are added here when missing.
@@ -427,6 +428,85 @@ fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_share_gain_rows(conn: &Connection) -> Result<()> {
+    struct ShareGainMismatch {
+        entry_id: String,
+        cgt_gain: f64,
+        status: String,
+        yoa: i32,
+        filing_ref: Option<String>,
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT ie.id, ie.cgt_gain, f.status, f.year_of_assessment, f.filing_reference
+         FROM income_entry ie
+         JOIN filing f ON f.id = ie.filing_id
+         WHERE ie.income_type = 'capital_gain_shares'
+           AND ie.cgt_gain IS NOT NULL
+           AND ABS(ie.gross_amount_ngn - ie.cgt_gain) > 0.01",
+    )?;
+    let rows: Vec<ShareGainMismatch> = stmt
+        .query_map([], |r| {
+            Ok(ShareGainMismatch {
+                entry_id: r.get(0)?,
+                cgt_gain: r.get(1)?,
+                status: r.get(2)?,
+                yoa: r.get(3)?,
+                filing_ref: r.get(4)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let mut filed_notice: Vec<String> = Vec::new();
+    for row in rows {
+        if row.status == "Draft" {
+            conn.execute(
+                "UPDATE income_entry SET gross_amount_ngn = ?1 WHERE id = ?2",
+                rusqlite::params![row.cgt_gain, row.entry_id],
+            )?;
+        } else {
+            let desc = match row.filing_ref {
+                Some(ref r) => format!("{} ({})", row.yoa, r),
+                None => format!("{}", row.yoa),
+            };
+            if !filed_notice.contains(&desc) {
+                filed_notice.push(desc);
+            }
+        }
+    }
+
+    if !filed_notice.is_empty() {
+        let already: bool = conn
+            .query_row(
+                "SELECT COUNT(1) FROM app_meta WHERE key = ?1",
+                rusqlite::params![META_SHARE_GAIN_MIGRATED],
+                |r| r.get::<_, i32>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if !already {
+            add_migration_notice(
+                conn,
+                &format!(
+                    "Filed returns ({}) contain share-disposal entries whose stored gross amount differs from the capital gain. Review and amend if needed.",
+                    filed_notice.join(", ")
+                ),
+            )?;
+            conn.execute(
+                "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, '1')",
+                rusqlite::params![META_SHARE_GAIN_MIGRATED],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -442,6 +522,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     backfill_filing_tax_config_ids(conn)?;
     ensure_nta_and_pita_configs(conn)?;
     migrate_foreign_tax_reliefs(conn)?;
+    migrate_share_gain_rows(conn)?;
     seed_filing_ref_counter(conn)?;
     Ok(())
 }

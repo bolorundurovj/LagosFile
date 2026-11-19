@@ -77,7 +77,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </label>
             </div>
 
-            @if (!entry.isForeign && entry.incomeType !== 'benefits_in_kind') {
+            @if (!entry.isForeign && entry.incomeType !== 'benefits_in_kind' && entry.incomeType !== 'capital_gain_shares') {
               <div class="form-group">
                 <label class="form-label">Amount (₦ NGN)</label>
                 <input type="number" class="form-input" [(ngModel)]="entry.grossAmountNgn"
@@ -110,7 +110,8 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                 <div class="form-group">
                   <label class="form-label">Foreign Amount</label>
                   <input type="number" class="form-input" [(ngModel)]="entry.foreignAmount"
-                    [name]="'famount_' + i" min="0" placeholder="0.00" />
+                    [name]="'famount_' + i" min="0" placeholder="0.00"
+                    (ngModelChange)="applyRate(entry)" />
                 </div>
                 <div class="form-group">
                   <label class="form-label">Date of Receipt</label>
@@ -139,6 +140,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
                   <input type="number" class="form-input" [(ngModel)]="entry.fxRateCbnOverride"
                     [name]="'cbnrate_' + i" placeholder="Enter CBN rate"
                     [numericFormatDecimals]="4"
+                    (ngModelChange)="applyRate(entry)"
                     (change)="applyRate(entry)" />
                 </div>
               </div>
@@ -150,11 +152,11 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </div>
 
               <div class="form-group">
-                <label class="form-label">Foreign Tax Paid (₦ equivalent, optional)<lf-help text="Tax withheld or paid in the country of source. Recorded for reference; formal double-taxation treaty relief requires a tax advisor."></lf-help></label>
+                <label class="form-label">Foreign Tax Paid (₦ equivalent, optional)<lf-help text="Tax withheld or paid in the country of source on this foreign income. Credited up to the Nigerian tax attributable to this entry."></lf-help></label>
                 <input type="number" class="form-input" [(ngModel)]="entry.foreignTaxPaidNgn"
                   [name]="'ftax_' + i" min="0" placeholder="0.00" />
                 <span class="form-hint">
-                  Foreign tax paid is recorded for reference only in v1. Formal treaty relief requires a tax advisor.
+                  Credited up to the Nigerian tax attributable to this income entry. Attach foreign tax proof below.
                 </span>
               </div>
             }
@@ -163,14 +165,15 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
             @if (entry.incomeType === 'capital_gain_shares') {
               <div class="entry-grid">
                 <div class="form-group">
-                  <label class="form-label">Disposal Proceeds (₦)<lf-help text="The full sale price received. CGT exemption applies if total proceeds are below ₦150,000,000 (NTA 2025, s.56)."></lf-help></label>
+                  <label class="form-label">Disposal Proceeds (₦)<lf-help text="The full sale price received. CGT exemption applies if total proceeds are below ₦150,000,000 (NTA 2025, s.34(1)(a))."></lf-help></label>
                   <input type="number" class="form-input" [(ngModel)]="entry.cgtProceeds"
                     [name]="'proceeds_' + i" min="0" />
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Gain Amount (₦)<lf-help text="Proceeds minus allowable cost of acquisition. CGT exemption also requires the gain to be ≤ ₦10,000,000."></lf-help></label>
+                  <label class="form-label">Gain Amount (₦)<lf-help text="Proceeds minus allowable cost of acquisition. Taxable share gains are taxed on this gain amount; exempt if proceeds < ₦150m and gain ≤ ₦10m."></lf-help></label>
                   <input type="number" class="form-input" [(ngModel)]="entry.cgtGain"
-                    [name]="'gain_' + i" min="0" />
+                    [name]="'gain_' + i" min="0"
+                    (ngModelChange)="onCgtGainChange(entry)" />
                 </div>
               </div>
               @if (cgtSummary().exempt) {
@@ -394,6 +397,8 @@ export class StepIncomeComponent implements OnInit {
     if (entry.incomeType !== 'capital_gain_shares') {
       entry.cgtProceeds = undefined;
       entry.cgtGain = undefined;
+    } else {
+      entry.grossAmountNgn = entry.cgtGain ?? 0;
     }
     // Reset BIK cost if type changes away from benefits_in_kind
     if (entry.incomeType !== 'benefits_in_kind') {
@@ -401,6 +406,12 @@ export class StepIncomeComponent implements OnInit {
     } else {
       // Reset grossAmountNgn so it's driven by the BIK cost field
       entry.grossAmountNgn = 0;
+    }
+  }
+
+  onCgtGainChange(entry: IncomeEntry): void {
+    if (entry.incomeType === 'capital_gain_shares') {
+      entry.grossAmountNgn = entry.cgtGain ?? 0;
     }
   }
 
@@ -457,11 +468,17 @@ export class StepIncomeComponent implements OnInit {
   }
 
   applyRate(entry: IncomeEntry): void {
-    const rate = entry.fxRateCbnOverride ?? entry.fxRateFetched;
-    if (rate && entry.foreignAmount) {
-      entry.grossAmountNgn = rate * entry.foreignAmount;
+    if (!entry.isForeign) return;
+    const override = entry.fxRateCbnOverride;
+    const hasOverride = override != null && Number.isFinite(override) && override > 0;
+    const rate = hasOverride ? override : entry.fxRateFetched;
+    const amount = entry.foreignAmount;
+    if (rate != null && Number.isFinite(rate) && amount != null && Number.isFinite(amount)) {
+      entry.grossAmountNgn = rate * amount;
       entry.fxRateUsed = rate;
-      entry.fxRateSource = entry.fxRateCbnOverride ? 'cbn_override' : (entry.fxRateSource ?? 'manual');
+      entry.fxRateSource = hasOverride ? 'cbn_override' : (entry.fxRateSource ?? 'manual');
+    } else if (amount === 0 || amount == null) {
+      entry.grossAmountNgn = 0;
     }
   }
 
@@ -496,7 +513,11 @@ export class StepIncomeComponent implements OnInit {
       const exempt = this.cgtSummary().exempt;
       const failed: string[] = [];
       for (const entry of this.entries()) {
-        if (entry.incomeType === 'capital_gain_shares') entry.isCgtExempt = exempt;
+        if (entry.isForeign) this.applyRate(entry);
+        if (entry.incomeType === 'capital_gain_shares') {
+          entry.grossAmountNgn = entry.cgtGain ?? 0;
+          entry.isCgtExempt = exempt;
+        }
         await this.filingService.upsertIncomeEntry({ ...entry, filingId: this.filingId() });
         failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }

@@ -65,8 +65,13 @@ impl ComputationEngine {
         let mut effective_other_income = 0.0;
 
         for entry in &other_entries {
-            if entry.income_type == "capital_gain_shares" && share_disposals_exempt {
-                cgt_exempt_amount += entry.gross_amount_ngn;
+            if entry.income_type == "capital_gain_shares" {
+                let gain_amount = entry.cgt_gain.unwrap_or(entry.gross_amount_ngn);
+                if share_disposals_exempt {
+                    cgt_exempt_amount += gain_amount;
+                    continue;
+                }
+                effective_other_income += gain_amount;
                 continue;
             }
             effective_other_income += entry.gross_amount_ngn;
@@ -165,9 +170,14 @@ impl ComputationEngine {
                     continue;
                 }
                 if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
-                    if ft_paid > 0.0 && entry.gross_amount_ngn > 0.0 {
+                    let entry_amount = if entry.income_type == "capital_gain_shares" {
+                        entry.cgt_gain.unwrap_or(entry.gross_amount_ngn)
+                    } else {
+                        entry.gross_amount_ngn
+                    };
+                    if ft_paid > 0.0 && entry_amount > 0.0 {
                         let attributable_tax =
-                            tax_before_credits * (entry.gross_amount_ngn / total_gross);
+                            tax_before_credits * (entry_amount / total_gross);
                         foreign_tax_credits += ft_paid.min(attributable_tax).max(0.0);
                     }
                 }
