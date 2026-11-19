@@ -28,6 +28,11 @@ export class AuthService {
     this._state.set(status.hasDb ? 'locked' : 'needs_pin_setup');
   }
 
+  async hasExistingDb(): Promise<boolean> {
+    const status = await this.tauri.invoke<AppStatus>('check_app_status');
+    return status.hasDb;
+  }
+
   async setupPin(pin: string): Promise<void> {
     await this.tauri.invoke('setup_pin', { pin });
     this._state.set('needs_profile');

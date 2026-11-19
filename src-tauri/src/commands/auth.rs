@@ -213,21 +213,70 @@ pub async fn unlock_with_biometric(
     Ok(taxpayer)
 }
 
-#[tauri::command]
-pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), String> {
-    db::ensure_dirs().map_err(|e| e.to_string())?;
-    let salt = security::generate_salt();
-    std::fs::write(db::salt_path(), salt).map_err(|e| e.to_string())?;
+pub fn setup_pin_in_dir(
+    dir: &std::path::Path,
+    pin: &str,
+    state: &AppState,
+) -> Result<(), String> {
+    use std::io::Write;
 
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir.join("documents")).map_err(|e| e.to_string())?;
+
+    let db_path = dir.join("lagosfile.db.enc");
+    let salt_path = dir.join(".salt");
+
+    if db_path.exists() {
+        return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
+    }
+
+    let salt = security::generate_salt();
     let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     let bytes = new_db.serialize().map_err(|e| e.to_string())?;
-    let key = security::derive_key(&pin, &salt);
+    let key = security::derive_key(pin, &salt);
     let encrypted = security::encrypt(&bytes, &key).map_err(|e| e.to_string())?;
-    std::fs::write(db::db_path(), &encrypted).map_err(|e| e.to_string())?;
+
+    // Claim the live vault path exclusively so two concurrent setups cannot both succeed
+    // and an existing vault can never be overwritten.
+    let mut db_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&db_path)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "A vault already exists. Please unlock with your PIN instead.".to_string()
+            } else {
+                e.to_string()
+            }
+        })?;
+
+    // Write salt via unique temp file and rename into place (replaces any leftover .salt).
+    let salt_tmp = dir.join(format!(".salt.{}.tmp", uuid::Uuid::new_v4()));
+    let write_res = (|| -> std::io::Result<()> {
+        std::fs::write(&salt_tmp, salt)?;
+        std::fs::rename(&salt_tmp, &salt_path)?;
+        db_file.write_all(&encrypted)?;
+        db_file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        drop(db_file);
+        let _ = std::fs::remove_file(&salt_tmp);
+        let _ = std::fs::remove_file(&db_path);
+        return Err(e.to_string());
+    }
 
     *state.db.lock().unwrap() = Some(new_db);
     *state.key.lock().unwrap() = Some(key);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), String> {
+    db::ensure_dirs().map_err(|e| e.to_string())?;
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    setup_pin_in_dir(&home.join("LagosFile"), &pin, &state)
 }
 
 #[tauri::command]

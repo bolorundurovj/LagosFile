@@ -27,3 +27,20 @@ export const publicGuard: CanActivateFn = () => {
   }
   return true;
 };
+
+export const firstRunGuard: CanActivateFn = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+
+  if (auth.isUnlocked()) {
+    return router.createUrlTree(['/dashboard']);
+  }
+  try {
+    if (await auth.hasExistingDb()) {
+      return router.createUrlTree(['/unlock']);
+    }
+  } catch {
+    return router.createUrlTree(['/unlock']);
+  }
+  return true;
+};
