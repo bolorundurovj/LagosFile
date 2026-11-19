@@ -1,6 +1,8 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { ConfigService } from '../../core/services/config.service';
 import { FxService, FxCacheEntry } from '../../core/services/fx.service';
 import { ToastService } from '../../core/services/toast.service';
@@ -418,20 +420,35 @@ export class ConfigurationComponent implements OnInit {
   async exportConfig(): Promise<void> {
     const cfg = this.config();
     if (!cfg) return;
-    await this.configService.exportJson(cfg.id);
+    try {
+      const json = await this.configService.exportJson(cfg.id);
+      const safeName = cfg.versionLabel.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '') || 'tax-config';
+      const savePath = await saveDialog({
+        defaultPath: `${safeName}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!savePath) return;
+      await writeTextFile(savePath, json);
+      this.toast.success('Tax configuration exported.');
+    } catch (err: unknown) {
+      this.toast.error('Could not export configuration: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   async importConfig(e: Event): Promise<void> {
     this.importError.set('');
-    const file = (e.target as HTMLInputElement).files?.[0];
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
     if (!file) return;
     const text = await file.text();
     try {
-      const imported = JSON.parse(text);
-      await this.configService.importJson(imported);
+      await this.configService.importJson(text);
       await this.load();
+      this.toast.success('Tax configuration imported.');
     } catch (err: unknown) {
       this.importError.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      input.value = '';
     }
   }
 

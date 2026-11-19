@@ -75,6 +75,66 @@ impl ConfigService {
         Self::get_active_conn(&conn)
     }
 
+    pub fn validate_bands(bands: &[TaxBand]) -> Result<()> {
+        if bands.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Tax configuration must define at least one tax band."
+            ));
+        }
+        let mut expected_lower = 0.0_f64;
+        for (i, band) in bands.iter().enumerate() {
+            if !band.lower.is_finite() || band.lower < 0.0 {
+                return Err(anyhow::anyhow!(
+                    "Band {} has an invalid lower bound ({}).",
+                    i + 1,
+                    band.lower
+                ));
+            }
+            if !band.rate.is_finite() || !(0.0..=1.0).contains(&band.rate) {
+                return Err(anyhow::anyhow!(
+                    "Band {} rate ({}) must be between 0 and 1.",
+                    i + 1,
+                    band.rate
+                ));
+            }
+            if (band.lower - expected_lower).abs() > 1e-6 {
+                return Err(anyhow::anyhow!(
+                    "Band {} must start at {} to remain sorted and contiguous (found {}).",
+                    i + 1,
+                    expected_lower,
+                    band.lower
+                ));
+            }
+            let is_last = i + 1 == bands.len();
+            match band.upper {
+                Some(upper) => {
+                    if is_last {
+                        return Err(anyhow::anyhow!(
+                            "The top tax band must be open-ended (upper = null)."
+                        ));
+                    }
+                    if !upper.is_finite() || upper <= band.lower {
+                        return Err(anyhow::anyhow!(
+                            "Band {} upper bound ({}) must be greater than its lower bound ({}).",
+                            i + 1,
+                            upper,
+                            band.lower
+                        ));
+                    }
+                    expected_lower = upper;
+                }
+                None => {
+                    if !is_last {
+                        return Err(anyhow::anyhow!(
+                            "Only the final top tax band may be open-ended (upper = null)."
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn save_with_conn(
         conn: &rusqlite::Connection,
         config: &serde_json::Value,
@@ -86,7 +146,33 @@ impl ConfigService {
             ));
         }
 
-        let exists: i32 = conn.query_row(
+        let bands: Vec<TaxBand> = match &config["bands"] {
+            serde_json::Value::Array(_) => serde_json::from_value(config["bands"].clone())
+                .map_err(|e| anyhow::anyhow!("Invalid tax bands: {}", e))?,
+            serde_json::Value::String(s) => serde_json::from_str(s)
+                .map_err(|e| anyhow::anyhow!("Invalid tax bands JSON: {}", e))?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Tax configuration must provide a bands array."
+                ));
+            }
+        };
+        Self::validate_bands(&bands)?;
+
+        let min_tax = config["minimumTaxRate"].as_f64().unwrap_or(0.01);
+        if !min_tax.is_finite() || !(0.0..=1.0).contains(&min_tax) {
+            return Err(anyhow::anyhow!(
+                "Minimum tax rate ({}) must be between 0 and 1.",
+                min_tax
+            ));
+        }
+
+        let bands_json = serde_json::to_string(&bands)?;
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let tx = conn.unchecked_transaction()?;
+        let exists: i32 = tx.query_row(
             "SELECT COUNT(1) FROM tax_config WHERE version_label = ?1",
             params![label],
             |r| r.get(0),
@@ -98,11 +184,8 @@ impl ConfigService {
             ));
         }
 
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-
-        conn.execute("UPDATE tax_config SET is_active=0", [])?;
-        conn.execute(
+        tx.execute("UPDATE tax_config SET is_active=0", [])?;
+        tx.execute(
             "INSERT INTO tax_config
              (id,version_label,governed_by,bands_json,relief_caps_json,
               cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
@@ -112,14 +195,15 @@ impl ConfigService {
                 id.to_string(),
                 label,
                 config["governedBy"].as_str().unwrap_or("NTA 2025"),
-                config["bands"].to_string(),
+                bands_json,
                 config["reliefCaps"].to_string(),
                 config["cgtThresholds"].to_string(),
                 config["allowanceRates"].to_string(),
-                config["minimumTaxRate"].as_f64().unwrap_or(0.01),
+                min_tax,
                 now.to_rfc3339(),
             ],
         )?;
+        tx.commit()?;
         Self::get_active_conn(conn)
     }
 
