@@ -11,6 +11,7 @@ use tauri::State;
 
 struct FilingSummary {
     filing_reference: Option<String>,
+    status: String,
     year_of_assessment: i32,
     total_income_ngn: Option<f64>,
     chargeable_income: Option<f64>,
@@ -35,13 +36,14 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
                 f.wht_credit, f.net_tax_payable, f.minimum_tax, f.final_tax_payable,
                 f.tax_config_version, f.confirmed_at,
                 t.full_name, t.tin, f.submitted_at,
-                f.paye_credit, f.foreign_tax_credit
+                f.paye_credit, f.foreign_tax_credit, f.status
          FROM filing f JOIN taxpayer t ON t.id = f.taxpayer_id
          WHERE f.id = ?1",
         params![filing_id],
         |row| {
             Ok(FilingSummary {
                 filing_reference: row.get(0)?,
+                status: row.get(16)?,
                 year_of_assessment: row.get(1)?,
                 total_income_ngn: row.get(2)?,
                 chargeable_income: row.get(3)?,
@@ -63,11 +65,15 @@ fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSu
     .map_err(|e| e.to_string())
 }
 
-fn format_with_commas(n: f64) -> String {
-    let negative = n < 0.0;
-    let abs = n.abs();
-    let integer = abs.floor() as u64;
-    let cents = (abs.fract() * 100.0).round() as u32;
+pub fn format_with_commas(n: f64) -> String {
+    if !n.is_finite() {
+        return "0.00".to_string();
+    }
+    let total_kobo = (n * 100.0).round() as i128;
+    let negative = total_kobo < 0;
+    let abs_kobo = total_kobo.unsigned_abs();
+    let integer = abs_kobo / 100;
+    let cents = abs_kobo % 100;
 
     // Insert commas every 3 digits from the right
     let int_str: Vec<char> = integer.to_string().chars().collect();
@@ -85,6 +91,60 @@ fn format_with_commas(n: f64) -> String {
         format!("-{}", formatted)
     } else {
         formatted
+    }
+}
+
+fn date_prefix(ts: Option<&str>) -> String {
+    match ts {
+        Some(s) if !s.is_empty() => s.chars().take(10).collect(),
+        _ => "—".to_string(),
+    }
+}
+
+fn csv_escape(field: &str) -> String {
+    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
+fn csv_row(fields: &[&str]) -> String {
+    let mut out = fields
+        .iter()
+        .map(|f| csv_escape(f))
+        .collect::<Vec<_>>()
+        .join(",");
+    out.push_str("\r\n");
+    out
+}
+
+fn unique_companion_name(
+    used: &mut std::collections::HashSet<String>,
+    file_name: &str,
+) -> String {
+    let base = Path::new(file_name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("attachment");
+    if used.insert(base.to_lowercase()) {
+        return base.to_string();
+    }
+    let stem = Path::new(base)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("attachment");
+    let ext = Path::new(base).extension().and_then(|s| s.to_str());
+    let mut n = 2usize;
+    loop {
+        let candidate = match ext {
+            Some(e) if !e.is_empty() => format!("{stem}_{n}.{e}"),
+            _ => format!("{stem}_{n}"),
+        };
+        if used.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+        n += 1;
     }
 }
 
@@ -248,8 +308,6 @@ fn add_attachments_appendix(
     records: &[DocRecord],
     non_image_folder: Option<&str>,
 ) -> Result<(), String> {
-    let (pg, ly) = doc.add_page(Mm(210.0), Mm(297.0), "Supporting Documents");
-    let layer = doc.get_page(pg).get_layer(ly);
     let font_b = doc
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| e.to_string())?;
@@ -259,18 +317,29 @@ fn add_attachments_appendix(
 
     let left = Mm(20.0);
     let right = Mm(190.0);
-    let mut y = Mm(275.0);
 
-    layer.use_text("APPENDIX — SUPPORTING DOCUMENTS", 13.0, left, y, &font_b);
-    y -= Mm(4.0);
-    layer.add_shape(Line {
-        points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
-        is_closed: false,
-        has_fill: false,
-        has_stroke: true,
-        is_clipping_path: false,
-    });
-    y -= Mm(7.0);
+    let start_appendix_page = |title: &str, page_label: &str| -> (PdfLayerReference, Mm) {
+        let (pg, ly) = doc.add_page(Mm(210.0), Mm(297.0), page_label);
+        let layer = doc.get_page(pg).get_layer(ly);
+        let mut y = Mm(275.0);
+        layer.use_text(title, 13.0, left, y, &font_b);
+        y -= Mm(4.0);
+        layer.add_shape(Line {
+            points: vec![(Point::new(left, y), false), (Point::new(right, y), false)],
+            is_closed: false,
+            has_fill: false,
+            has_stroke: true,
+            is_clipping_path: false,
+        });
+        y -= Mm(7.0);
+        (layer, y)
+    };
+
+    let mut page_num = 1usize;
+    let (mut layer, mut y) = start_appendix_page(
+        "APPENDIX — SUPPORTING DOCUMENTS",
+        "Supporting Documents",
+    );
     layer.use_text(
         format!("{} document(s) submitted with this filing.", records.len()),
         9.0,
@@ -282,7 +351,13 @@ fn add_attachments_appendix(
 
     for (i, rec) in records.iter().enumerate() {
         if y < Mm(30.0) {
-            break;
+            page_num += 1;
+            let (next_layer, next_y) = start_appendix_page(
+                "APPENDIX — SUPPORTING DOCUMENTS (CONT.)",
+                &format!("Supporting Documents (Page {page_num})"),
+            );
+            layer = next_layer;
+            y = next_y;
         }
         let note = if is_image_attachment(&rec.file_type, &rec.file_name) {
             " [embedded — see following page(s)]"
@@ -311,6 +386,15 @@ fn add_attachments_appendix(
     }
 
     if let Some(folder) = non_image_folder {
+        if y < Mm(25.0) {
+            page_num += 1;
+            let (next_layer, next_y) = start_appendix_page(
+                "APPENDIX — SUPPORTING DOCUMENTS (CONT.)",
+                &format!("Supporting Documents (Page {page_num})"),
+            );
+            layer = next_layer;
+            y = next_y;
+        }
         y -= Mm(4.0);
         layer.use_text(
             format!(
@@ -524,12 +608,7 @@ pub fn export_filing_pdf_in_dir(
             .filing_reference
             .clone()
             .unwrap_or_else(|| format!("YOA{}", summary.year_of_assessment));
-        let issued_str = summary
-            .confirmed_at
-            .as_deref()
-            .and_then(|s| s.get(..10))
-            .unwrap_or("—")
-            .to_uppercase();
+        let issued_str = date_prefix(summary.confirmed_at.as_deref()).to_uppercase();
 
         cover.use_text(
             format!("REF  \u{00B7}  {}", ref_str),
@@ -546,7 +625,7 @@ pub fn export_filing_pdf_in_dir(
             &font,
         );
         cover.use_text(
-            "LIRS  \u{00B7}  DRAFT",
+            format!("LIRS  \u{00B7}  {}", summary.status.to_uppercase()),
             7.0,
             Mm(140.0),
             logo_y + Mm(1.5),
@@ -699,12 +778,7 @@ pub fn export_filing_pdf_in_dir(
         ),
         (
             "Confirmed At",
-            summary
-                .confirmed_at
-                .as_deref()
-                .map(|s| &s[..10])
-                .unwrap_or("—")
-                .to_string(),
+            date_prefix(summary.confirmed_at.as_deref()),
         ),
         ("Tax Config", summary.tax_config_version.clone()),
     ];
@@ -841,6 +915,7 @@ pub fn export_filing_pdf_in_dir(
             None
         };
 
+        let mut used_companion_names = std::collections::HashSet::<String>::new();
         let needs_folder = !pdfs.is_empty() || !others.is_empty();
         let attach_folder: Option<std::path::PathBuf> = if needs_folder {
             let base = Path::new(save_path);
@@ -853,7 +928,8 @@ pub fn export_filing_pdf_in_dir(
             let _ = std::fs::create_dir_all(&dir);
             for rec in pdfs.iter().chain(others.iter()) {
                 if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key) {
-                    let _ = std::fs::write(dir.join(&rec.file_name), plain);
+                    let unique = unique_companion_name(&mut used_companion_names, &rec.file_name);
+                    let _ = std::fs::write(dir.join(unique), plain);
                 }
             }
             Some(dir)
@@ -883,7 +959,8 @@ pub fn export_filing_pdf_in_dir(
                     let parent = base.parent().unwrap_or(Path::new("."));
                     let dir = parent.join(format!("{}_attachments", stem));
                     let _ = std::fs::create_dir_all(&dir);
-                    let _ = std::fs::write(dir.join(&rec.file_name), plain);
+                    let unique = unique_companion_name(&mut used_companion_names, &rec.file_name);
+                    let _ = std::fs::write(dir.join(unique), plain);
                 }
             }
         }
@@ -923,6 +1000,230 @@ pub async fn export_filing_pdf(
     )
 }
 
+pub fn export_filing_csv_with_conn(
+    conn: &rusqlite::Connection,
+    filing_id: &str,
+    save_path: &str,
+) -> Result<String, String> {
+    let summary = load_summary(conn, filing_id)?;
+
+    let mut csv = String::new();
+    csv.push_str(&csv_row(&[
+        "section",
+        "category",
+        "description",
+        "amount_ngn",
+        "approved_or_allowance_ngn",
+        "is_foreign",
+        "foreign_currency",
+        "foreign_amount",
+        "date",
+        "fx_rate_used",
+        "fx_rate_source",
+        "extra",
+    ]));
+
+    let fmt_opt_num = |v: Option<f64>| v.map_or(String::new(), |n| format!("{:.2}", n));
+
+    // Summary rows (plain numeric values, RFC 4180 escaped)
+    let summary_rows: Vec<(&str, String, String)> = vec![
+        ("taxpayer", summary.full_name.clone(), String::new()),
+        ("tin", summary.tin.clone(), String::new()),
+        (
+            "filing_reference",
+            summary.filing_reference.clone().unwrap_or_default(),
+            String::new(),
+        ),
+        ("status", summary.status.clone(), String::new()),
+        (
+            "income_year",
+            summary.year_of_assessment.to_string(),
+            String::new(),
+        ),
+        (
+            "lirs_year_of_assessment",
+            (summary.year_of_assessment + 1).to_string(),
+            String::new(),
+        ),
+        (
+            "total_gross_income",
+            String::new(),
+            fmt_opt_num(summary.total_income_ngn),
+        ),
+        (
+            "chargeable_income",
+            String::new(),
+            fmt_opt_num(summary.chargeable_income),
+        ),
+        (
+            "tax_payable",
+            String::new(),
+            fmt_opt_num(summary.tax_payable),
+        ),
+        ("wht_credit", String::new(), fmt_opt_num(summary.wht_credit)),
+        (
+            "paye_credit",
+            String::new(),
+            fmt_opt_num(summary.paye_credit),
+        ),
+        (
+            "foreign_tax_credit",
+            String::new(),
+            fmt_opt_num(summary.foreign_tax_credit),
+        ),
+        (
+            "net_tax_payable",
+            String::new(),
+            fmt_opt_num(summary.net_tax_payable),
+        ),
+        (
+            "minimum_tax",
+            String::new(),
+            fmt_opt_num(summary.minimum_tax),
+        ),
+        (
+            "final_tax_payable",
+            String::new(),
+            fmt_opt_num(summary.final_tax_payable),
+        ),
+    ];
+    for (cat, desc, amt) in &summary_rows {
+        csv.push_str(&csv_row(&[
+            "summary", cat, desc, amt, "", "", "", "", "", "", "", "",
+        ]));
+    }
+
+    // Income entries
+    let mut ie_stmt = conn
+        .prepare(
+            "SELECT income_type,description,gross_amount_ngn,is_foreign,foreign_currency,
+                    foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost
+             FROM income_entry WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    ie_stmt
+        .query_map(params![filing_id], |row| {
+            let income_type: String = row.get(0)?;
+            let description: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+            let gross = format!("{:.2}", row.get::<_, f64>(2)?);
+            let is_foreign = if row.get::<_, i32>(3)? == 1 { "true" } else { "false" };
+            let foreign_currency: String = row.get::<_, Option<String>>(4)?.unwrap_or_default();
+            let foreign_amount = row
+                .get::<_, Option<f64>>(5)?
+                .map_or(String::new(), |v| format!("{:.2}", v));
+            let income_date: String = row.get::<_, Option<String>>(6)?.unwrap_or_default();
+            let fx_rate = row
+                .get::<_, Option<f64>>(7)?
+                .map_or(String::new(), |v| v.to_string());
+            let fx_source: String = row.get::<_, Option<String>>(8)?.unwrap_or_default();
+            let bik_cat: Option<String> = row.get(9)?;
+            let bik_cost: Option<f64> = row.get(10)?;
+            let extra = match (bik_cat, bik_cost) {
+                (Some(cat), Some(cost)) => format!("bik_category={cat};bik_cost={cost:.2}"),
+                (Some(cat), None) => format!("bik_category={cat}"),
+                _ => String::new(),
+            };
+            Ok(csv_row(&[
+                "income",
+                &income_type,
+                &description,
+                &gross,
+                "",
+                is_foreign,
+                &foreign_currency,
+                &foreign_amount,
+                &income_date,
+                &fx_rate,
+                &fx_source,
+                &extra,
+            ]))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .for_each(|line| csv.push_str(&line));
+
+    // Capital allowances
+    let mut ca_stmt = conn
+        .prepare(
+            "SELECT asset_type,asset_description,asset_cost,acquisition_date,
+                    tax_written_down_value,annual_allowance_rate,annual_allowance_amount
+             FROM capital_allowance WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    ca_stmt
+        .query_map(params![filing_id], |row| {
+            let asset_type: String = row.get(0)?;
+            let asset_desc: String = row.get(1)?;
+            let cost = format!("{:.2}", row.get::<_, f64>(2)?);
+            let acq_date: String = row.get(3)?;
+            let wdv: f64 = row.get(4)?;
+            let rate: f64 = row.get(5)?;
+            let allowance = format!("{:.2}", row.get::<_, f64>(6)?);
+            let extra = format!("wdv={wdv:.2};rate={rate:.4}");
+            Ok(csv_row(&[
+                "capital_allowance",
+                &asset_type,
+                &asset_desc,
+                &cost,
+                &allowance,
+                "",
+                "",
+                "",
+                &acq_date,
+                "",
+                "",
+                &extra,
+            ]))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .for_each(|line| csv.push_str(&line));
+
+    // Relief entries
+    let mut re_stmt = conn
+        .prepare(
+            "SELECT relief_type,description,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+             FROM relief_entry WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    re_stmt
+        .query_map(params![filing_id], |row| {
+            let relief_type: String = row.get(0)?;
+            let desc: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+            let claimed = format!("{:.2}", row.get::<_, f64>(2)?);
+            let approved = format!("{:.2}", row.get::<_, f64>(3)?);
+            let wht_ref: Option<String> = row.get(4)?;
+            let wht_inc: Option<String> = row.get(5)?;
+            let wht_date: String = row.get::<_, Option<String>>(6)?.unwrap_or_default();
+            let extra = match (wht_ref, wht_inc) {
+                (Some(r), Some(t)) if !r.is_empty() => format!("wht_ref={r};wht_income_type={t}"),
+                (Some(r), _) if !r.is_empty() => format!("wht_ref={r}"),
+                _ => String::new(),
+            };
+            Ok(csv_row(&[
+                "relief",
+                &relief_type,
+                &desc,
+                &claimed,
+                &approved,
+                "",
+                "",
+                "",
+                &wht_date,
+                "",
+                "",
+                &extra,
+            ]))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .for_each(|line| csv.push_str(&line));
+
+    ensure_parent(save_path)?;
+    std::fs::write(save_path, csv.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(save_path.to_string())
+}
+
 #[tauri::command]
 pub async fn export_filing_csv(
     filing_id: String,
@@ -932,62 +1233,7 @@ pub async fn export_filing_csv(
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
-    let summary = load_summary(&conn, &filing_id)?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT income_type,description,gross_amount_ngn,is_foreign,foreign_currency,
-                    foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost
-             FROM income_entry WHERE filing_id=?1",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let mut csv = format!(
-        "LagosFile Tax Export — YOA {} — {}\r\n\
-         Taxpayer,{}\r\n\
-         TIN,{}\r\n\
-         Filing Reference,{}\r\n\
-         Final Tax Payable NGN,{}\r\n\r\n",
-        summary.year_of_assessment,
-        summary.filing_reference.as_deref().unwrap_or("—"),
-        summary.full_name,
-        summary.tin,
-        summary.filing_reference.as_deref().unwrap_or("—"),
-        format_with_commas(summary.final_tax_payable.unwrap_or(0.0)),
-    );
-
-    csv.push_str(
-        "income_type,description,gross_amount_ngn,is_foreign,foreign_currency,\
-         foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost\r\n",
-    );
-
-    stmt.query_map(params![filing_id], |row| {
-        Ok(format!(
-            "{},{},{},{},{},{},{},{},{},{},{}\r\n",
-            row.get::<_, String>(0)?,
-            row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            format_with_commas(row.get::<_, f64>(2)?),
-            row.get::<_, i32>(3)?,
-            row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-            row.get::<_, Option<f64>>(5)?
-                .map_or(String::new(), |v| format!("{:.2}", v)),
-            row.get::<_, Option<String>>(6)?.unwrap_or_default(),
-            row.get::<_, Option<f64>>(7)?
-                .map_or(String::new(), |v| v.to_string()),
-            row.get::<_, Option<String>>(8)?.unwrap_or_default(),
-            row.get::<_, Option<String>>(9)?.unwrap_or_default(),
-            row.get::<_, Option<f64>>(10)?
-                .map_or(String::new(), |v| format!("{:.2}", v)),
-        ))
-    })
-    .map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .for_each(|line| csv.push_str(&line));
-
-    ensure_parent(&save_path)?;
-    std::fs::write(&save_path, csv.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(save_path)
+    export_filing_csv_with_conn(&conn, &filing_id, &save_path)
 }
 
 pub fn export_filing_json_with_conn(
@@ -1028,6 +1274,53 @@ pub fn export_filing_json_with_conn(
         .filter_map(|r| r.ok())
         .collect();
 
+    let mut ca_stmt = conn
+        .prepare(
+            "SELECT asset_description,asset_type,asset_cost,acquisition_date,
+                    tax_written_down_value,annual_allowance_rate,annual_allowance_amount
+             FROM capital_allowance WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let capital_allowances: Vec<serde_json::Value> = ca_stmt
+        .query_map(params![filing_id], |row| {
+            Ok(serde_json::json!({
+                "assetDescription":    row.get::<_,String>(0)?,
+                "assetType":           row.get::<_,String>(1)?,
+                "assetCost":           row.get::<_,f64>(2)?,
+                "acquisitionDate":     row.get::<_,String>(3)?,
+                "taxWrittenDownValue": row.get::<_,f64>(4)?,
+                "annualAllowanceRate": row.get::<_,f64>(5)?,
+                "annualAllowanceAmount": row.get::<_,f64>(6)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut relief_stmt = conn
+        .prepare(
+            "SELECT relief_type,description,claimed_amount,approved_amount,wht_ref,wht_income_type,wht_date
+             FROM relief_entry WHERE filing_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let relief_entries: Vec<serde_json::Value> = relief_stmt
+        .query_map(params![filing_id], |row| {
+            Ok(serde_json::json!({
+                "reliefType":     row.get::<_,String>(0)?,
+                "description":    row.get::<_,Option<String>>(1)?,
+                "claimedAmount":  row.get::<_,f64>(2)?,
+                "approvedAmount": row.get::<_,f64>(3)?,
+                "whtRef":         row.get::<_,Option<String>>(4)?,
+                "whtIncomeType":  row.get::<_,Option<String>>(5)?,
+                "whtDate":        row.get::<_,Option<String>>(6)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
     let output = serde_json::json!({
         "export": {
             "generator":   concat!("LagosFile v", env!("CARGO_PKG_VERSION")),
@@ -1041,6 +1334,7 @@ pub fn export_filing_json_with_conn(
         "filing": {
             "incomeYear":       summary.year_of_assessment,
             "yearOfAssessment": summary.year_of_assessment + 1,
+            "status":           summary.status,
             "filingReference":  summary.filing_reference,
             "confirmedAt":      summary.confirmed_at,
             "submittedAt":      summary.submitted_at,
@@ -1055,7 +1349,9 @@ pub fn export_filing_json_with_conn(
             "minimumTax":       summary.minimum_tax,
             "finalTaxPayable":  summary.final_tax_payable,
         },
-        "incomeEntries": income_entries,
+        "incomeEntries":      income_entries,
+        "capitalAllowances":  capital_allowances,
+        "reliefEntries":      relief_entries,
     });
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
@@ -1079,28 +1375,7 @@ pub async fn export_filing_json(
 #[tauri::command]
 pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let target = doc_store::prepare_file_for_external_app(&db::app_dir(), &path, &state)?;
-    let target_str = target.to_string_lossy().to_string();
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/c", "start", "", &target_str])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&target_str)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&target_str)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
+    open::that(&target).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1167,5 +1442,274 @@ mod tests {
         let merged = lopdf::Document::load(&main).unwrap();
         assert_eq!(merged.get_pages().len(), 3);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Minimal RFC 4180 CSV parser for test verification.
+    fn parse_rfc4180(input: &str) -> Vec<Vec<String>> {
+        let mut rows = Vec::new();
+        let mut row = Vec::new();
+        let mut field = String::new();
+        let mut chars = input.chars().peekable();
+        let mut in_quotes = false;
+
+        while let Some(c) = chars.next() {
+            if in_quotes {
+                if c == '"' {
+                    if chars.peek() == Some(&'"') {
+                        chars.next();
+                        field.push('"');
+                    } else {
+                        in_quotes = false;
+                    }
+                } else {
+                    field.push(c);
+                }
+            } else {
+                match c {
+                    '"' => in_quotes = true,
+                    ',' => {
+                        row.push(std::mem::take(&mut field));
+                    }
+                    '\r' => {
+                        if chars.peek() == Some(&'\n') {
+                            chars.next();
+                        }
+                        row.push(std::mem::take(&mut field));
+                        rows.push(std::mem::take(&mut row));
+                    }
+                    '\n' => {
+                        row.push(std::mem::take(&mut field));
+                        rows.push(std::mem::take(&mut row));
+                    }
+                    other => field.push(other),
+                }
+            }
+        }
+        if !field.is_empty() || !row.is_empty() {
+            row.push(field);
+            rows.push(row);
+        }
+        rows
+    }
+
+    #[test]
+    fn test_format_with_commas_rounds_kobo_before_splitting() {
+        assert_eq!(format_with_commas(1234.996), "1,235.00");
+        assert_eq!(format_with_commas(-1234.996), "-1,235.00");
+        assert_eq!(format_with_commas(-0.001), "0.00");
+        assert_eq!(format_with_commas(1_500_000.0), "1,500,000.00");
+        assert_eq!(format_with_commas(999.995), "1,000.00");
+    }
+
+    #[test]
+    fn test_csv_and_json_include_allowances_reliefs_and_rfc4180_quoting() {
+        use crate::commands::filing::{
+            confirm_filing_with_conn, create_draft_filing_with_conn, upsert_allowance_with_conn,
+            upsert_income_entry_with_conn, upsert_relief_entry_with_conn,
+        };
+        use crate::db::AppDb;
+        use serde_json::json;
+
+        let db = AppDb::open_in_memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Ade, Okafor', '1234567890123', '2025-01-01T00:00:00Z')",
+            params![tp_id],
+        )
+        .unwrap();
+        let f = create_draft_filing_with_conn(&conn, 2024).unwrap();
+        let fid = f.id.to_string();
+
+        upsert_income_entry_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "incomeType": "business",
+                "description": "Consulting, \"Phase 1\"",
+                "grossAmountNgn": 1_500_000.0,
+                "isForeign": false,
+                "isCgtExempt": false
+            }),
+        )
+        .unwrap();
+        upsert_allowance_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "assetDescription": "MacBook Pro, 16-inch",
+                "assetType": "computer_laptop",
+                "assetCost": 1_000_000.0,
+                "acquisitionDate": "2024-02-01",
+                "taxWrittenDownValue": 1_000_000.0,
+                "annualAllowanceRate": 0.25,
+                "annualAllowanceAmount": 250_000.0
+            }),
+        )
+        .unwrap();
+        upsert_relief_entry_with_conn(
+            &conn,
+            &json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "reliefType": "pension",
+                "claimedAmount": 120_000.0,
+                "approvedAmount": 120_000.0
+            }),
+        )
+        .unwrap();
+        confirm_filing_with_conn(&conn, &fid).unwrap();
+
+        let dir = std::env::temp_dir().join(format!("lagosfile-s21-csv-{}", uuid::Uuid::new_v4()));
+        let csv_path = dir.join("export.csv");
+        let json_path = dir.join("export.json");
+
+        export_filing_csv_with_conn(&conn, &fid, csv_path.to_str().unwrap()).unwrap();
+        export_filing_json_with_conn(&conn, &fid, json_path.to_str().unwrap()).unwrap();
+
+        let csv_text = std::fs::read_to_string(&csv_path).unwrap();
+        let rows = parse_rfc4180(&csv_text);
+        assert!(rows.len() >= 19, "expected header + summary + income + allowance + relief rows");
+        let header_cols = rows[0].len();
+        assert_eq!(header_cols, 12);
+        for (idx, r) in rows.iter().enumerate() {
+            assert_eq!(r.len(), header_cols, "row {idx} column count mismatch: {r:?}");
+        }
+
+        let inc = rows.iter().find(|r| r[0] == "income").expect("income row");
+        assert_eq!(inc[1], "business");
+        assert_eq!(inc[2], "Consulting, \"Phase 1\"");
+        assert_eq!(inc[3], "1500000.00");
+
+        let ca = rows
+            .iter()
+            .find(|r| r[0] == "capital_allowance")
+            .expect("capital_allowance row");
+        assert_eq!(ca[2], "MacBook Pro, 16-inch");
+        assert_eq!(ca[4], "250000.00");
+
+        let rel = rows.iter().find(|r| r[0] == "relief").expect("relief row");
+        assert_eq!(rel[1], "pension");
+        assert_eq!(rel[3], "120000.00");
+
+        let json_val: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json_val["filing"]["status"], "Confirmed");
+        assert_eq!(json_val["capitalAllowances"].as_array().unwrap().len(), 1);
+        assert_eq!(json_val["reliefEntries"].as_array().unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pdf_30_attachments_paginate_cover_status_and_unique_companion_names() {
+        use crate::commands::{
+            auth::setup_pin_in_dir,
+            document::attach_document_in_dir,
+            filing::{
+                confirm_filing_with_conn, create_draft_filing_with_conn,
+                upsert_income_entry_with_conn,
+            },
+        };
+        use serde_json::json;
+
+        let dir = std::env::temp_dir().join(format!("lagosfile-s21-pdf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = AppState::default();
+        setup_pin_in_dir(&dir, "123456", &state).unwrap();
+
+        let (fid, entry_id) = {
+            let guard = state.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            let conn = db.conn.lock().unwrap();
+            let tp_id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Bimpe', '1234567890124', '2025-01-01T00:00:00Z')",
+                params![tp_id],
+            )
+            .unwrap();
+            let f = create_draft_filing_with_conn(&conn, 2024).unwrap();
+            let fid = f.id.to_string();
+            let eid = upsert_income_entry_with_conn(
+                &conn,
+                &json!({
+                    "id": uuid::Uuid::new_v4().to_string(),
+                    "filingId": fid,
+                    "incomeType": "employment",
+                    "grossAmountNgn": 5_000_000.0,
+                    "isForeign": false,
+                    "isCgtExempt": false
+                }),
+            )
+            .unwrap();
+            (fid, eid)
+        };
+
+        // Attach 30 non-image documents, including colliding filenames ("receipt.txt" repeated)
+        for i in 1..=30 {
+            let file_name = if i <= 2 {
+                "receipt.txt".to_string()
+            } else {
+                format!("doc_{:02}.txt", i)
+            };
+            let src = dir.join(format!("src_{i}.txt"));
+            let content = format!("document payload #{i}");
+            std::fs::write(&src, &content).unwrap();
+            attach_document_in_dir(
+                &dir,
+                &entry_id,
+                "income_entry",
+                src.to_str().unwrap(),
+                &file_name,
+                "txt",
+                content.len() as i64,
+                &state,
+            )
+            .unwrap();
+        }
+
+        // Confirm filing and also test short confirmed_at doesn't panic
+        {
+            let guard = state.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            let conn = db.conn.lock().unwrap();
+            confirm_filing_with_conn(&conn, &fid).unwrap();
+            conn.execute(
+                "UPDATE filing SET confirmed_at = '2025' WHERE id = ?1",
+                params![fid],
+            )
+            .unwrap();
+        }
+
+        let pdf_path = dir.join("return.pdf");
+        export_filing_pdf_in_dir(&dir, &fid, pdf_path.to_str().unwrap(), true, None, &state)
+            .unwrap();
+
+        let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+        // Cover + statement + at least 2 appendix pages for 30 items
+        assert!(
+            pdf_doc.get_pages().len() >= 4,
+            "expected multi-page appendix for 30 docs, got {} pages",
+            pdf_doc.get_pages().len()
+        );
+        let all_text: String = pdf_doc
+            .get_pages()
+            .keys()
+            .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(all_text.contains("CONFIRMED"), "cover must show CONFIRMED status");
+        assert!(!all_text.contains("LIRS  ·  DRAFT"), "confirmed cover must not show DRAFT");
+        assert!(all_text.contains("1. receipt.txt"), "appendix missing doc #1");
+        assert!(all_text.contains("30. doc_30.txt"), "appendix missing doc #30");
+
+        // Companion attachments folder must contain all 30 files without overwriting duplicates
+        let att_dir = dir.join("return_attachments");
+        let copied_count = std::fs::read_dir(&att_dir).unwrap().count();
+        assert_eq!(copied_count, 30, "duplicate filenames must not overwrite each other");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
