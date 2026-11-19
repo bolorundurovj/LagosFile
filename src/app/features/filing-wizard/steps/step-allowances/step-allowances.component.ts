@@ -218,12 +218,29 @@ export class StepAllowancesComponent implements OnInit {
   loadingPrior = signal(false);
   priorYearLoaded = signal(false);
   private removedIds: string[] = [];
+  private initialSnapshot = '';
+  private loaded = false;
 
   readonly assetTypes = ASSET_TYPES;
 
+  private snapshot(): string {
+    return JSON.stringify({ entries: this.entries(), removed: this.removedIds.length });
+  }
+
+  isDirty(): boolean {
+    return this.loaded && this.snapshot() !== this.initialSnapshot;
+  }
+
   async ngOnInit(): Promise<void> {
-    const existing = await this.filingService.listAllowances(this.filingId());
-    this.entries.set(existing);
+    try {
+      const existing = await this.filingService.listAllowances(this.filingId());
+      this.entries.set(existing);
+    } catch (err) {
+      this.toast.error('Could not load capital allowances: ' + String(err));
+    } finally {
+      this.initialSnapshot = this.snapshot();
+      this.loaded = true;
+    }
   }
 
   labelFor(type: AssetType): string {
@@ -319,7 +336,7 @@ export class StepAllowancesComponent implements OnInit {
   readonly totalAllowance = () =>
     this.entries().reduce((s, e) => s + (e.annualAllowanceAmount ?? 0), 0);
 
-  async saveAndNext(): Promise<void> {
+  async save(): Promise<boolean> {
     this.saving.set(true);
     try {
       for (const id of this.removedIds) await this.filingService.deleteAllowance(id);
@@ -331,11 +348,19 @@ export class StepAllowancesComponent implements OnInit {
         failed.push(...await flushDocuments(this.filingService, entry, 'capital_allowance'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
-      this.next.emit();
+      this.initialSnapshot = this.snapshot();
+      return true;
     } catch (err) {
       this.toast.error('Could not save allowances: ' + String(err));
+      return false;
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async saveAndNext(): Promise<void> {
+    if (await this.save()) {
+      this.next.emit();
     }
   }
 }

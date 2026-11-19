@@ -397,6 +397,8 @@ export class StepIncomeComponent implements OnInit {
   private configService = inject(ConfigService);
   private toast = inject(ToastService);
   private removedIds: string[] = [];
+  private initialSnapshot = '';
+  private loaded = false;
 
   entries = signal<IncomeEntry[]>([]);
   saving = signal(false);
@@ -405,9 +407,24 @@ export class StepIncomeComponent implements OnInit {
   readonly currencies = CURRENCIES;
   readonly bikCategories = BIK_CATEGORIES;
 
+  private snapshot(): string {
+    return JSON.stringify({ entries: this.entries(), removed: this.removedIds.length });
+  }
+
+  isDirty(): boolean {
+    return this.loaded && this.snapshot() !== this.initialSnapshot;
+  }
+
   async ngOnInit(): Promise<void> {
-    const existing = await this.filingService.listIncomeEntries(this.filingId());
-    this.entries.set(existing);
+    try {
+      const existing = await this.filingService.listIncomeEntries(this.filingId());
+      this.entries.set(existing);
+    } catch (err) {
+      this.toast.error('Could not load income entries: ' + String(err));
+    } finally {
+      this.initialSnapshot = this.snapshot();
+      this.loaded = true;
+    }
   }
 
   labelFor(type: IncomeType): string {
@@ -586,7 +603,7 @@ export class StepIncomeComponent implements OnInit {
       return sum + (e.grossAmountNgn ?? 0);
     }, 0);
 
-  async saveAndNext(): Promise<void> {
+  async save(): Promise<boolean> {
     this.saving.set(true);
     try {
       for (const id of this.removedIds) await this.filingService.deleteIncomeEntry(id);
@@ -608,11 +625,19 @@ export class StepIncomeComponent implements OnInit {
         failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
-      this.next.emit();
+      this.initialSnapshot = this.snapshot();
+      return true;
     } catch (err) {
       this.toast.error('Could not save income: ' + String(err));
+      return false;
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async saveAndNext(): Promise<void> {
+    if (await this.save()) {
+      this.next.emit();
     }
   }
 }

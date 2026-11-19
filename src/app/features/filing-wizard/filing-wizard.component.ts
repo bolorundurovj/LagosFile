@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, viewChild } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
@@ -485,6 +485,27 @@ export class FilingWizardComponent implements OnInit {
 
   readonly steps = STEPS;
 
+  private stepIncome = viewChild(StepIncomeComponent);
+  private stepAllowances = viewChild(StepAllowancesComponent);
+  private stepDeductions = viewChild(StepDeductionsComponent);
+  private stepReview = viewChild(StepReviewComponent);
+
+  private activeStepRef(): { isDirty(): boolean; save(): Promise<boolean> } | undefined {
+    switch (this.currentStep()) {
+      case 1: return this.stepIncome();
+      case 2: return this.stepAllowances();
+      case 3: return this.stepDeductions();
+      case 4: return this.stepReview();
+    }
+  }
+
+  canDeactivate(): boolean {
+    if (this.mode() !== 'active') return true;
+    const active = this.activeStepRef();
+    if (!active || !active.isDirty()) return true;
+    return window.confirm('You have unsaved changes on this step. Leave without saving?');
+  }
+
   async ngOnInit(): Promise<void> {
     const id = this.route.snapshot.paramMap.get('id');
     if (id) {
@@ -530,6 +551,8 @@ export class FilingWizardComponent implements OnInit {
       this.filingId.set(draft.id);
       this.yearOfAssessment.set(draft.yearOfAssessment);
       this.mode.set('active');
+    } catch (err: unknown) {
+      this.toast.error('Failed to create filing: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.starting.set(false);
     }
@@ -558,16 +581,26 @@ export class FilingWizardComponent implements OnInit {
 
   cancel(): void { this.router.navigate(['/dashboard']); }
 
-  goToStep(step: WizardStep): void { this.currentStep.set(step); }
+  async goToStep(step: WizardStep): Promise<void> {
+    if (step === this.currentStep()) return;
+    const active = this.activeStepRef();
+    if (active?.isDirty()) {
+      const ok = await active.save();
+      if (!ok) return;
+    }
+    this.currentStep.set(step);
+  }
 
   goNext(_?: unknown): void {
     const next = (this.currentStep() + 1) as WizardStep;
     if (next <= 4) this.currentStep.set(next);
   }
 
-  goBack(): void {
+  async goBack(): Promise<void> {
     const prev = (this.currentStep() - 1) as WizardStep;
-    if (prev >= 1) this.currentStep.set(prev);
+    if (prev >= 1) {
+      await this.goToStep(prev);
+    }
   }
 
   onConfirmed(): void {

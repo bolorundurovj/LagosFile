@@ -1,20 +1,15 @@
 import { Component, input, output, inject, OnInit, signal, computed } from '@angular/core';
 import { FilingService } from '../../../../core/services/filing.service';
-import { LIRSService } from '../../../../core/services/lirs.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import {
-  ComputationResult, LIRSFieldGroup,
-  Filing,
-} from '../../../../core/models';
+import { ComputationResult, Filing } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
-import { LIRSReferencePanelComponent } from '../../../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'lf-step-review',
   standalone: true,
-  imports: [NairaPipe, LucideAngularModule, HelpTooltipComponent, LIRSReferencePanelComponent],
+  imports: [NairaPipe, LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -26,43 +21,6 @@ import { LucideAngularModule } from 'lucide-angular';
 
       @if (loading()) {
         <div class="skeleton" style="height:500px;border-radius:var(--radius-xl)"></div>
-      } @else if (confirmedFiling()) {
-        <!-- Post-confirmation: success state -->
-        <div class="card" style="text-align:center;padding:var(--space-8)">
-          <div style="font-size:3rem;margin-bottom:var(--space-4);color:var(--color-success)">
-            <lucide-icon name="check" [size]="48" [strokeWidth]="2.5"></lucide-icon>
-          </div>
-          <h2 class="headline-sm" style="margin-bottom:var(--space-2)">Filing Confirmed</h2>
-          <p class="body-md" style="margin-bottom:var(--space-4)">
-            Reference: <strong>{{ confirmedFiling()!.filingReference }}</strong>
-          </p>
-
-          <div class="computation-total" style="margin-bottom:var(--space-5)">
-            <div class="total-label">Final Tax Payable</div>
-            <div class="total-value">{{ confirmedFiling()!.finalTaxPayable ?? 0 | naira }}</div>
-          </div>
-
-          <p class="body-sm text-muted" style="margin-bottom:var(--space-6)">
-            Your filing is ready to submit to LIRS. Click below to open the LIRS e-Tax portal.
-            The extension will read your filing data from <code>~/LagosFile/pending_filing.json</code>.
-          </p>
-
-          <div class="flex gap-3 justify-center" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
-            <button class="btn btn--ghost" (click)="onGoToHistory()">Go to History</button>
-            <button
-              class="btn btn--primary btn--lg"
-              (click)="fileWithLirs()"
-              [disabled]="filingWithLirs()"
-            >
-              @if (filingWithLirs()) {
-                Opening Portal...
-              } @else {
-                <lucide-icon name="send" [size]="16" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>
-                File with LIRS
-              }
-            </button>
-          </div>
-        </div>
       } @else if (result()) {
         <!-- Tax breakdown card -->
         <div class="card">
@@ -226,7 +184,7 @@ import { LucideAngularModule } from 'lucide-angular';
       }
 
       <!-- incomplete filing validation warning -->
-      @if (!confirmedFiling() && !loading() && validationIssues().length > 0) {
+      @if (!loading() && validationIssues().length > 0) {
         <div class="alert alert--warning">
           <span class="alert__icon">
             <lucide-icon name="triangle-alert" [size]="18" [strokeWidth]="2"></lucide-icon>
@@ -242,34 +200,22 @@ import { LucideAngularModule } from 'lucide-angular';
         </div>
       }
 
-      <!-- Nav buttons (pre-confirmation) -->
-      @if (!confirmedFiling()) {
-        <div class="step-nav">
-          <button class="btn btn--ghost btn--lg" (click)="back.emit()">← Back</button>
-          <div class="flex gap-3">
-            <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
-              Save for Later
-            </button>
-            <button class="btn btn--primary btn--lg" (click)="confirm()"
-              [disabled]="confirming() || loading() || validationIssues().length > 0"
-              [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
-              @if (confirming()) { Confirming… } @else {
-                <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
-              }
-            </button>
-          </div>
+      <!-- Nav buttons -->
+      <div class="step-nav">
+        <button class="btn btn--ghost btn--lg" (click)="back.emit()">← Back</button>
+        <div class="flex gap-3">
+          <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
+            Save for Later
+          </button>
+          <button class="btn btn--primary btn--lg" (click)="confirm()"
+            [disabled]="confirming() || loading() || validationIssues().length > 0"
+            [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
+            @if (confirming()) { Confirming… } @else {
+              <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
+            }
+          </button>
         </div>
-      }
-
-      <!-- Reference Panel -->
-      <lf-lirs-reference-panel
-        [visible]="showReferencePanel()"
-        [fieldGroups]="referenceFields()"
-        [statusMessage]="referenceStatus()"
-        [showMarkSubmitted]="true"
-        (closePanel)="showReferencePanel.set(false)"
-        (markSubmitted)="onMarkSubmitted()"
-      />
+      </div>
     </div>
   `,
   styles: [`
@@ -392,12 +338,19 @@ export class StepReviewComponent implements OnInit {
   confirmed = output<void>();
 
   private filingService = inject(FilingService);
-  private lirsService = inject(LIRSService);
   private toast = inject(ToastService);
 
   result = signal<ComputationResult | null>(null);
   loading = signal(true);
   confirming = signal(false);
+
+  isDirty(): boolean {
+    return false;
+  }
+
+  async save(): Promise<boolean> {
+    return true;
+  }
 
   // Validation — list of human-readable issues before user can confirm
   validationIssues = computed<string[]>(() => {
@@ -434,17 +387,13 @@ export class StepReviewComponent implements OnInit {
     return { priorYoa: p.yearOfAssessment, rows, flagged: rows.some(x => x.flagged) };
   });
 
-  confirmedFiling = signal<Filing | null>(null);
-  filingWithLirs = signal(false);
-  showReferencePanel = signal(false);
-  referenceFields = signal<LIRSFieldGroup[]>([]);
-  referenceStatus = signal('');
-
   async ngOnInit(): Promise<void> {
     try {
       const r = await this.filingService.compute(this.filingId());
       this.result.set(r);
       void this.loadPrior();
+    } catch (err: unknown) {
+      this.toast.error('Failed to compute tax: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.loading.set(false);
     }
@@ -500,71 +449,13 @@ export class StepReviewComponent implements OnInit {
     if (!r) return;
     this.confirming.set(true);
     try {
-      const filing = await this.filingService.confirmFiling(this.filingId(), r);
-      this.confirmedFiling.set(filing);
+      await this.filingService.confirmFiling(this.filingId(), r);
+      this.toast.success('Filing confirmed.');
       this.confirmed.emit();
+    } catch (err: unknown) {
+      this.toast.error('Failed to confirm filing: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.confirming.set(false);
-    }
-  }
-
-  onGoToHistory(): void {
-    this.confirmed.emit();
-  }
-
-  async fileWithLirs(): Promise<void> {
-    this.filingWithLirs.set(true);
-    try {
-      const res = await this.lirsService.fileWithLirs(this.filingId());
-      if (res.fallbackActive) {
-        this.showReferencePanel.set(true);
-        this.referenceStatus.set(res.message);
-        this.loadReferenceFields();
-      } else {
-        this.toast.success(res.message);
-      }
-    } catch (err: unknown) {
-      this.toast.error(
-        'Failed to open LIRS portal: ' + (err instanceof Error ? err.message : String(err))
-      );
-      this.showReferencePanel.set(true);
-      this.referenceStatus.set('Could not open LIRS portal automatically. Use the values below to fill Form A manually.');
-      this.loadReferenceFields();
-    } finally {
-      this.filingWithLirs.set(false);
-    }
-  }
-
-  private async loadReferenceFields(): Promise<void> {
-    try {
-      const filing = this.confirmedFiling();
-      if (!filing) return;
-      const [incomeEntries, allowances, reliefs] = await Promise.all([
-        this.filingService.listIncomeEntries(filing.id),
-        this.filingService.listAllowances(filing.id),
-        this.filingService.listReliefEntries(filing.id),
-      ]);
-      const fields = this.lirsService.buildReferenceFields(
-        filing, incomeEntries, allowances, reliefs, this.result() ?? undefined,
-      );
-      this.referenceFields.set(fields);
-    } catch {
-      this.referenceFields.set([]);
-    }
-  }
-
-  async onMarkSubmitted(): Promise<void> {
-    const f = this.confirmedFiling();
-    if (!f) return;
-    try {
-      await this.filingService.markSubmitted(f.id);
-      this.toast.success('Filing marked as Submitted.');
-      this.showReferencePanel.set(false);
-      this.confirmed.emit();
-    } catch (err: unknown) {
-      this.toast.error(
-        'Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err))
-      );
     }
   }
 }

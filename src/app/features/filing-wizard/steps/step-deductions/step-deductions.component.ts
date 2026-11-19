@@ -317,25 +317,50 @@ export class StepDeductionsComponent implements OnInit {
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   saving = signal(false);
   private removedIds: string[] = [];
+  private initialSnapshot = '';
+  private loaded = false;
+
+  private snapshot(): string {
+    return JSON.stringify({
+      fields: this.fields,
+      standardDocs: Object.fromEntries(
+        Object.entries(this.standard).map(([k, v]) => [k, v?.documents?.map(d => d.id) ?? []]),
+      ),
+      wht: this.whtEntries(),
+      other: this.otherEntries(),
+      removed: this.removedIds.length,
+    });
+  }
+
+  isDirty(): boolean {
+    return this.loaded && this.snapshot() !== this.initialSnapshot;
+  }
 
   async ngOnInit(): Promise<void> {
     for (const type of Object.keys(STANDARD_FIELDS) as StandardRelief[]) {
       this.standard[type] = this.newRelief(type);
     }
-    const existing = await this.filingService.listReliefEntries(this.filingId());
-    for (const r of existing) {
-      if (r.reliefType in STANDARD_FIELDS) {
-        const type = r.reliefType as StandardRelief;
-        const current = this.standard[type];
-        // earlier versions saved a new row on every pass; keep the latest, drop the rest
-        if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
-        this.standard[type] = r;
-        this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
-      } else if (r.reliefType === 'wht') {
-        this.whtEntries.update(e => [...e, r]);
-      } else if (r.reliefType === 'other_approved') {
-        this.otherEntries.update(e => [...e, r]);
+    try {
+      const existing = await this.filingService.listReliefEntries(this.filingId());
+      for (const r of existing) {
+        if (r.reliefType in STANDARD_FIELDS) {
+          const type = r.reliefType as StandardRelief;
+          const current = this.standard[type];
+          // earlier versions saved a new row on every pass; keep the latest, drop the rest
+          if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
+          this.standard[type] = r;
+          this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
+        } else if (r.reliefType === 'wht') {
+          this.whtEntries.update(e => [...e, r]);
+        } else if (r.reliefType === 'other_approved') {
+          this.otherEntries.update(e => [...e, r]);
+        }
       }
+    } catch (err) {
+      this.toast.error('Could not load deductions: ' + String(err));
+    } finally {
+      this.initialSnapshot = this.snapshot();
+      this.loaded = true;
     }
   }
 
@@ -388,7 +413,7 @@ export class StepDeductionsComponent implements OnInit {
     if (error) this.toast.error(error);
   }
 
-  async saveAndNext(): Promise<void> {
+  async save(): Promise<boolean> {
     this.saving.set(true);
     try {
       const fid = this.filingId();
@@ -411,11 +436,19 @@ export class StepDeductionsComponent implements OnInit {
         failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
-      this.next.emit();
+      this.initialSnapshot = this.snapshot();
+      return true;
     } catch (err) {
       this.toast.error('Could not save deductions: ' + String(err));
+      return false;
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async saveAndNext(): Promise<void> {
+    if (await this.save()) {
+      this.next.emit();
     }
   }
 }
