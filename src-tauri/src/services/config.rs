@@ -51,6 +51,25 @@ impl ConfigService {
         Self::get_active_conn(conn)
     }
 
+    /// Selects the appropriate tax configuration for a newly created draft of `income_year`.
+    /// Per D1: if the active config is system-managed, income years <= 2025 use PITA and >= 2026 use NTA 2025.
+    /// If the user has saved a custom active config, that custom config is respected.
+    pub fn get_for_income_year(
+        conn: &rusqlite::Connection,
+        income_year: i32,
+    ) -> Result<TaxConfig> {
+        let active = Self::get_active_conn(conn)?;
+        if active.modified_by == "user" {
+            return Ok(active);
+        }
+        let target_id = if income_year <= 2025 {
+            crate::db::PITA_CONFIG_ID
+        } else {
+            crate::db::NTA_2025_CONFIG_ID
+        };
+        Self::get_by_id(conn, target_id).or(Ok(active))
+    }
+
     pub fn get_active(db: &AppDb) -> Result<TaxConfig> {
         let conn = db.conn.lock().unwrap();
         Self::get_active_conn(&conn)

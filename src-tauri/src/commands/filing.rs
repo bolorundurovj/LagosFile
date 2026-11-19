@@ -217,10 +217,9 @@ pub async fn get_filing(id: String, state: State<'_, AppState>) -> Result<Filing
     get_filing_with_conn(&conn, &id)
 }
 
-#[tauri::command]
-pub async fn create_draft_filing(
+pub fn create_draft_filing_with_conn(
+    conn: &rusqlite::Connection,
     year_of_assessment: i32,
-    state: State<'_, AppState>,
 ) -> Result<Filing, String> {
     let current_year = Utc::now().year();
     if year_of_assessment >= current_year {
@@ -230,46 +229,55 @@ pub async fn create_draft_filing(
     }
     let id = Uuid::new_v4();
     let now = Utc::now();
-    let _config_version = {
+    let taxpayer_id: String = conn
+        .query_row("SELECT id FROM taxpayer LIMIT 1", [], |r| r.get(0))
+        .map_err(|_| "No profile found. Please create your taxpayer profile first.")?;
+
+    let existing: bool = conn
+        .query_row(
+            "SELECT COUNT(1) FROM filing WHERE year_of_assessment=?1 AND taxpayer_id=?2",
+            params![year_of_assessment, taxpayer_id],
+            |r| r.get::<_, i32>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+    if existing {
+        return Err(format!(
+            "A filing for {year_of_assessment} already exists. Duplicate or amend the existing filing instead.",
+        ));
+    }
+
+    let config =
+        ConfigService::get_for_income_year(conn, year_of_assessment).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+         VALUES (?1,?2,?3,'Draft',?4,?5,?6)",
+        params![
+            id.to_string(),
+            taxpayer_id,
+            year_of_assessment,
+            now.to_rfc3339(),
+            config.version_label,
+            config.id.to_string(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    get_filing_with_conn(conn, &id.to_string())
+}
+
+#[tauri::command]
+pub async fn create_draft_filing(
+    year_of_assessment: i32,
+    state: State<'_, AppState>,
+) -> Result<Filing, String> {
+    let filing = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let taxpayer_id: String = conn
-            .query_row("SELECT id FROM taxpayer LIMIT 1", [], |r| r.get(0))
-            .map_err(|_| "No profile found. Please create your taxpayer profile first.")?;
-
-        let existing: bool = conn
-            .query_row(
-                "SELECT COUNT(1) FROM filing WHERE year_of_assessment=?1 AND taxpayer_id=?2",
-                params![year_of_assessment, taxpayer_id],
-                |r| r.get::<_, i32>(0),
-            )
-            .map_err(|e| e.to_string())?
-            > 0;
-        if existing {
-            return Err(format!(
-                "A filing for {year_of_assessment} already exists. Duplicate or amend the existing filing instead.",
-            ));
-        }
-
-        let config = load_active_config(&conn).map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
-             VALUES (?1,?2,?3,'Draft',?4,?5,?6)",
-            params![
-                id.to_string(),
-                taxpayer_id,
-                year_of_assessment,
-                now.to_rfc3339(),
-                config.version_label,
-                config.id.to_string(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        config.version_label
+        create_draft_filing_with_conn(&conn, year_of_assessment)?
     };
     persist_db(&state).await?;
-    get_filing(id.to_string(), state).await
+    Ok(filing)
 }
 
 /// Confirms a Draft filing by recomputing all figures server-side against the filing's
@@ -496,7 +504,8 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map_err(|e| e.to_string())?;
-        let active_cfg = load_active_config(&conn).map_err(|e| e.to_string())?;
+        let target_cfg =
+            ConfigService::get_for_income_year(&conn, yoa + 1).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
              VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5,?6)",
@@ -505,8 +514,8 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
                 taxpayer_id,
                 id,
                 yoa + 1,
-                active_cfg.version_label,
-                active_cfg.id.to_string(),
+                target_cfg.version_label,
+                target_cfg.id.to_string(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -1094,6 +1103,18 @@ pub struct EstimateRelief {
 
 /// Runs the engine on unsaved figures so the calculator can give an estimate
 /// without creating a draft filing.
+pub fn estimate_tax_with_conn(
+    conn: &rusqlite::Connection,
+    income_entries: Vec<EstimateIncome>,
+    capital_allowances: Vec<EstimateAllowance>,
+    relief_entries: Vec<EstimateRelief>,
+) -> Result<ComputationResult, String> {
+    let config = load_active_config(conn).map_err(|e| e.to_string())?;
+    let (income, allowances, reliefs) =
+        build_estimate_entries(income_entries, capital_allowances, relief_entries, &config);
+    ComputationEngine::compute(&income, &allowances, &reliefs, &config).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn estimate_tax(
     income_entries: Vec<EstimateIncome>,
@@ -1101,15 +1122,10 @@ pub async fn estimate_tax(
     relief_entries: Vec<EstimateRelief>,
     state: State<'_, AppState>,
 ) -> Result<ComputationResult, String> {
-    let config = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        load_active_config(&conn).map_err(|e| e.to_string())?
-    };
-    let (income, allowances, reliefs) =
-        build_estimate_entries(income_entries, capital_allowances, relief_entries, &config);
-    ComputationEngine::compute(&income, &allowances, &reliefs, &config).map_err(|e| e.to_string())
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    estimate_tax_with_conn(&conn, income_entries, capital_allowances, relief_entries)
 }
 
 pub fn build_estimate_entries(

@@ -88,7 +88,10 @@ impl AppDb {
 
 pub const SEED_V1_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000001";
 pub const SEED_V1_CONFIG_LABEL: &str = "Tax Config v1.0 — NTA 2025, effective 1 Jan 2026";
+pub const NTA_2025_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000002";
+pub const PITA_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000003";
 const META_MIGRATION_NOTICES: &str = "migration_notices";
+const META_NTA_MIGRATED: &str = "nta_2025_config_migrated";
 
 /// Columns added after the first release. `CREATE TABLE IF NOT EXISTS` leaves
 /// existing databases untouched, so they are added here when missing.
@@ -237,6 +240,61 @@ fn seed_filing_ref_counter(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
+    let active: Option<(String, String)> = conn
+        .query_row(
+            "SELECT id, modified_by FROM tax_config WHERE is_active = 1 LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ok();
+
+    match active {
+        None => {
+            // Fresh install: activate NTA 2025 config.
+            conn.execute(
+                "UPDATE tax_config SET is_active = 1 WHERE id = ?1",
+                rusqlite::params![NTA_2025_CONFIG_ID],
+            )?;
+        }
+        Some((ref id, ref modified_by)) if id == SEED_V1_CONFIG_ID && modified_by == "system" => {
+            // Existing vault still on untouched v1.0 seed: upgrade active config to NTA 2025.
+            // Previously filed/draft returns already had their tax_config_id backfilled to SEED_V1_CONFIG_ID.
+            conn.execute("UPDATE tax_config SET is_active = 0", [])?;
+            conn.execute(
+                "UPDATE tax_config SET is_active = 1 WHERE id = ?1",
+                rusqlite::params![NTA_2025_CONFIG_ID],
+            )?;
+        }
+        Some((ref id, ref modified_by))
+            if id != NTA_2025_CONFIG_ID && modified_by != "system" =>
+        {
+            // User-edited config stays active; emit a one-time notice.
+            let already_notified: bool = conn
+                .query_row(
+                    "SELECT COUNT(1) FROM app_meta WHERE key = ?1",
+                    rusqlite::params![META_NTA_MIGRATED],
+                    |r| r.get::<_, i32>(0),
+                )
+                .unwrap_or(0)
+                > 0;
+            if !already_notified {
+                add_migration_notice(
+                    conn,
+                    "Updated NTA 2025 tax rates (0%–25%, 0% minimum tax) and PITA rates for <=2025 income were added, but your custom active configuration was kept active.",
+                )?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, '1')",
+                    rusqlite::params![META_NTA_MIGRATED],
+                )?;
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         // pragma_table_info crashes on a freshly deserialized connection, so
@@ -250,6 +308,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         }
     }
     backfill_filing_tax_config_ids(conn)?;
+    ensure_nta_and_pita_configs(conn)?;
     seed_filing_ref_counter(conn)?;
     Ok(())
 }

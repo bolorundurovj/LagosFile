@@ -218,7 +218,6 @@ fn test_nta_wht_credits_with_zero_minimum_tax() {
 }
 
 #[test]
-#[ignore = "Requires S9: minimum tax floor must apply before WHT credits (#2)"]
 fn test_minimum_tax_floor_applies_before_wht_credits() {
     // Config with 1% minimum tax (e.g., pre-NTA PITA config per D4)
     let cfg = nta_2025_config(0.01);
@@ -252,4 +251,125 @@ fn test_minimum_tax_floor_applies_before_wht_credits() {
         20_000.0,
         "minimum tax before WHT credit",
     );
+}
+
+#[test]
+fn test_s9_estimate_tax_5m_returns_690000_on_fresh_install() {
+    use lagosfile_lib::{
+        commands::filing::{estimate_tax_with_conn, EstimateIncome},
+        db::AppDb,
+    };
+
+    let db = AppDb::open_in_memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let res = estimate_tax_with_conn(
+        &conn,
+        vec![EstimateIncome {
+            income_type: "employment".to_string(),
+            gross_amount_ngn: 5_000_000.0,
+            cgt_proceeds: None,
+            cgt_gain: None,
+        }],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_ngn_eq(res.graduated_tax, 690_000.0, "estimate_tax ₦5m graduated");
+    assert_ngn_eq(res.minimum_tax, 0.0, "estimate_tax ₦5m min tax");
+    assert_ngn_eq(res.final_tax_payable, 690_000.0, "estimate_tax ₦5m final");
+}
+
+#[test]
+fn test_s9_untouched_seed_upgrades_to_nta_2025_and_picks_config_by_income_year() {
+    use lagosfile_lib::{
+        commands::filing::{compute_filing_with_conn, create_draft_filing_with_conn},
+        db::{AppDb, NTA_2025_CONFIG_ID, PITA_CONFIG_ID, SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL},
+        services::config::ConfigService,
+    };
+    use rusqlite::params;
+
+    // Simulate a legacy v1.2.0 DB that had ONLY the untouched v1.0 seed active and a filed 2024 return
+    let legacy_conn = rusqlite::Connection::open_in_memory().unwrap();
+    legacy_conn
+        .execute_batch(
+            "CREATE TABLE taxpayer (id TEXT PRIMARY KEY, full_name TEXT NOT NULL, tin TEXT NOT NULL UNIQUE, address TEXT, phone TEXT, email TEXT, filing_agent TEXT, created_at TEXT NOT NULL);
+             CREATE TABLE filing (id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL, parent_filing_id TEXT, year_of_assessment INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'Draft', filing_reference TEXT, created_at TEXT NOT NULL, confirmed_at TEXT, total_income_ngn REAL, chargeable_income REAL, tax_payable REAL, wht_credit REAL, net_tax_payable REAL, minimum_tax REAL, final_tax_payable REAL, tax_config_version TEXT NOT NULL DEFAULT 'default');
+             CREATE TABLE income_entry (id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, income_type TEXT NOT NULL, description TEXT, gross_amount_ngn REAL NOT NULL DEFAULT 0, is_foreign INTEGER NOT NULL DEFAULT 0, foreign_currency TEXT, foreign_amount REAL, income_date TEXT, fx_rate_fetched REAL, fx_rate_cbn_override REAL, fx_rate_used REAL, fx_rate_source TEXT, foreign_tax_paid_ngn REAL, is_cgt_exempt INTEGER NOT NULL DEFAULT 0, cgt_proceeds REAL, cgt_gain REAL);
+             CREATE TABLE capital_allowance (id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, asset_description TEXT NOT NULL, asset_type TEXT NOT NULL, asset_cost REAL NOT NULL DEFAULT 0, acquisition_date TEXT NOT NULL, tax_written_down_value REAL NOT NULL DEFAULT 0, annual_allowance_rate REAL NOT NULL DEFAULT 0, annual_allowance_amount REAL NOT NULL DEFAULT 0);
+             CREATE TABLE relief_entry (id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, relief_type TEXT NOT NULL, claimed_amount REAL NOT NULL DEFAULT 0, approved_amount REAL NOT NULL DEFAULT 0, wht_ref TEXT, wht_income_type TEXT, wht_date TEXT);
+             CREATE TABLE document (id TEXT PRIMARY KEY, parent_entry_id TEXT NOT NULL, parent_entry_type TEXT NOT NULL, file_path TEXT NOT NULL, file_name TEXT NOT NULL, file_type TEXT NOT NULL, file_size_bytes INTEGER NOT NULL DEFAULT 0, uploaded_at TEXT NOT NULL);
+             CREATE TABLE fx_cache (id TEXT PRIMARY KEY, base_currency TEXT NOT NULL, quote_currency TEXT NOT NULL, rate REAL NOT NULL, rate_date TEXT NOT NULL, source TEXT NOT NULL, fetched_at TEXT NOT NULL);
+             CREATE TABLE tax_config (id TEXT PRIMARY KEY, version_label TEXT NOT NULL, governed_by TEXT NOT NULL, bands_json TEXT NOT NULL, relief_caps_json TEXT NOT NULL, cgt_thresholds_json TEXT NOT NULL, allowance_rates_json TEXT NOT NULL, minimum_tax_rate REAL NOT NULL, is_active INTEGER NOT NULL DEFAULT 0, last_modified TEXT NOT NULL, modified_by TEXT NOT NULL DEFAULT 'system');",
+        )
+        .unwrap();
+    legacy_conn
+        .execute(
+            "INSERT INTO tax_config VALUES (?1, ?2, 'NTA 2025',
+             '[{\"lower\":0,\"upper\":800000,\"rate\":0.07},{\"lower\":800000,\"upper\":2800000,\"rate\":0.11},{\"lower\":2800000,\"upper\":null,\"rate\":0.15}]',
+             '{\"rentReliefCap\":500000,\"rentReliefRate\":0.20}',
+             '{\"proceedsThreshold\":150000000,\"gainThreshold\":10000000}',
+             '{\"software_licence\":0.33,\"other\":0.25}', 0.01, 1, '2025-01-01T00:00:00Z', 'system')",
+            params![SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL],
+        )
+        .unwrap();
+    legacy_conn
+        .execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-1', 'Tunde', '1234567890', '2025-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    legacy_conn
+        .execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, created_at, tax_config_version)
+             VALUES ('f-old', 'tp-1', 2024, 'Confirmed', '2025-02-01T00:00:00Z', ?1)",
+            params![SEED_V1_CONFIG_LABEL],
+        )
+        .unwrap();
+    legacy_conn
+        .execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn, is_foreign)
+             VALUES ('inc-old', 'f-old', 'employment', 3000000.0, 0)",
+            [],
+        )
+        .unwrap();
+
+    // Serialize legacy_conn and load into AppDb (runs schema + migrate)
+    let legacy_bytes = {
+        let mut size: i64 = 0;
+        unsafe {
+            let ptr = rusqlite::ffi::sqlite3_serialize(
+                legacy_conn.handle(),
+                c"main".as_ptr(),
+                &mut size,
+                0,
+            );
+            let slice = std::slice::from_raw_parts(ptr, size as usize);
+            let vec = slice.to_vec();
+            rusqlite::ffi::sqlite3_free(ptr as *mut std::ffi::c_void);
+            vec
+        }
+    };
+
+    let db = AppDb::open_in_memory().unwrap();
+    db.load_from_bytes(&legacy_bytes).unwrap();
+
+    // Active config was upgraded from untouched v1 seed to NTA 2025
+    let active = ConfigService::get_active(&db).unwrap();
+    assert_eq!(active.id.to_string(), NTA_2025_CONFIG_ID);
+    assert_eq!(active.minimum_tax_rate, 0.0);
+    assert_eq!(active.allowance_rates.get("software_licence"), Some(&0.25));
+
+    let conn = db.conn.lock().unwrap();
+    // Old confirmed filing stayed pinned to v1 seed and recomputes identically (306,000)
+    let old_comp = compute_filing_with_conn(&conn, "f-old").unwrap();
+    assert_ngn_eq(old_comp.final_tax_payable, 306_000.0, "old filing unchanged");
+
+    // Per D1: draft for <= 2025 gets PITA config (1% min tax); get_for_income_year(2026) gets NTA 2025
+    let draft_2025 = create_draft_filing_with_conn(&conn, 2025).unwrap();
+    assert_eq!(
+        draft_2025.tax_config_id.map(|u| u.to_string()).as_deref(),
+        Some(PITA_CONFIG_ID)
+    );
+    let cfg_2026 = ConfigService::get_for_income_year(&conn, 2026).unwrap();
+    assert_eq!(cfg_2026.id.to_string(), NTA_2025_CONFIG_ID);
 }

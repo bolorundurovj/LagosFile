@@ -90,7 +90,7 @@ import { LucideAngularModule } from 'lucide-angular';
           <!-- Band breakdown -->
           <div style="margin:var(--space-5) 0">
             <div class="label-sm" style="margin-bottom:var(--space-3)">TAX BY BAND</div>
-            @for (band of result()!.bandBreakdown; track band.lower) {
+            @for (band of result()!.bandBreakdown; track band.lower; let idx = $index) {
               <div class="band-row">
                 <span class="band-label">
                   {{ band.lower | naira }} – {{ band.upper != null ? (band.upper | naira) : 'above' }}
@@ -99,7 +99,7 @@ import { LucideAngularModule } from 'lucide-angular';
                 <div class="band-bar-wrapper">
                   <div class="band-bar"
                     [style.width.%]="bandPct(band.taxableAmount)"
-                    [style.background]="bandColor(band.rate)">
+                    [style.background]="bandColor(idx)">
                   </div>
                 </div>
                 <span class="financial-value band-amount">{{ band.taxAmount | naira }}</span>
@@ -109,42 +109,43 @@ import { LucideAngularModule } from 'lucide-angular';
 
           <div class="breakdown-table" style="margin-top:var(--space-3)">
             <div class="breakdown-row">
-              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
+              <span>Graduated Tax<lf-help [text]="graduatedTaxTooltip()"></lf-help></span>
               <span class="financial-value">{{ result()!.graduatedTax | naira }}</span>
             </div>
+            @if (result()!.minimumTax > 0) {
+              <div class="breakdown-row">
+                <span>Minimum Tax Floor<lf-help text="Minimum tax liability floor configured for this return's tax regime, applied before subtracting tax credits."></lf-help></span>
+                <span class="financial-value">{{ result()!.minimumTax | naira }}</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable."></lf-help></span>
+              <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable after any minimum tax floor."></lf-help></span>
               <span class="financial-value">({{ result()!.whtCredits | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--subtotal">
-              <span>Net Tax Payable<lf-help text="Graduated tax after subtracting WHT credits. Compared against minimum tax — the higher figure becomes the final liability."></lf-help></span>
+              <span>Net Tax Payable<lf-help text="Tax liability after applying any minimum tax floor and subtracting tax credits (floored at zero)."></lf-help></span>
               <span class="financial-value">{{ result()!.netTaxPayable | naira }}</span>
             </div>
           </div>
 
-          <!-- Minimum tax comparison -->
-          <div class="min-tax-panel">
-            <div class="min-tax-panel__title">Minimum Tax Comparison<lf-help text="NTA 2025 s.43 may require a minimum tax of 1% of gross income regardless of deductions. Applicability to individuals is unconfirmed — verify with LIRS." align="left"></lf-help></div>
-            <div class="min-tax-panel__row">
-              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
-              <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
-                {{ result()!.netTaxPayable | naira }}
-              </span>
-            </div>
-            <div class="min-tax-panel__row">
-              <span>1% Minimum Tax (of gross income)</span>
-              <span [class.highlighted]="result()!.minimumTax > result()!.graduatedTax">
-                {{ result()!.minimumTax | naira }}
-              </span>
-            </div>
-            <div class="alert alert--warning" style="margin-top:var(--space-3)">
-              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
-              <div class="alert__content">
-                The applicability of the 1% minimum tax rule to individuals under NTA 2025 is unconfirmed.
-                This computation applies the rule as configured. Verify with LIRS or a tax advisor.
+          <!-- Minimum tax comparison (shown only when a minimum tax floor applies) -->
+          @if (result()!.minimumTax > 0) {
+            <div class="min-tax-panel">
+              <div class="min-tax-panel__title">Minimum Tax Floor Comparison<lf-help text="The higher of graduated tax and the configured minimum tax floor is used before tax credits are deducted." align="left"></lf-help></div>
+              <div class="min-tax-panel__row">
+                <span>Graduated Tax<lf-help [text]="graduatedTaxTooltip()"></lf-help></span>
+                <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
+                  {{ result()!.graduatedTax | naira }}
+                </span>
+              </div>
+              <div class="min-tax-panel__row">
+                <span>Minimum Tax Floor ({{ minTaxRateLabel() }} of gross income)</span>
+                <span [class.highlighted]="result()!.minimumTax > result()!.graduatedTax">
+                  {{ result()!.minimumTax | naira }}
+                </span>
               </div>
             </div>
-          </div>
+          }
 
           @if (result()!.cgtExemptAmount > 0) {
             <div class="alert alert--success" style="margin-top:var(--space-4)">
@@ -452,22 +453,30 @@ export class StepReviewComponent implements OnInit {
     }
   }
 
+  graduatedTaxTooltip = computed(() => {
+    const bands = this.result()?.bandBreakdown ?? [];
+    if (bands.length === 0) {
+      return 'Tax computed by applying the configured progressive rate bands to slices of chargeable income.';
+    }
+    const rates = bands.map(b => `${(b.rate * 100).toFixed(0)}%`).join(' → ');
+    return `Tax computed by applying this filing's progressive rate bands (${rates}) to slices of chargeable income.`;
+  });
+
+  minTaxRateLabel = computed(() => {
+    const r = this.result();
+    if (!r || r.totalGrossIncome <= 0 || r.minimumTax <= 0) return '0%';
+    const pct = (r.minimumTax / r.totalGrossIncome) * 100;
+    return `${Number(pct.toFixed(2))}%`;
+  });
+
   bandPct(amount: number): number {
     const total = this.result()?.chargeableIncome ?? 1;
-    return Math.min((amount / total) * 100, 100);
+    return total > 0 ? Math.min((amount / total) * 100, 100) : 0;
   }
 
-  bandColor(rate: number): string {
-    const shades: Record<string, string> = {
-      '0':    '#cce0ff',
-      '0.07': '#99c2ff',
-      '0.11': '#5599ff',
-      '0.15': '#2277ee',
-      '0.19': '#0055cc',
-      '0.21': '#003da0',
-      '0.24': '#002880',
-    };
-    return shades[String(rate)] ?? '#5599ff';
+  bandColor(index: number): string {
+    const palette = ['#cce0ff', '#99c2ff', '#5599ff', '#2277ee', '#0055cc', '#003da0', '#002880'];
+    return palette[Math.min(index, palette.length - 1)];
   }
 
   async saveDraft(): Promise<void> {

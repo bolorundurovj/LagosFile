@@ -13,9 +13,9 @@ const NTA_SECTIONS: Record<string, string> = {
   bands: 'NTA 2025, Fourth Schedule — Tax Bands',
   rentReliefCap: 'NTA 2025, s.33(2) — Rent Relief Cap',
   rentReliefRate: 'NTA 2025, s.33(1) — Rent Relief Rate (20%)',
-  cgtProceedsThreshold: 'NTA 2025, s.56 — CGT Exemption (Proceeds)',
-  cgtGainThreshold: 'NTA 2025, s.56 — CGT Exemption (Gain)',
-  minimumTaxRate: 'NTA 2025, s.43 — Minimum Tax Rate',
+  cgtProceedsThreshold: 'NTA 2025, s.34(1)(a) — CGT Exemption (Proceeds)',
+  cgtGainThreshold: 'NTA 2025, s.34(1)(a) — CGT Exemption (Gain)',
+  minimumTaxRate: 'Minimum Tax Rate (0% under NTA 2025; 1% under PITA)',
 };
 
 @Component({
@@ -234,7 +234,7 @@ const NTA_SECTIONS: Record<string, string> = {
         <div class="card">
           <div class="config-row" style="padding:0">
             <div class="config-row__info">
-              <div class="config-row__label">Minimum Tax Rate<lf-help text="If graduated tax falls below this percentage of gross income, the minimum tax applies instead (NTA 2025, s.43). Currently 1%. Applicability to individuals is unconfirmed — verify with LIRS."></lf-help></div>
+              <div class="config-row__label">Minimum Tax Rate<lf-help text="Minimum tax floor as a percentage of gross income, applied before tax credits. 0% under NTA 2025 (no individual minimum tax); 1% under PITA for income years up to 2025."></lf-help></div>
               <div class="config-row__section">{{ ntaSection('minimumTaxRate') }}</div>
             </div>
             <div class="flex items-center gap-2">

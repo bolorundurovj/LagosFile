@@ -645,7 +645,8 @@ fn test_estimate_entries_use_config_allowance_rate() {
     use lagosfile_lib::services::computation::ComputationEngine;
 
     let db = AppDb::open_in_memory().unwrap();
-    let config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    let mut config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    // NTA 2025 Class 3 software rate is 25% -> 300k * 0.25 = 75k
     let (income, allowances, reliefs) = build_estimate_entries(
         vec![EstimateIncome {
             income_type: "business".into(),
@@ -665,6 +666,28 @@ fn test_estimate_entries_use_config_allowance_rate() {
         &config,
     );
     let r = ComputationEngine::compute(&income, &allowances, &reliefs, &config).unwrap();
-    assert!((r.total_capital_allowances - 99_000.0).abs() < 1e-6);
+    assert!((r.total_capital_allowances - 75_000.0).abs() < 1e-6);
     assert_eq!(r.total_deductions, 800_000.0);
+
+    // Custom config rate is respected instead of the 0.25 default
+    config
+        .allowance_rates
+        .insert("software_licence".to_string(), 0.33);
+    let (income2, allowances2, reliefs2) = build_estimate_entries(
+        vec![EstimateIncome {
+            income_type: "business".into(),
+            gross_amount_ngn: 10_000_000.0,
+            cgt_proceeds: None,
+            cgt_gain: None,
+        }],
+        vec![EstimateAllowance {
+            asset_type: "software_licence".into(),
+            asset_cost: 300_000.0,
+            tax_written_down_value: None,
+        }],
+        vec![],
+        &config,
+    );
+    let r2 = ComputationEngine::compute(&income2, &allowances2, &reliefs2, &config).unwrap();
+    assert!((r2.total_capital_allowances - 99_000.0).abs() < 1e-6);
 }

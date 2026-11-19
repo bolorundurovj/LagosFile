@@ -148,9 +148,10 @@ impl ComputationEngine {
             });
         }
 
-        let net_tax_payable = (graduated_tax - wht_credits).max(0.0);
         let minimum_tax = total_gross * config.minimum_tax_rate;
-        let final_tax_payable = net_tax_payable.max(minimum_tax);
+        let tax_before_credits = graduated_tax.max(minimum_tax);
+        let net_tax_payable = (tax_before_credits - wht_credits).max(0.0);
+        let final_tax_payable = net_tax_payable;
 
         Ok(ComputationResult {
             total_gross_income: total_gross,

@@ -257,7 +257,7 @@ fn test_multiple_configs_only_one_active() {
     let total_count: i32 = conn
         .query_row("SELECT count(*) FROM tax_config", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(total_count, 6);
+    assert_eq!(total_count, 7);
 }
 
 #[test]

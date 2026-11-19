@@ -278,11 +278,12 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
         )
         .unwrap();
 
-        // Confirm once: recomputes server-side (3,000,000 - 100,000 CA - 100,000 pension = 2,800,000 -> 56k + 220k = 276,000)
+        // Confirm once: recomputes server-side against active NTA 2025 config
+        // (3,000,000 - 100,000 CA - 100,000 pension = 2,800,000 -> 0..800k @ 0% + 2m @ 15% = 300,000)
         let confirmed = confirm_filing_with_conn(&conn, &fid).expect("first confirm must succeed");
         assert_eq!(confirmed.status, "Confirmed");
-        assert_eq!(confirmed.tax_payable, Some(276_000.0));
-        assert_eq!(confirmed.final_tax_payable, Some(276_000.0));
+        assert_eq!(confirmed.tax_payable, Some(300_000.0));
+        assert_eq!(confirmed.final_tax_payable, Some(300_000.0));
         assert_eq!(
             confirmed.filing_reference.as_deref(),
             Some("LIRS/REF/2024/00001")
@@ -326,7 +327,7 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
         export_filing_json_with_conn(&conn, &fid, json_path.to_str().unwrap()).unwrap();
         let exported: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
-        assert_eq!(exported["filing"]["taxPayable"].as_f64(), Some(276_000.0));
+        assert_eq!(exported["filing"]["taxPayable"].as_f64(), Some(300_000.0));
         assert!(exported["filing"]["submittedAt"].as_str().is_some());
 
         (fid, inc_id, ca_id, rel_id)
@@ -348,7 +349,7 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
     .expect_err("attaching document to Submitted filing must fail");
     assert!(att_err.contains("Only Draft filings"));
 
-    // PDF export contains the formatted tax_payable figure (276,000.00)
+    // PDF export contains the formatted tax_payable figure (300,000.00)
     let pdf_path = dir.join("filing.pdf");
     export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
         .unwrap();
@@ -360,8 +361,8 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        all_text.contains("276,000.00"),
-        "PDF must render saved tax_payable (276,000.00), got: {all_text}"
+        all_text.contains("300,000.00"),
+        "PDF must render saved tax_payable (300,000.00), got: {all_text}"
     );
 
     let _ = (ca_id, relief_id);
