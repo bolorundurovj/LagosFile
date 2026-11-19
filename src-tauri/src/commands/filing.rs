@@ -1720,7 +1720,7 @@ pub async fn compute_filing(
     compute_filing_with_conn(&conn, &filing_id)
 }
 
-#[derive(serde::Deserialize, Default)]
+#[derive(Debug, serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EstimateIncome {
     pub income_type: String,
@@ -1733,7 +1733,7 @@ pub struct EstimateIncome {
     pub bik_cost: Option<f64>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EstimateAllowance {
     pub asset_type: String,
@@ -1741,7 +1741,7 @@ pub struct EstimateAllowance {
     pub tax_written_down_value: Option<f64>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EstimateRelief {
     pub relief_type: String,

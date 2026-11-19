@@ -83,6 +83,13 @@ lopdf = "0.45"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation", "Win32_System_WinRT", "Win32_Foundation"] }
 
+[dev-dependencies]
+cucumber = "=0.21.1"
+
+[[test]]
+name = "lirs_parity"
+harness = false
+
 [profile.dev]
 incremental = true
 
