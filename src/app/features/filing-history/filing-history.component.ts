@@ -831,8 +831,10 @@ export class FilingHistoryComponent implements OnInit {
     }
   }
 
-  private applyFilter(): void {
-    this.currentPage = 1;
+  private applyFilter(resetPage = false): void {
+    if (resetPage) {
+      this.currentPage = 1;
+    }
     let result = this.allFilings;
     const q = this.searchQuery.toLowerCase().trim();
     if (q) {
@@ -848,19 +850,22 @@ export class FilingHistoryComponent implements OnInit {
       result = result.filter(f => f.yearOfAssessment === this.yearFilter!);
     }
     this.totalPages = Math.max(1, Math.ceil(result.length / this.pageSize));
+    if (this.currentPage > this.totalPages) {
+      this.currentPage = this.totalPages;
+    }
     const start = (this.currentPage - 1) * this.pageSize;
     this.displayedFilings.set(result.slice(start, start + this.pageSize));
   }
 
-  private refreshData(): void {
-    this.applyFilter();
+  private refreshData(resetPage = false): void {
+    this.applyFilter(resetPage);
   }
 
-  onSearchChange(value: string): void { this.searchQuery = value; this.refreshData(); }
-  onStatusChange(value: string): void { this.statusFilter = value; this.refreshData(); }
-  onYearChange(value: string): void { this.yearFilter = value ? Number(value) : null; this.refreshData(); }
-  prevPage(): void { if (this.currentPage > 1) { this.currentPage--; this.refreshData(); } }
-  nextPage(): void { if (this.currentPage < this.totalPages) { this.currentPage++; this.refreshData(); } }
+  onSearchChange(value: string): void { this.searchQuery = value; this.refreshData(true); }
+  onStatusChange(value: string): void { this.statusFilter = value; this.refreshData(true); }
+  onYearChange(value: string): void { this.yearFilter = value ? Number(value) : null; this.refreshData(true); }
+  prevPage(): void { if (this.currentPage > 1) { this.currentPage--; this.refreshData(false); } }
+  nextPage(): void { if (this.currentPage < this.totalPages) { this.currentPage++; this.refreshData(false); } }
 
   openExport(f: Filing): void { this.exportFiling.set(f); }
   closeExport(): void { this.exportFiling.set(null); }

@@ -14,7 +14,7 @@ export class ProfileService {
     return this.tauri.invoke<Taxpayer | null>('get_profile');
   }
 
-  async update(data: Partial<Omit<Taxpayer, 'id' | 'createdAt'>>): Promise<Taxpayer> {
+  async update(data: Partial<Omit<Taxpayer, 'createdAt'>>): Promise<Taxpayer> {
     return this.tauri.invoke<Taxpayer>('update_profile', { profile: data });
   }
 

@@ -28,28 +28,19 @@ import { buildDeadlineIcs } from '../../core/services/deadline-reminder.service'
           <span class="alert__icon"><lucide-icon name="clock" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
             <div class="alert__title">Filing Deadline Approaching</div>
-            <div>{{ daysLeft() }} days until March 31 — the Direct Assessment filing deadline.</div>
+            <div>{{ daysLeft() }} days until March 31, {{ deadlineYear() }} — the Direct Assessment filing deadline.</div>
           </div>
           <button class="btn btn--ghost btn--sm" (click)="addDeadlineToCalendar()">Add to Calendar</button>
         </div>
       }
 
-      <!-- Missing filing warnings -->
-      @if (missingCurrentYear()) {
-        <div class="alert alert--error">
-          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
-          <div class="alert__content">
-            <div class="alert__title">No confirmed filing for {{ currentYear }}</div>
-            <div>You have not filed your YOA {{ currentYear }} return yet.</div>
-          </div>
-        </div>
-      }
+      <!-- Missing filing warning for the previous income year -->
       @if (missingPreviousYear()) {
         <div class="alert alert--error" style="margin-top:var(--space-3)">
           <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
           <div class="alert__content">
-            <div class="alert__title">No confirmed filing for {{ currentYear - 1 }}</div>
-            <div>You may have an outstanding liability for YOA {{ currentYear - 1 }}.</div>
+            <div class="alert__title">No filed return for income year {{ currentYear - 1 }} (LIRS YOA {{ currentYear }})</div>
+            <div>You have not confirmed or submitted your income year {{ currentYear - 1 }} Direct Assessment return yet.</div>
           </div>
         </div>
       }
@@ -289,20 +280,38 @@ export class DashboardComponent implements OnInit {
   private toast = inject(ToastService);
 
   daysLeft = signal(0);
+  deadlineYear = signal(new Date().getFullYear());
   showDeadlineBanner = signal(false);
-  missingCurrentYear = signal(false);
   missingPreviousYear = signal(false);
   confirmedCount = signal(0);
   lifetimeTotal = signal(0);
 
+  /** Deduplicates filed returns (Confirmed or Submitted) to one per income year (latest confirmedAt). */
+  private latestFiledPerYear(all: Filing[]): Filing[] {
+    const filed = all.filter(f => f.status === 'Confirmed' || f.status === 'Submitted');
+    const byYear = new Map<number, Filing>();
+    for (const f of filed) {
+      const existing = byYear.get(f.yearOfAssessment);
+      if (!existing) {
+        byYear.set(f.yearOfAssessment, f);
+        continue;
+      }
+      const keyNew = f.confirmedAt ?? f.createdAt ?? '';
+      const keyOld = existing.confirmedAt ?? existing.createdAt ?? '';
+      if (keyNew > keyOld) {
+        byYear.set(f.yearOfAssessment, f);
+      }
+    }
+    return Array.from(byYear.values()).sort((a, b) => a.yearOfAssessment - b.yearOfAssessment);
+  }
+
   chartData = computed(() => {
-    const confirmed = this.filings().filter(f => f.status === 'Confirmed' || f.status === 'Submitted');
-    if (confirmed.length < 2) return [];
-    const sorted = [...confirmed].sort((a, b) => a.yearOfAssessment - b.yearOfAssessment);
-    const maxIncome = Math.max(...sorted.map(f => f.totalIncomeNgn ?? 0), 1);
-    const maxTax = Math.max(...sorted.map(f => f.finalTaxPayable ?? 0), 1);
+    const latest = this.latestFiledPerYear(this.filings());
+    if (latest.length < 2) return [];
+    const maxIncome = Math.max(...latest.map(f => f.totalIncomeNgn ?? 0), 1);
+    const maxTax = Math.max(...latest.map(f => f.finalTaxPayable ?? 0), 1);
     const maxVal = Math.max(maxIncome, maxTax, 1);
-    return sorted.map(f => ({
+    return latest.map(f => ({
       year: f.yearOfAssessment,
       income: f.totalIncomeNgn ?? 0,
       tax: f.finalTaxPayable ?? 0,
@@ -311,27 +320,36 @@ export class DashboardComponent implements OnInit {
     }));
   });
 
+  /** Computes deadline banner and missing-year flags for a given reference date (testable). */
+  evaluateMetrics(all: Filing[], today: Date = new Date()): void {
+    const latest = this.latestFiledPerYear(all);
+    this.confirmedCount.set(latest.length);
+    this.lifetimeTotal.set(latest.reduce((s, f) => s + (f.finalTaxPayable ?? 0), 0));
+
+    const cy = today.getFullYear();
+    this.missingPreviousYear.set(!latest.some(f => f.yearOfAssessment === cy - 1));
+
+    // Deadline is 31 March of the current year, or next year once 31 March has passed.
+    const thisYearDeadline = new Date(cy, 2, 31, 23, 59, 59, 999);
+    const targetYear = today <= thisYearDeadline ? cy : cy + 1;
+    const deadline = new Date(targetYear, 2, 31);
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const diff = Math.ceil((deadline.getTime() - startOfToday.getTime()) / 86400000);
+    this.deadlineYear.set(targetYear);
+    if (diff >= 0 && diff <= 60) {
+      this.daysLeft.set(diff);
+      this.showDeadlineBanner.set(true);
+    } else {
+      this.daysLeft.set(diff);
+      this.showDeadlineBanner.set(false);
+    }
+  }
+
   async ngOnInit(): Promise<void> {
     try {
       const all = await this.filingService.listFilings();
       this.filings.set(all);
-
-      const confirmed = all.filter(f => f.status === 'Confirmed');
-      this.confirmedCount.set(confirmed.length);
-      this.lifetimeTotal.set(confirmed.reduce((s, f) => s + (f.finalTaxPayable ?? 0), 0));
-
-      const cy = this.currentYear;
-      this.missingCurrentYear.set(!confirmed.some(f => f.yearOfAssessment === cy));
-      this.missingPreviousYear.set(!confirmed.some(f => f.yearOfAssessment === cy - 1));
-
-      // Deadline banner: show if within 60 days of March 31
-      const deadline = new Date(cy + 1, 2, 31); // March 31 next year
-      const today = new Date();
-      const diff = Math.ceil((deadline.getTime() - today.getTime()) / 86400000);
-      if (diff > 0 && diff <= 60) {
-        this.daysLeft.set(diff);
-        this.showDeadlineBanner.set(true);
-      }
+      this.evaluateMetrics(all);
     } finally {
       this.loading.set(false);
     }

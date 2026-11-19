@@ -39,7 +39,7 @@ interface ChangelogEntry {
             </div>
             <div class="form-group">
               <label class="form-label">TIN</label>
-              <input type="text" class="form-input" [value]="auth.taxpayer()!.tin" readonly style="opacity:0.7" />
+              <input type="text" class="form-input" [(ngModel)]="editForm.tin" name="tin" maxlength="13" placeholder="13-digit TIN" />
             </div>
             <div class="form-group">
               <label class="form-label">Lagos Address</label>
@@ -524,13 +524,14 @@ export class SettingsComponent {
     }
   }
 
-  editForm = { fullName: '', address: '', phone: '', email: '', filingAgent: '' };
+  editForm = { fullName: '', tin: '', address: '', phone: '', email: '', filingAgent: '' };
   pinForm = { current: '', next: '', confirm: '' };
 
   constructor() {
     const tp = this.auth.taxpayer();
     if (tp) {
       this.editForm.fullName    = tp.fullName;
+      this.editForm.tin         = tp.tin;
       this.editForm.address     = tp.address     ?? '';
       this.editForm.phone       = tp.phone       ?? '';
       this.editForm.email       = tp.email       ?? '';
@@ -547,20 +548,33 @@ export class SettingsComponent {
   }
 
   async saveProfile(): Promise<void> {
+    const tp = this.auth.taxpayer();
+    if (!tp) return;
+    const newTin = this.editForm.tin.trim();
+    if (newTin !== tp.tin) {
+      const tinError = this.profileService.validateTin(newTin);
+      if (tinError) {
+        this.toast.error(tinError);
+        return;
+      }
+      if (!window.confirm('Are you sure you want to change your TIN? This updates the taxpayer identifier used on exports and LIRS filings.')) {
+        return;
+      }
+    }
     this.savingProfile.set(true);
     try {
-      const tp = this.auth.taxpayer();
-      if (tp) {
-        await this.profileService.update({
-          ...tp,
-          fullName:    this.editForm.fullName,
-          address:     this.editForm.address     || undefined,
-          phone:       this.editForm.phone       || undefined,
-          email:       this.editForm.email       || undefined,
-          filingAgent: this.editForm.filingAgent || undefined,
-        });
-        this.toast.success('Profile updated successfully.');
-      }
+      const updated = await this.profileService.update({
+        ...tp,
+        id:          tp.id,
+        fullName:    this.editForm.fullName,
+        tin:         newTin,
+        address:     this.editForm.address     || undefined,
+        phone:       this.editForm.phone       || undefined,
+        email:       this.editForm.email       || undefined,
+        filingAgent: this.editForm.filingAgent || undefined,
+      });
+      this.auth.setTaxpayer(updated);
+      this.toast.success('Profile updated successfully.');
     } catch (err: unknown) {
       this.toast.error('Failed to save profile: ' + (err instanceof Error ? err.message : String(err)));
     } finally {

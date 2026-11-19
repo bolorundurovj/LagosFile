@@ -5,7 +5,7 @@ import { FilingService } from '../../core/services/filing.service';
 import { LIRSService } from '../../core/services/lirs.service';
 import { ToastService } from '../../core/services/toast.service';
 import { Filing } from '../../core/models';
-import { LUCIDE_ICONS, LucideIconProvider, icons, BarChart2 } from 'lucide-angular';
+import { LUCIDE_ICONS, LucideIconProvider, icons, BarChart2, MoreVertical } from 'lucide-angular';
 
 describe('FilingHistoryComponent', () => {
   let filingServiceSpy: jasmine.SpyObj<FilingService>;
@@ -59,7 +59,7 @@ describe('FilingHistoryComponent', () => {
         {
           provide: LUCIDE_ICONS,
           multi: true,
-          useValue: new LucideIconProvider({ ...icons, BarChart2 }),
+          useValue: new LucideIconProvider({ ...icons, BarChart2, MoreVertical }),
         },
       ],
     }).compileComponents();
@@ -82,5 +82,34 @@ describe('FilingHistoryComponent', () => {
 
     await fixture.componentInstance.openPreview(sampleFiling);
     expect(fixture.componentInstance.previewCounts().reliefs).toBe(1);
+  });
+
+  it('pagination shows rows 11-20 on page 2 and resets to page 1 only when a filter changes', async () => {
+    const twentyFive: Filing[] = Array.from({ length: 25 }, (_, i) => ({
+      ...sampleFiling,
+      id: `f-${i + 1}`,
+      yearOfAssessment: 2025 - i,
+      filingReference: `LIRS/REF/${2025 - i}/00001`,
+    }));
+    filingServiceSpy.listFilings.and.resolveTo(twentyFive);
+
+    const fixture = TestBed.createComponent(FilingHistoryComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    expect(comp.currentPage).toBe(1);
+    expect(comp.totalPages).toBe(3);
+    expect(comp.displayedFilings().map(f => f.id)).toEqual(twentyFive.slice(0, 10).map(f => f.id));
+
+    comp.nextPage();
+    expect(comp.currentPage).toBe(2);
+    expect(comp.displayedFilings().map(f => f.id)).toEqual(twentyFive.slice(10, 20).map(f => f.id));
+
+    // Changing search filter resets to page 1
+    comp.onSearchChange('2025');
+    expect(comp.currentPage).toBe(1);
+    expect(comp.displayedFilings().length).toBe(1);
   });
 });
