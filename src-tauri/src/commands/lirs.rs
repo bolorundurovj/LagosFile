@@ -1,4 +1,8 @@
-use crate::{models::*, services::computation::ComputationEngine, AppState};
+use crate::{
+    models::*,
+    services::{computation::ComputationEngine, config::ConfigService},
+    AppState,
+};
 use chrono::Utc;
 use rusqlite::params;
 use std::{
@@ -48,42 +52,6 @@ pub fn stop_bridge(state: &AppState) {
     }
 }
 
-fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig> {
-    conn.query_row(
-        "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
-                cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
-                is_active,last_modified,modified_by
-         FROM tax_config WHERE is_active=1 LIMIT 1",
-        [],
-        |row| {
-            let bands_json: String = row.get(3)?;
-            let caps_json: String = row.get(4)?;
-            let cgt_json: String = row.get(5)?;
-            let rates_json: String = row.get(6)?;
-            Ok(TaxConfig {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-                version_label: row.get(1)?,
-                governed_by: row.get(2)?,
-                bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
-                cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
-                    proceeds_threshold: 150_000_000.0,
-                    gain_threshold: 10_000_000.0,
-                }),
-                allowance_rates: serde_json::from_str(&rates_json).unwrap_or_default(),
-                minimum_tax_rate: row.get(7)?,
-                is_active: row.get::<_, i32>(8)? == 1,
-                last_modified: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap_or_else(|_| {
-                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
-                    })
-                    .with_timezone(&Utc),
-                modified_by: row.get(10)?,
-            })
-        },
-    )
-}
-
 pub fn format_payer_id(tin: &str) -> String {
     if tin.starts_with("N-") || tin.starts_with("C-") {
         tin.to_string()
@@ -97,13 +65,13 @@ fn lirs_data_dir() -> std::path::PathBuf {
     home.join("LagosFile")
 }
 
-fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
+pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
     let filing = conn
         .query_row(
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
                     filing_reference,created_at,confirmed_at,total_income_ngn,
                     chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                    minimum_tax,final_tax_payable,tax_config_version
+                    minimum_tax,final_tax_payable,tax_config_version,tax_config_id
              FROM filing WHERE id=?1",
             params![id],
             |row| {
@@ -135,6 +103,9 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                     minimum_tax: row.get(13)?,
                     final_tax_payable: row.get(14)?,
                     tax_config_version: row.get(15)?,
+                    tax_config_id: row
+                        .get::<_, Option<String>>(16)?
+                        .and_then(|s| Uuid::parse_str(&s).ok()),
                     payment_date: None,
                     payment_reference: None,
                     amount_paid: None,
@@ -256,7 +227,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
         }
     }
 
-    let config = load_active_config(conn).map_err(|e| e.to_string())?;
+    let config = ConfigService::get_for_filing(conn, id).map_err(|e| e.to_string())?;
 
     let mut ie_full_stmt = conn
         .prepare(

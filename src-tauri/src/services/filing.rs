@@ -31,6 +31,7 @@ impl FilingService {
             minimum_tax: None,
             final_tax_payable: None,
             tax_config_version: config_version.to_string(),
+            tax_config_id: None,
             payment_date: None,
             payment_reference: None,
             amount_paid: None,
@@ -57,7 +58,7 @@ impl FilingService {
         let mut stmt = conn.prepare(
             "SELECT id, taxpayer_id, parent_filing_id, year_of_assessment, status, filing_reference, 
                     created_at, confirmed_at, total_income_ngn, chargeable_income, tax_payable, 
-                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version 
+                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id 
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC"
         )?;
 
@@ -87,6 +88,9 @@ impl FilingService {
                 minimum_tax: row.get(13)?,
                 final_tax_payable: row.get(14)?,
                 tax_config_version: row.get(15)?,
+                tax_config_id: row
+                    .get::<_, Option<String>>(16)?
+                    .and_then(|s| Uuid::parse_str(&s).ok()),
                 payment_date: None,
                 payment_reference: None,
                 amount_paid: None,

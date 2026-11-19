@@ -8,8 +8,7 @@ use uuid::Uuid;
 pub struct ConfigService;
 
 impl ConfigService {
-    pub fn get_active(db: &AppDb) -> Result<TaxConfig> {
-        let conn = db.conn.lock().unwrap();
+    pub fn get_active_conn(conn: &rusqlite::Connection) -> Result<TaxConfig> {
         conn.query_row(
             "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
                     cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
@@ -21,10 +20,67 @@ impl ConfigService {
         .map_err(|e| e.into())
     }
 
-    pub fn save(db: &AppDb, config: serde_json::Value) -> Result<TaxConfig> {
+    pub fn get_by_id(conn: &rusqlite::Connection, id: &str) -> Result<TaxConfig> {
+        conn.query_row(
+            "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
+                    cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
+                    is_active,last_modified,modified_by
+             FROM tax_config WHERE id=?1 LIMIT 1",
+            params![id],
+            Self::row_to_config,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// Loads the tax configuration pinned to `filing_id` via `filing.tax_config_id`.
+    /// Falls back to the active configuration only if `tax_config_id` is absent or cannot be found.
+    pub fn get_for_filing(conn: &rusqlite::Connection, filing_id: &str) -> Result<TaxConfig> {
+        let pinned_id: Option<String> = conn
+            .query_row(
+                "SELECT tax_config_id FROM filing WHERE id=?1",
+                params![filing_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        if let Some(cfg_id) = pinned_id {
+            if let Ok(cfg) = Self::get_by_id(conn, &cfg_id) {
+                return Ok(cfg);
+            }
+        }
+        Self::get_active_conn(conn)
+    }
+
+    pub fn get_active(db: &AppDb) -> Result<TaxConfig> {
+        let conn = db.conn.lock().unwrap();
+        Self::get_active_conn(&conn)
+    }
+
+    pub fn save_with_conn(
+        conn: &rusqlite::Connection,
+        config: &serde_json::Value,
+    ) -> Result<TaxConfig> {
+        let label = config["versionLabel"].as_str().unwrap_or("").trim();
+        if label.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Version label is required when saving a tax configuration."
+            ));
+        }
+
+        let exists: i32 = conn.query_row(
+            "SELECT COUNT(1) FROM tax_config WHERE version_label = ?1",
+            params![label],
+            |r| r.get(0),
+        )?;
+        if exists > 0 {
+            return Err(anyhow::anyhow!(
+                "A tax configuration named '{}' already exists. Please choose a unique version label.",
+                label
+            ));
+        }
+
         let id = Uuid::new_v4();
         let now = Utc::now();
-        let conn = db.conn.lock().unwrap();
 
         conn.execute("UPDATE tax_config SET is_active=0", [])?;
         conn.execute(
@@ -35,7 +91,7 @@ impl ConfigService {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,'user')",
             params![
                 id.to_string(),
-                config["versionLabel"].as_str().unwrap_or("Tax Config"),
+                label,
                 config["governedBy"].as_str().unwrap_or("NTA 2025"),
                 config["bands"].to_string(),
                 config["reliefCaps"].to_string(),
@@ -45,8 +101,12 @@ impl ConfigService {
                 now.to_rfc3339(),
             ],
         )?;
-        drop(conn);
-        Self::get_active(db)
+        Self::get_active_conn(conn)
+    }
+
+    pub fn save(db: &AppDb, config: serde_json::Value) -> Result<TaxConfig> {
+        let conn = db.conn.lock().unwrap();
+        Self::save_with_conn(&conn, &config)
     }
 
     fn row_to_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaxConfig> {

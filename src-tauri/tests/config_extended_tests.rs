@@ -300,3 +300,53 @@ fn test_config_custom_minimum_tax_rate() {
 
     assert!((saved.minimum_tax_rate - 0.015).abs() < f64::EPSILON);
 }
+
+#[test]
+fn test_s8_save_config_rejects_empty_and_duplicate_version_label() {
+    let db = AppDb::open_in_memory().unwrap();
+
+    // Empty label rejected
+    let empty_res = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "   ",
+            "governedBy": "NTA 2025",
+            "bands": [],
+            "reliefCaps": {},
+            "cgtThresholds": {},
+            "allowanceRates": {}
+        }),
+    );
+    assert!(empty_res.is_err());
+
+    // First unique label succeeds
+    let first = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "Custom v2.0",
+            "governedBy": "NTA 2025",
+            "bands": [],
+            "reliefCaps": {},
+            "cgtThresholds": {},
+            "allowanceRates": {}
+        }),
+    )
+    .unwrap();
+    assert_eq!(first.version_label, "Custom v2.0");
+
+    // Duplicate label rejected and previous active config remains active
+    let dup = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "Custom v2.0",
+            "governedBy": "NTA 2025",
+            "bands": [],
+            "reliefCaps": {},
+            "cgtThresholds": {},
+            "allowanceRates": {}
+        }),
+    );
+    assert!(dup.is_err());
+    let active = ConfigService::get_active(&db).unwrap();
+    assert_eq!(active.id, first.id);
+}

@@ -1,5 +1,8 @@
 use crate::{
-    commands::auth::persist_db, models::*, services::computation::ComputationEngine, AppState,
+    commands::auth::persist_db,
+    models::*,
+    services::{computation::ComputationEngine, config::ConfigService},
+    AppState,
 };
 use chrono::{Datelike, Utc};
 use rusqlite::params;
@@ -68,6 +71,9 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
         minimum_tax: row.get(13)?,
         final_tax_payable: row.get(14)?,
         tax_config_version: row.get(15)?,
+        tax_config_id: row
+            .get::<_, Option<String>>(19)?
+            .and_then(|s| Uuid::parse_str(&s).ok()),
         payment_date: row
             .get::<_, Option<String>>(16)?
             .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
@@ -77,39 +83,7 @@ fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
 }
 
 fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig> {
-    conn.query_row(
-        "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
-                cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
-                is_active,last_modified,modified_by
-         FROM tax_config WHERE is_active=1 LIMIT 1",
-        [],
-        |row| {
-            let bands_json: String = row.get(3)?;
-            let caps_json: String = row.get(4)?;
-            let cgt_json: String = row.get(5)?;
-            let rates_json: String = row.get(6)?;
-            Ok(TaxConfig {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-                version_label: row.get(1)?,
-                governed_by: row.get(2)?,
-                bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
-                cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
-                    proceeds_threshold: 150_000_000.0,
-                    gain_threshold: 10_000_000.0,
-                }),
-                allowance_rates: serde_json::from_str(&rates_json).unwrap_or_default(),
-                minimum_tax_rate: row.get(7)?,
-                is_active: row.get::<_, i32>(8)? == 1,
-                last_modified: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap_or_else(|_| {
-                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
-                    })
-                    .with_timezone(&Utc),
-                modified_by: row.get(10)?,
-            })
-        },
-    )
+    ConfigService::get_active_conn(conn).map_err(|_| rusqlite::Error::QueryReturnedNoRows)
 }
 
 #[tauri::command]
@@ -123,7 +97,7 @@ pub async fn list_filings(state: State<'_, AppState>) -> Result<Vec<Filing>, Str
                     filing_reference,created_at,confirmed_at,total_income_ngn,
                     chargeable_income,tax_payable,wht_credit,net_tax_payable,
                     minimum_tax,final_tax_payable,tax_config_version,
-                    payment_date,payment_reference,amount_paid
+                    payment_date,payment_reference,amount_paid,tax_config_id
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -145,7 +119,7 @@ pub async fn get_filing(id: String, state: State<'_, AppState>) -> Result<Filing
                 filing_reference,created_at,confirmed_at,total_income_ngn,
                 chargeable_income,tax_payable,wht_credit,net_tax_payable,
                 minimum_tax,final_tax_payable,tax_config_version,
-                    payment_date,payment_reference,amount_paid
+                payment_date,payment_reference,amount_paid,tax_config_id
          FROM filing WHERE id=?1",
         params![id],
         row_to_filing,
@@ -190,9 +164,16 @@ pub async fn create_draft_filing(
 
         let config = load_active_config(&conn).map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,created_at,tax_config_version)
-             VALUES (?1,?2,?3,'Draft',?4,?5)",
-            params![id.to_string(), taxpayer_id, year_of_assessment, now.to_rfc3339(), config.version_label],
+            "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+             VALUES (?1,?2,?3,'Draft',?4,?5,?6)",
+            params![
+                id.to_string(),
+                taxpayer_id,
+                year_of_assessment,
+                now.to_rfc3339(),
+                config.version_label,
+                config.id.to_string(),
+            ],
         )
         .map_err(|e| e.to_string())?;
         config.version_label
@@ -393,17 +374,25 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let (taxpayer_id, yoa, config_ver): (String, i32, String) = conn
+        let (taxpayer_id, yoa): (String, i32) = conn
             .query_row(
-                "SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1",
+                "SELECT taxpayer_id,year_of_assessment FROM filing WHERE id=?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map_err(|e| e.to_string())?;
+        let active_cfg = load_active_config(&conn).map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version)
-             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5)",
-            params![new_id.to_string(), taxpayer_id, id, yoa + 1, config_ver],
+            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5,?6)",
+            params![
+                new_id.to_string(),
+                taxpayer_id,
+                id,
+                yoa + 1,
+                active_cfg.version_label,
+                active_cfg.id.to_string(),
+            ],
         )
         .map_err(|e| e.to_string())?;
         copy_entries_to_next_year(&conn, &id, &new_id.to_string()).map_err(|e| e.to_string())?;
@@ -419,17 +408,17 @@ pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Fili
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let (taxpayer_id, yoa, config_ver): (String, i32, String) = conn
+        let (taxpayer_id, yoa, config_ver, config_id): (String, i32, String, Option<String>) = conn
             .query_row(
-                "SELECT taxpayer_id,year_of_assessment,tax_config_version FROM filing WHERE id=?1",
+                "SELECT taxpayer_id,year_of_assessment,tax_config_version,tax_config_id FROM filing WHERE id=?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map_err(|e| e.to_string())?;
         conn.execute(
-            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version)
-             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5)",
-            params![new_id.to_string(), taxpayer_id, id, yoa, config_ver],
+            "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
+             VALUES (?1,?2,?3,?4,'Draft',datetime('now'),?5,?6)",
+            params![new_id.to_string(), taxpayer_id, id, yoa, config_ver, config_id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -791,16 +780,11 @@ pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Resu
     persist_db(&state).await
 }
 
-#[tauri::command]
-pub async fn compute_filing(
-    filing_id: String,
-    state: State<'_, AppState>,
+pub fn compute_filing_with_conn(
+    conn: &rusqlite::Connection,
+    filing_id: &str,
 ) -> Result<ComputationResult, String> {
-    let guard = state.db.lock().map_err(|e| e.to_string())?;
-    let db = guard.as_ref().ok_or("Database not unlocked")?;
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
-    let config = load_active_config(&conn).map_err(|e| e.to_string())?;
+    let config = ConfigService::get_for_filing(conn, filing_id).map_err(|e| e.to_string())?;
 
     let mut ie_stmt = conn
         .prepare(
@@ -900,6 +884,17 @@ pub async fn compute_filing(
 
     ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn compute_filing(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<ComputationResult, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    compute_filing_with_conn(&conn, &filing_id)
 }
 
 #[derive(serde::Deserialize)]

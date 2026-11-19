@@ -1,4 +1,10 @@
-use crate::{commands::auth::persist_db, models::*, AppState};
+use crate::{
+    commands::auth::persist_db,
+    db,
+    models::*,
+    services::config::ConfigService,
+    AppState,
+};
 use chrono::Utc;
 use rusqlite::params;
 use tauri::State;
@@ -73,37 +79,33 @@ pub async fn save_config(
     config: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<TaxConfig, String> {
-    let id = Uuid::new_v4();
-    let now = Utc::now();
+    let saved = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        ConfigService::save_with_conn(&conn, &config).map_err(|e| e.to_string())?
+    };
+    persist_db(&state).await?;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn get_migration_notices(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    Ok(db::get_migration_notices(&conn))
+}
+
+#[tauri::command]
+pub async fn dismiss_migration_notices(state: State<'_, AppState>) -> Result<(), String> {
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        // Deactivate all existing configs
-        conn.execute("UPDATE tax_config SET is_active=0", [])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO tax_config
-             (id,version_label,governed_by,bands_json,relief_caps_json,
-              cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
-              is_active,last_modified,modified_by)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,'user')",
-            params![
-                id.to_string(),
-                config["versionLabel"].as_str().unwrap_or("Tax Config"),
-                config["governedBy"].as_str().unwrap_or("NTA 2025"),
-                config["bands"].to_string(),
-                config["reliefCaps"].to_string(),
-                config["cgtThresholds"].to_string(),
-                config["allowanceRates"].to_string(),
-                config["minimumTaxRate"].as_f64().unwrap_or(0.01),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+        db::clear_migration_notices(&conn).map_err(|e| e.to_string())?;
     }
-    persist_db(&state).await?;
-    get_active_config(state).await
+    persist_db(&state).await
 }
 
 #[tauri::command]

@@ -64,6 +64,7 @@ pub struct Filing {
     pub minimum_tax: Option<f64>,
     pub final_tax_payable: Option<f64>,
     pub tax_config_version: String,
+    pub tax_config_id: Option<Uuid>,
     pub payment_date: Option<NaiveDate>,
     pub payment_reference: Option<String>,
     pub amount_paid: Option<f64>,

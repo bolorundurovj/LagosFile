@@ -83,6 +83,8 @@ pub fn run() {
             commands::config::save_config,
             commands::config::export_config_json,
             commands::config::import_config_json,
+            commands::config::get_migration_notices,
+            commands::config::dismiss_migration_notices,
             // FX
             commands::fx::resolve_fx_rate,
             commands::fx::list_fx_cache,

@@ -28,6 +28,7 @@ export interface Filing {
   minimumTax?: number;
   finalTaxPayable?: number;
   taxConfigVersion: string;
+  taxConfigId?: string | null;
   paymentDate?: string | null;
   paymentReference?: string | null;
   amountPaid?: number | null;

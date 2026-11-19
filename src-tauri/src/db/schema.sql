@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS filing (
     net_tax_payable     REAL,
     minimum_tax         REAL,
     final_tax_payable   REAL,
-    tax_config_version  TEXT NOT NULL DEFAULT 'default'
+    tax_config_version  TEXT NOT NULL DEFAULT 'default',
+    tax_config_id       TEXT REFERENCES tax_config(id)
 );
 
 CREATE TABLE IF NOT EXISTS income_entry (

@@ -254,6 +254,93 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
         }];
         let res = ComputationEngine::compute(&entries, &[], &[], &active_cfg).unwrap();
         assert_eq!(res.final_tax_payable, 628_000.0);
+
+        // S8: Verify tax_config_id backfill & ambiguous-label migration notice
+        {
+            let conn = db.conn.lock().unwrap();
+            let sub_cfg_id: String = conn
+                .query_row(
+                    "SELECT tax_config_id FROM filing WHERE id='22222222-2222-4222-8222-222222222203'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sub_cfg_id, lagosfile_lib::db::SEED_V1_CONFIG_ID);
+
+            let conf_cfg_id: String = conn
+                .query_row(
+                    "SELECT tax_config_id FROM filing WHERE id='22222222-2222-4222-8222-222222222202'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(conf_cfg_id, "c0000000-0000-4000-8000-000000000002");
+
+            let notices = lagosfile_lib::db::get_migration_notices(&conn);
+            assert!(
+                !notices.is_empty() && notices[0].contains("2024"),
+                "ambiguous same-label filings must produce a one-time notice: {notices:?}"
+            );
+
+            // Recompute all 3 filings with their pinned configs
+            let conf_comp = lagosfile_lib::commands::filing::compute_filing_with_conn(
+                &conn,
+                "22222222-2222-4222-8222-222222222202",
+            )
+            .unwrap();
+            assert_eq!(conf_comp.final_tax_payable, 628_000.0);
+
+            let sub_comp = lagosfile_lib::commands::filing::compute_filing_with_conn(
+                &conn,
+                "22222222-2222-4222-8222-222222222203",
+            )
+            .unwrap();
+            assert_eq!(sub_comp.final_tax_payable, 306_000.0);
+
+            let payload_before = lagosfile_lib::commands::lirs::build_pending_filing(
+                &conn,
+                "22222222-2222-4222-8222-222222222202",
+            )
+            .unwrap();
+            assert_eq!(payload_before.computation.final_tax_payable, 628_000.0);
+
+            // Change the active config to drastically different rates (50% flat)
+            lagosfile_lib::services::config::ConfigService::save_with_conn(
+                &conn,
+                &serde_json::json!({
+                    "versionLabel": "Drastic Test Config 50%",
+                    "governedBy": "Test",
+                    "bands": [{"lower": 0, "upper": null, "rate": 0.50}],
+                    "reliefCaps": {"rentReliefCap": 0, "rentReliefRate": 0.0},
+                    "cgtThresholds": {"proceedsThreshold": 150000000, "gainThreshold": 10000000},
+                    "allowanceRates": {"other": 0.25},
+                    "minimumTaxRate": 0.0
+                }),
+            )
+            .unwrap();
+
+            // Changing the active config MUST NOT affect confirmed/submitted recomputation or LIRS payload
+            let conf_comp_after = lagosfile_lib::commands::filing::compute_filing_with_conn(
+                &conn,
+                "22222222-2222-4222-8222-222222222202",
+            )
+            .unwrap();
+            assert_eq!(conf_comp_after.final_tax_payable, 628_000.0);
+
+            let sub_comp_after = lagosfile_lib::commands::filing::compute_filing_with_conn(
+                &conn,
+                "22222222-2222-4222-8222-222222222203",
+            )
+            .unwrap();
+            assert_eq!(sub_comp_after.final_tax_payable, 306_000.0);
+
+            let payload_after = lagosfile_lib::commands::lirs::build_pending_filing(
+                &conn,
+                "22222222-2222-4222-8222-222222222202",
+            )
+            .unwrap();
+            assert_eq!(payload_after.computation.final_tax_payable, 628_000.0);
+        }
     }
 
     // Verify S6 one-time migration encrypted all 3 legacy plaintext attachments and they still decrypt
