@@ -195,72 +195,83 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
     let tmp = std::env::temp_dir().join(format!("lagosfile-upgrade-{}", uuid::Uuid::new_v4()));
     copy_dir_recursive(&src, &tmp);
 
-    let salt = std::fs::read(tmp.join(".salt")).unwrap();
-    let key = security::derive_key("1234", &salt);
-    let enc = std::fs::read(tmp.join("lagosfile.db.enc")).unwrap();
-    let bytes = security::decrypt(&enc, &key).expect("legacy vault must decrypt with PIN 1234");
-
-    let db = AppDb::open_in_memory().unwrap();
-    db.load_from_bytes(&bytes).expect("legacy DB must load and migrate");
-
-    let conn = db.conn.lock().unwrap();
+    // Unlock via the vault-backed unlock_db_in_dir path
+    let state = lagosfile_lib::AppState::default();
+    let taxpayer = lagosfile_lib::commands::auth::unlock_db_in_dir(&tmp, "1234", &state)
+        .expect("legacy vault must unlock with PIN 1234")
+        .expect("taxpayer must exist");
+    assert_eq!(taxpayer.full_name, "Ada Lovelace");
 
     // Verify all 3 filings exist with their stored figures intact
-    let count: i32 = conn
-        .query_row("SELECT COUNT(*) FROM filing", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(count, 3);
+    {
+        let db_guard = state.db.lock().unwrap();
+        let db = db_guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
 
-    let (conf_income, conf_final): (f64, f64) = conn
-        .query_row(
-            "SELECT total_income_ngn, final_tax_payable FROM filing WHERE id='22222222-2222-4222-8222-222222222202'",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(conf_income, 5_000_000.0);
-    assert_eq!(conf_final, 628_000.0);
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM filing", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 3);
 
-    let (sub_income, sub_final): (f64, f64) = conn
-        .query_row(
-            "SELECT total_income_ngn, final_tax_payable FROM filing WHERE id='22222222-2222-4222-8222-222222222203'",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(sub_income, 3_000_000.0);
-    assert_eq!(sub_final, 306_000.0);
+        let (conf_income, conf_final): (f64, f64) = conn
+            .query_row(
+                "SELECT total_income_ngn, final_tax_payable FROM filing WHERE id='22222222-2222-4222-8222-222222222202'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(conf_income, 5_000_000.0);
+        assert_eq!(conf_final, 628_000.0);
 
-    // Verify same-label configs both exist
-    let same_label_count: i32 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tax_config WHERE version_label='Tax Config — NTA 2025, effective 1 Jan 2026'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(same_label_count, 2);
-    drop(conn);
+        let (sub_income, sub_final): (f64, f64) = conn
+            .query_row(
+                "SELECT total_income_ngn, final_tax_payable FROM filing WHERE id='22222222-2222-4222-8222-222222222203'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(sub_income, 3_000_000.0);
+        assert_eq!(sub_final, 306_000.0);
 
-    // Verify recovery blob decrypts back to `key`
-    let rec_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(tmp.join(".recovery")).unwrap()).unwrap();
-    let ans_salt = hex::decode(rec_json["answer_salt"].as_str().unwrap()).unwrap();
-    let blob = hex::decode(rec_json["recovery_blob"].as_str().unwrap()).unwrap();
-    let ak = security::derive_key("alpha|beta|gamma", &ans_salt);
-    let recovered = security::decrypt(&blob, &ak).unwrap();
-    assert_eq!(recovered.as_slice(), &key);
+        // Verify same-label configs both exist
+        let same_label_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tax_config WHERE version_label='Tax Config — NTA 2025, effective 1 Jan 2026'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(same_label_count, 2);
+        drop(conn);
 
-    // Verify active config computes the Confirmed filing's stored 628,000 figure
-    let active_cfg: TaxConfig = lagosfile_lib::services::config::ConfigService::get_active(&db)
-        .unwrap();
-    let entries = vec![IncomeEntry {
-        income_type: "employment".to_string(),
-        gross_amount_ngn: 5_000_000.0,
-        ..Default::default()
-    }];
-    let res = ComputationEngine::compute(&entries, &[], &[], &active_cfg).unwrap();
-    assert_eq!(res.final_tax_payable, 628_000.0);
+        // Verify active config computes the Confirmed filing's stored 628,000 figure
+        let active_cfg: TaxConfig =
+            lagosfile_lib::services::config::ConfigService::get_active(db).unwrap();
+        let entries = vec![IncomeEntry {
+            income_type: "employment".to_string(),
+            gross_amount_ngn: 5_000_000.0,
+            ..Default::default()
+        }];
+        let res = ComputationEngine::compute(&entries, &[], &[], &active_cfg).unwrap();
+        assert_eq!(res.final_tax_payable, 628_000.0);
+    }
+
+    // First save upgrades the legacy fixture vault to v1 self-describing format and removes .salt
+    lagosfile_lib::commands::auth::persist_db_in_dir(&tmp, &state).unwrap();
+    let raw = std::fs::read(tmp.join("lagosfile.db.enc")).unwrap();
+    assert!(lagosfile_lib::db::vault::has_vault_header(&raw));
+    assert!(!tmp.join(".salt").exists());
+
+    // Reopen via recovery questions still works after upgrade
+    let rec_state = lagosfile_lib::AppState::default();
+    let rec_tp = lagosfile_lib::commands::auth::recover_with_answers_in_dir(
+        &tmp,
+        &["alpha".into(), "beta".into(), "gamma".into()],
+        &rec_state,
+    )
+    .expect("recovery must still work after upgrade")
+    .unwrap();
+    assert_eq!(rec_tp.full_name, "Ada Lovelace");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

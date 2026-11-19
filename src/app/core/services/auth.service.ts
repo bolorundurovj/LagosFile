@@ -124,8 +124,16 @@ export class AuthService {
     await this.tauri.invoke('backup_db', { destPath });
   }
 
-  async restoreDb(srcPath: string): Promise<void> {
-    await this.tauri.invoke('restore_db', { srcPath });
+  async restoreDb(srcPath: string, pin: string): Promise<Taxpayer | null> {
+    const taxpayer = await this.tauri.invoke<Taxpayer | null>('restore_db', { srcPath, pin });
+    this._taxpayer.set(taxpayer);
+    return taxpayer;
+  }
+
+  async restoreBackupFresh(srcPath: string, pin: string): Promise<Taxpayer | null> {
+    const taxpayer = await this.tauri.invoke<Taxpayer | null>('restore_backup_fresh', { srcPath, pin });
+    this._setUnlocked(taxpayer);
+    return taxpayer;
   }
 
   // Helpers

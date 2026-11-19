@@ -1,11 +1,12 @@
 use crate::{
-    db::{self, AppDb},
+    db::{self, vault, AppDb},
     models::{AppStatus, Taxpayer},
     services::security,
     AppState,
 };
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::State;
 
 #[cfg(windows)]
@@ -87,9 +88,12 @@ struct RecoveryData {
     recovery_blob: String,
 }
 
+fn recovery_path_in_dir(dir: &Path) -> std::path::PathBuf {
+    dir.join(".recovery")
+}
+
 fn recovery_path() -> std::path::PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    home.join("LagosFile").join(".recovery")
+    recovery_path_in_dir(&db::app_dir())
 }
 
 fn normalize_answer(s: &str) -> String {
@@ -112,6 +116,10 @@ fn load_taxpayer(db: &AppDb) -> Option<Taxpayer> {
          FROM taxpayer LIMIT 1",
         [],
         |row| {
+            let created_str: String = row.get(7)?;
+            let created_at = chrono::DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
             Ok(Taxpayer {
                 id: uuid::Uuid::parse_str(&row.get::<_, String>(0)?)
                     .unwrap_or_else(|_| uuid::Uuid::new_v4()),
@@ -121,9 +129,7 @@ fn load_taxpayer(db: &AppDb) -> Option<Taxpayer> {
                 phone: row.get(4)?,
                 email: row.get(5)?,
                 filing_agent: row.get(6)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at,
             })
         },
     )
@@ -181,6 +187,27 @@ pub async fn disable_biometric() -> Result<(), String> {
     Ok(())
 }
 
+pub fn unlock_with_biometric_key_in_dir(
+    dir: &Path,
+    db_key: [u8; 32],
+    state: &AppState,
+) -> Result<Option<Taxpayer>, String> {
+    let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
+    let legacy_salt_file = vault::legacy_salt_path(dir);
+    let decoded = vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file))
+        .map_err(|_| "Biometric unlock failed: could not decrypt database.".to_string())?;
+
+    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    db.load_from_bytes(&decoded.plaintext)
+        .map_err(|e| e.to_string())?;
+
+    let taxpayer = load_taxpayer(&db);
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(db_key);
+    *state.salt.lock().unwrap() = Some(decoded.salt);
+    Ok(taxpayer)
+}
+
 #[tauri::command]
 pub async fn unlock_with_biometric(
     window: tauri::Window,
@@ -199,34 +226,14 @@ pub async fn unlock_with_biometric(
     db_key.copy_from_slice(&key_bytes);
 
     verify_biometric_internal(window).await?;
-
-    let encrypted = std::fs::read(db::db_path()).map_err(|e| e.to_string())?;
-    let plaintext = security::decrypt(&encrypted, &db_key)
-        .map_err(|_| "Biometric unlock failed: could not decrypt database.".to_string())?;
-
-    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
-    db.load_from_bytes(&plaintext).map_err(|e| e.to_string())?;
-
-    let taxpayer = load_taxpayer(&db);
-    *state.db.lock().unwrap() = Some(db);
-    *state.key.lock().unwrap() = Some(db_key);
-    Ok(taxpayer)
+    unlock_with_biometric_key_in_dir(&db::app_dir(), db_key, &state)
 }
 
-pub fn setup_pin_in_dir(
-    dir: &std::path::Path,
-    pin: &str,
-    state: &AppState,
-) -> Result<(), String> {
-    use std::io::Write;
-
+pub fn setup_pin_in_dir(dir: &Path, pin: &str, state: &AppState) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(dir.join("documents")).map_err(|e| e.to_string())?;
 
-    let db_path = dir.join("lagosfile.db.enc");
-    let salt_path = dir.join(".salt");
-
-    if db_path.exists() {
+    if vault::vault_path(dir).exists() {
         return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
     }
 
@@ -234,49 +241,39 @@ pub fn setup_pin_in_dir(
     let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     let bytes = new_db.serialize().map_err(|e| e.to_string())?;
     let key = security::derive_key(pin, &salt);
-    let encrypted = security::encrypt(&bytes, &key).map_err(|e| e.to_string())?;
 
-    // Claim the live vault path exclusively so two concurrent setups cannot both succeed
-    // and an existing vault can never be overwritten.
-    let mut db_file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&db_path)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "A vault already exists. Please unlock with your PIN instead.".to_string()
-            } else {
-                e.to_string()
-            }
-        })?;
-
-    // Write salt via unique temp file and rename into place (replaces any leftover .salt).
-    let salt_tmp = dir.join(format!(".salt.{}.tmp", uuid::Uuid::new_v4()));
-    let write_res = (|| -> std::io::Result<()> {
-        std::fs::write(&salt_tmp, salt)?;
-        std::fs::rename(&salt_tmp, &salt_path)?;
-        db_file.write_all(&encrypted)?;
-        db_file.sync_all()?;
-        Ok(())
-    })();
-
-    if let Err(e) = write_res {
-        drop(db_file);
-        let _ = std::fs::remove_file(&salt_tmp);
-        let _ = std::fs::remove_file(&db_path);
-        return Err(e.to_string());
-    }
+    vault::write_new_exclusive(dir, &bytes, &key, &salt)?;
 
     *state.db.lock().unwrap() = Some(new_db);
     *state.key.lock().unwrap() = Some(key);
+    *state.salt.lock().unwrap() = Some(salt);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    setup_pin_in_dir(&home.join("LagosFile"), &pin, &state)
+    setup_pin_in_dir(&db::app_dir(), &pin, &state)
+}
+
+pub fn unlock_db_in_dir(
+    dir: &Path,
+    pin: &str,
+    state: &AppState,
+) -> Result<Option<Taxpayer>, String> {
+    let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
+    let legacy_salt_file = vault::legacy_salt_path(dir);
+    let decoded = vault::decode_with_pin(&raw, pin, None, Some(&legacy_salt_file))?;
+
+    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    db.load_from_bytes(&decoded.plaintext)
+        .map_err(|e| e.to_string())?;
+
+    let taxpayer = load_taxpayer(&db);
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(decoded.key);
+    *state.salt.lock().unwrap() = Some(decoded.salt);
+    Ok(taxpayer)
 }
 
 #[tauri::command]
@@ -285,35 +282,39 @@ pub async fn unlock_db(
     state: State<'_, AppState>,
 ) -> Result<Option<Taxpayer>, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    let salt = std::fs::read(db::salt_path()).map_err(|_| "Salt file not found".to_string())?;
-    let key = security::derive_key(&pin, &salt);
-
-    let encrypted = std::fs::read(db::db_path()).map_err(|e| e.to_string())?;
-    let plaintext = security::decrypt(&encrypted, &key)
-        .map_err(|_| "Incorrect PIN. Please try again.".to_string())?;
-
-    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
-    db.load_from_bytes(&plaintext).map_err(|e| e.to_string())?;
-
-    let taxpayer = load_taxpayer(&db);
-    *state.db.lock().unwrap() = Some(db);
-    *state.key.lock().unwrap() = Some(key);
-    Ok(taxpayer)
+    unlock_db_in_dir(&db::app_dir(), &pin, &state)
 }
 
-pub async fn lock_db_in_dir(dir: &std::path::Path, state: &AppState) -> Result<(), String> {
-    persist_db(state).await?;
+pub fn persist_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let key_guard = state.key.lock().unwrap();
+    let salt_guard = state.salt.lock().unwrap();
+    if let (Some(db), Some(key), Some(salt)) =
+        (guard.as_ref(), key_guard.as_ref(), salt_guard.as_ref())
+    {
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        vault::write_atomic(dir, &bytes, key, salt)?;
+    }
+    Ok(())
+}
+
+pub async fn persist_db(state: &AppState) -> Result<(), String> {
+    persist_db_in_dir(&db::app_dir(), state)
+}
+
+pub async fn lock_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+    persist_db_in_dir(dir, state)?;
     crate::commands::lirs::stop_bridge(state);
     let _ = std::fs::remove_file(dir.join("pending_filing.json"));
     *state.db.lock().unwrap() = None;
     *state.key.lock().unwrap() = None;
+    *state.salt.lock().unwrap() = None;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn lock_db(state: State<'_, AppState>) -> Result<(), String> {
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    lock_db_in_dir(&home.join("LagosFile"), &state).await
+    lock_db_in_dir(&db::app_dir(), &state).await
 }
 
 #[tauri::command]
@@ -360,22 +361,19 @@ pub async fn get_recovery_questions() -> Result<Vec<String>, String> {
     Ok(vec![data.question_1, data.question_2, data.question_3])
 }
 
-#[tauri::command]
-pub async fn recover_with_answers(
-    answer_1: String,
-    answer_2: String,
-    answer_3: String,
-    state: State<'_, AppState>,
+pub fn recover_with_answers_in_dir(
+    dir: &Path,
+    answers: &[String],
+    state: &AppState,
 ) -> Result<Option<Taxpayer>, String> {
-    let json = std::fs::read_to_string(recovery_path())
+    let json = std::fs::read_to_string(recovery_path_in_dir(dir))
         .map_err(|_| "No recovery data found.".to_string())?;
     let data: RecoveryData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
 
-    let salt = hex::decode(&data.answer_salt).map_err(|e| e.to_string())?;
+    let ans_salt = hex::decode(&data.answer_salt).map_err(|e| e.to_string())?;
     let blob = hex::decode(&data.recovery_blob).map_err(|e| e.to_string())?;
 
-    let answers = vec![answer_1, answer_2, answer_3];
-    let ak = answer_key(&answers, &salt);
+    let ak = answer_key(answers, &ans_salt);
 
     let key_bytes = security::decrypt(&blob, &ak)
         .map_err(|_| "Incorrect answers. Please try again.".to_string())?;
@@ -386,51 +384,66 @@ pub async fn recover_with_answers(
     let mut db_key = [0u8; 32];
     db_key.copy_from_slice(&key_bytes);
 
-    let encrypted = std::fs::read(db::db_path()).map_err(|e| e.to_string())?;
-    let plaintext = security::decrypt(&encrypted, &db_key)
+    let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
+    let legacy_salt_file = vault::legacy_salt_path(dir);
+    let decoded = vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file))
         .map_err(|_| "Recovery failed: could not decrypt database.".to_string())?;
 
     let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
-    db.load_from_bytes(&plaintext).map_err(|e| e.to_string())?;
+    db.load_from_bytes(&decoded.plaintext)
+        .map_err(|e| e.to_string())?;
 
     let taxpayer = load_taxpayer(&db);
     *state.db.lock().unwrap() = Some(db);
     *state.key.lock().unwrap() = Some(db_key);
+    *state.salt.lock().unwrap() = Some(decoded.salt);
     Ok(taxpayer)
 }
 
 #[tauri::command]
-pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<(), String> {
-    let new_salt = security::generate_salt();
-    std::fs::write(db::salt_path(), new_salt).map_err(|e| e.to_string())?;
+pub async fn recover_with_answers(
+    answer_1: String,
+    answer_2: String,
+    answer_3: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Taxpayer>, String> {
+    recover_with_answers_in_dir(&db::app_dir(), &[answer_1, answer_2, answer_3], &state)
+}
 
-    let new_key = security::derive_key(&new_pin, &new_salt);
+pub fn reset_pin_in_dir(dir: &Path, new_pin: &str, state: &AppState) -> Result<(), String> {
+    let new_salt = security::generate_salt();
+    let new_key = security::derive_key(new_pin, &new_salt);
 
     {
         let guard = state.db.lock().unwrap();
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let bytes = db.serialize().map_err(|e| e.to_string())?;
-        let encrypted = security::encrypt(&bytes, &new_key).map_err(|e| e.to_string())?;
-        let tmp = db::db_path().with_extension("enc.tmp");
-        std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
+        vault::write_atomic(dir, &bytes, &new_key, &new_salt)?;
     }
 
     *state.key.lock().unwrap() = Some(new_key);
+    *state.salt.lock().unwrap() = Some(new_salt);
 
-    let _ = std::fs::remove_file(recovery_path());
-
+    let _ = std::fs::remove_file(recovery_path_in_dir(dir));
     Ok(())
 }
 
 #[tauri::command]
-pub async fn change_pin(
-    current_pin: String,
-    new_pin: String,
-    state: State<'_, AppState>,
+pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<(), String> {
+    reset_pin_in_dir(&db::app_dir(), &new_pin, &state)
+}
+
+pub fn change_pin_in_dir(
+    dir: &Path,
+    current_pin: &str,
+    new_pin: &str,
+    state: &AppState,
 ) -> Result<(), String> {
-    let salt = std::fs::read(db::salt_path()).map_err(|e| e.to_string())?;
-    let derived = security::derive_key(&current_pin, &salt);
+    let current_salt = {
+        let salt_guard = state.salt.lock().unwrap();
+        *salt_guard.as_ref().ok_or("Database not unlocked")?
+    };
+    let derived = security::derive_key(current_pin, &current_salt);
     {
         let key_guard = state.key.lock().unwrap();
         let active = key_guard.as_ref().ok_or("Database not unlocked")?;
@@ -440,72 +453,140 @@ pub async fn change_pin(
     }
 
     let new_salt = security::generate_salt();
-    let new_key = security::derive_key(&new_pin, &new_salt);
+    let new_key = security::derive_key(new_pin, &new_salt);
 
     {
         let guard = state.db.lock().unwrap();
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let bytes = db.serialize().map_err(|e| e.to_string())?;
-        let encrypted = security::encrypt(&bytes, &new_key).map_err(|e| e.to_string())?;
-        let tmp = db::db_path().with_extension("enc.tmp");
-        std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
+        vault::write_atomic(dir, &bytes, &new_key, &new_salt)?;
     }
 
-    std::fs::write(db::salt_path(), new_salt).map_err(|e| e.to_string())?;
-
     *state.key.lock().unwrap() = Some(new_key);
+    *state.salt.lock().unwrap() = Some(new_salt);
 
-    let _ = std::fs::remove_file(recovery_path());
-
+    let _ = std::fs::remove_file(recovery_path_in_dir(dir));
     Ok(())
+}
+
+#[tauri::command]
+pub async fn change_pin(
+    current_pin: String,
+    new_pin: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    change_pin_in_dir(&db::app_dir(), &current_pin, &new_pin, &state)
+}
+
+pub fn backup_db_to_path(dest_path: &Path, state: &AppState) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let key_guard = state.key.lock().unwrap();
+    let salt_guard = state.salt.lock().unwrap();
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let key = key_guard.as_ref().ok_or("Database not unlocked")?;
+    let salt = salt_guard.as_ref().ok_or("Database not unlocked")?;
+
+    let bytes = db.serialize().map_err(|e| e.to_string())?;
+    vault::write_to_path(dest_path, &bytes, key, salt)
 }
 
 #[tauri::command]
 pub async fn backup_db(dest_path: String, state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let guard = state.db.lock().unwrap();
-        guard.as_ref().ok_or("Database not unlocked")?;
-    }
     db::ensure_dirs().map_err(|e| e.to_string())?;
-    std::fs::copy(db::db_path(), &dest_path).map_err(|e| e.to_string())?;
-    Ok(())
+    backup_db_to_path(Path::new(&dest_path), &state)
+}
+
+/// Restores a backup into an already-unlocked vault (Settings flow).
+/// Decrypts the backup using its own embedded salt (or the current vault's salt for legacy backups)
+/// and `backup_pin`, then re-encrypts the restored database with the current vault's active key & salt.
+pub fn restore_db_in_dir(
+    dir: &Path,
+    src_path: &Path,
+    backup_pin: &str,
+    state: &AppState,
+) -> Result<Option<Taxpayer>, String> {
+    let current_key = {
+        let key_guard = state.key.lock().unwrap();
+        *key_guard.as_ref().ok_or("Database not unlocked")?
+    };
+    let current_salt = {
+        let salt_guard = state.salt.lock().unwrap();
+        *salt_guard.as_ref().ok_or("Database not unlocked")?
+    };
+
+    let raw = std::fs::read(src_path).map_err(|e| e.to_string())?;
+    let decoded =
+        vault::decode_with_pin(&raw, backup_pin, Some(&current_salt), None).map_err(|_| {
+            "Invalid backup — the PIN may be incorrect or the file is corrupt.".to_string()
+        })?;
+
+    let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    new_db
+        .load_from_bytes(&decoded.plaintext)
+        .map_err(|e| format!("Backup database is corrupt: {}", e))?;
+
+    let reserialized = new_db.serialize().map_err(|e| e.to_string())?;
+    vault::write_atomic(dir, &reserialized, &current_key, &current_salt)?;
+
+    let taxpayer = load_taxpayer(&new_db);
+    *state.db.lock().unwrap() = Some(new_db);
+    Ok(taxpayer)
 }
 
 #[tauri::command]
-pub async fn restore_db(src_path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let encrypted = std::fs::read(&src_path).map_err(|e| e.to_string())?;
-
-    let bytes = {
-        let key_guard = state.key.lock().unwrap();
-        let key = key_guard.as_ref().ok_or("Database not unlocked")?;
-        security::decrypt(&encrypted, key).map_err(|_| {
-            "Invalid backup — it may have been created with a different PIN or is corrupt."
-                .to_string()
-        })?
-    };
-
-    let new_db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
-    new_db.load_from_bytes(&bytes).map_err(|e| e.to_string())?;
-
-    let tmp = db::db_path().with_extension("enc.tmp");
-    std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
-
-    *state.db.lock().unwrap() = Some(new_db);
-
-    Ok(())
+pub async fn restore_db(
+    src_path: String,
+    pin: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Taxpayer>, String> {
+    restore_db_in_dir(&db::app_dir(), Path::new(&src_path), &pin, &state)
 }
 
-pub async fn persist_db(state: &AppState) -> Result<(), String> {
-    let guard = state.db.lock().unwrap();
-    let key_guard = state.key.lock().unwrap();
-    if let (Some(db), Some(key)) = (guard.as_ref(), key_guard.as_ref()) {
-        let bytes = db.serialize().map_err(|e| e.to_string())?;
-        let encrypted = security::encrypt(&bytes, key).map_err(|e| e.to_string())?;
-        let tmp = db::db_path().with_extension("enc.tmp");
-        std::fs::write(&tmp, &encrypted).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, db::db_path()).map_err(|e| e.to_string())?;
+/// Restores a self-describing backup on a fresh installation (`/setup-pin` flow).
+/// Derives the key from the backup's own salt + `backup_pin`, installs it as the live vault
+/// (refusing to overwrite an existing vault), and unlocks the session.
+pub fn restore_backup_fresh_in_dir(
+    dir: &Path,
+    src_path: &Path,
+    backup_pin: &str,
+    state: &AppState,
+) -> Result<Option<Taxpayer>, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir.join("documents")).map_err(|e| e.to_string())?;
+
+    if vault::vault_path(dir).exists() {
+        return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
     }
-    Ok(())
+
+    let raw = std::fs::read(src_path).map_err(|e| e.to_string())?;
+    let decoded = vault::decode_with_pin(&raw, backup_pin, None, None).map_err(|e| {
+        if e.contains("older format") {
+            e
+        } else {
+            "Invalid backup — the PIN may be incorrect or the file is corrupt.".to_string()
+        }
+    })?;
+
+    let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
+    db.load_from_bytes(&decoded.plaintext)
+        .map_err(|e| format!("Backup database is corrupt: {}", e))?;
+
+    let reserialized = db.serialize().map_err(|e| e.to_string())?;
+    vault::write_new_exclusive(dir, &reserialized, &decoded.key, &decoded.salt)?;
+
+    let taxpayer = load_taxpayer(&db);
+    *state.db.lock().unwrap() = Some(db);
+    *state.key.lock().unwrap() = Some(decoded.key);
+    *state.salt.lock().unwrap() = Some(decoded.salt);
+    Ok(taxpayer)
+}
+
+#[tauri::command]
+pub async fn restore_backup_fresh(
+    src_path: String,
+    pin: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Taxpayer>, String> {
+    db::ensure_dirs().map_err(|e| e.to_string())?;
+    restore_backup_fresh_in_dir(&db::app_dir(), Path::new(&src_path), &pin, &state)
 }

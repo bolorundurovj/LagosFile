@@ -10,6 +10,7 @@ use std::sync::Mutex;
 pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
+    pub salt: Mutex<Option<[u8; 16]>>,
     pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
 }
 
@@ -43,6 +44,7 @@ pub fn run() {
             // Backup / Restore
             commands::auth::backup_db,
             commands::auth::restore_db,
+            commands::auth::restore_backup_fresh,
             // Profile
             commands::profile::create_profile,
             commands::profile::get_profile,

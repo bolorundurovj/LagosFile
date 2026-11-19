@@ -1,3 +1,5 @@
+pub mod vault;
+
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -107,19 +109,22 @@ fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn db_path() -> PathBuf {
+pub fn app_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join("LagosFile").join("lagosfile.db.enc")
+    home.join("LagosFile")
+}
+
+pub fn db_path() -> PathBuf {
+    app_dir().join("lagosfile.db.enc")
 }
 
 pub fn salt_path() -> PathBuf {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    home.join("LagosFile").join(".salt")
+    app_dir().join(".salt")
 }
 
 pub fn ensure_dirs() -> Result<()> {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(home.join("LagosFile"))?;
-    std::fs::create_dir_all(home.join("LagosFile").join("documents"))?;
+    let dir = app_dir();
+    std::fs::create_dir_all(&dir)?;
+    std::fs::create_dir_all(dir.join("documents"))?;
     Ok(())
 }

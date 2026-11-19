@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { ConfigService } from '../../core/services/config.service';
 import { ProfileService } from '../../core/services/profile.service';
 import { ThemeService } from '../../core/services/theme.service';
 import { IdleLockService } from '../../core/services/idle-lock.service';
@@ -153,7 +154,7 @@ interface ChangelogEntry {
         <div class="backup-row" style="margin-top:var(--space-3)">
           <div class="backup-item">
             <div class="backup-item__title">Restore from backup</div>
-            <div class="backup-item__sub">Replace current data with a previous backup (requires same PIN)</div>
+            <div class="backup-item__sub">Replace current data with a previous backup (enter the backup's PIN)</div>
           </div>
           <button class="btn btn--danger-outline" (click)="restoreDb()" [disabled]="restoring()">
             @if (restoring()) { Restoring… } @else {
@@ -274,6 +275,47 @@ interface ChangelogEntry {
         </div>
       </div>
     </div>
+
+    <!-- Restore backup PIN modal -->
+    @if (showRestoreModal()) {
+      <div class="modal-overlay" (click)="cancelRestore()">
+        <div class="modal" style="max-width:440px" (click)="$event.stopPropagation()">
+          <div class="changelog-header">
+            <h3 class="title-md">Enter Backup PIN</h3>
+            <button class="btn btn--ghost btn--sm" (click)="cancelRestore()" [disabled]="restoring()">✕</button>
+          </div>
+          <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
+            Enter the PIN that was used when this backup was created. Your current vault data will be replaced
+            and re-encrypted with your active vault PIN.
+          </p>
+          <div class="form-group">
+            <label class="form-label" for="restoreBackupPin">Backup PIN</label>
+            <input
+              id="restoreBackupPin"
+              type="password"
+              class="form-input"
+              [(ngModel)]="restorePin"
+              name="restoreBackupPin"
+              placeholder="Enter backup PIN"
+              autocomplete="current-password"
+              (keydown.enter)="confirmRestore()"
+            />
+          </div>
+          @if (restoreError()) {
+            <div class="alert alert--error" style="margin-top:var(--space-3)">
+              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
+              <div class="alert__content">{{ restoreError() }}</div>
+            </div>
+          }
+          <div style="display:flex;justify-content:flex-end;gap:var(--space-3);margin-top:var(--space-5)">
+            <button class="btn btn--secondary" type="button" (click)="cancelRestore()" [disabled]="restoring()">Cancel</button>
+            <button class="btn btn--danger" type="button" (click)="confirmRestore()" [disabled]="!restorePin || restoring()">
+              @if (restoring()) { Restoring… } @else { Restore Backup }
+            </button>
+          </div>
+        </div>
+      </div>
+    }
 
     <!-- Changelog modal -->
     @if (showChangelog) {
@@ -397,12 +439,17 @@ export class SettingsComponent {
     { value: 0, label: 'Never' },
   ];
   private profileService = inject(ProfileService);
+  private configService = inject(ConfigService);
   private toast = inject(ToastService);
   private router = inject(Router);
 
   savingProfile = signal(false);
   backingUp = signal(false);
   restoring = signal(false);
+  showRestoreModal = signal(false);
+  restoreError = signal('');
+  pendingRestorePath = '';
+  restorePin = '';
   changingPin = signal(false);
   togglingBiometric = signal(false);
   pinError = signal('');
@@ -568,12 +615,40 @@ export class SettingsComponent {
     if (!chosen) return;
     const src = typeof chosen === 'string' ? chosen : chosen[0];
     if (!src) return;
+    this.pendingRestorePath = src;
+    this.restorePin = '';
+    this.restoreError.set('');
+    this.showRestoreModal.set(true);
+  }
+
+  cancelRestore(): void {
+    if (this.restoring()) return;
+    this.showRestoreModal.set(false);
+    this.pendingRestorePath = '';
+    this.restorePin = '';
+    this.restoreError.set('');
+  }
+
+  async confirmRestore(): Promise<void> {
+    if (!this.pendingRestorePath || !this.restorePin || this.restoring()) return;
     this.restoring.set(true);
+    this.restoreError.set('');
     try {
-      await this.auth.restoreDb(src);
+      const taxpayer = await this.auth.restoreDb(this.pendingRestorePath, this.restorePin);
+      if (taxpayer) {
+        this.editForm.fullName    = taxpayer.fullName;
+        this.editForm.address     = taxpayer.address     ?? '';
+        this.editForm.phone       = taxpayer.phone       ?? '';
+        this.editForm.email       = taxpayer.email       ?? '';
+        this.editForm.filingAgent = taxpayer.filingAgent ?? '';
+      }
+      await this.configService.loadActive();
+      this.showRestoreModal.set(false);
+      this.pendingRestorePath = '';
+      this.restorePin = '';
       this.toast.success('Backup restored. Your data has been replaced.');
     } catch (err: unknown) {
-      this.toast.error('Restore failed: ' + (err instanceof Error ? err.message : String(err)));
+      this.restoreError.set(err instanceof Error ? err.message : String(err));
     } finally {
       this.restoring.set(false);
     }
