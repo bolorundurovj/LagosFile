@@ -1,68 +1,57 @@
-use crate::{commands::auth::persist_db, AppState};
+use crate::{
+    commands::auth::persist_db_in_dir,
+    db::{self, doc_store},
+    AppState,
+};
 use chrono::Utc;
 use rusqlite::params;
+use std::path::Path;
 use tauri::State;
 use uuid::Uuid;
 
 const MAX_FILE_BYTES: i64 = 100 * 1024 * 1024; // 100 MB
 
-/// Copy the source file into ~/LagosFile/documents/<parent_entry_id>/
-/// and return the destination path.
-fn copy_to_store(
-    source_path: &str,
+#[allow(clippy::too_many_arguments)]
+pub fn attach_document_in_dir(
+    dir: &Path,
     parent_entry_id: &str,
+    parent_entry_type: &str,
+    source_path: &str,
     file_name: &str,
-) -> Result<std::path::PathBuf, String> {
-    if source_path.is_empty() {
-        return Err("No file path provided. Please use the file picker.".to_string());
-    }
-    let src = std::path::Path::new(source_path);
-    if !src.exists() {
-        return Err(format!("Source file not found: {}", source_path));
-    }
-    let size = std::fs::metadata(src).map_err(|e| e.to_string())?.len();
-    if size > MAX_FILE_BYTES as u64 {
-        return Err("File exceeds the 100MB limit. Please attach a smaller file.".to_string());
-    }
-
-    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let dest_dir = home
-        .join("LagosFile")
-        .join("documents")
-        .join(parent_entry_id);
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-
-    // Prefix with UUID so duplicate filenames never collide
-    let safe_name = format!("{}_{}", Uuid::new_v4(), file_name);
-    let dest = dest_dir.join(&safe_name);
-    std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
-    Ok(dest)
-}
-
-#[tauri::command]
-pub async fn attach_document(
-    parent_entry_id: String,
-    parent_entry_type: String,
-    file_path: String, // original path selected by the user
-    file_name: String,
-    file_type: String,
+    file_type: &str,
     file_size_bytes: i64,
-    state: State<'_, AppState>,
+    state: &AppState,
 ) -> Result<serde_json::Value, String> {
     if file_size_bytes > MAX_FILE_BYTES {
         return Err("File exceeds the 100MB limit. Please attach a smaller file.".to_string());
     }
+    if source_path.is_empty() {
+        return Err("No file path provided. Please use the file picker.".to_string());
+    }
+    let src = Path::new(source_path);
+    if !src.exists() {
+        return Err(format!("Source file not found: {}", source_path));
+    }
+    let meta_size = std::fs::metadata(src).map_err(|e| e.to_string())?.len();
+    if meta_size > MAX_FILE_BYTES as u64 {
+        return Err("File exceeds the 100MB limit. Please attach a smaller file.".to_string());
+    }
 
-    // Copy the file into the LagosFile document store so it is safe even if the
-    // original is moved or deleted.
-    let stored_path = copy_to_store(&file_path, &parent_entry_id, &file_name)?;
-    let stored_path_str = stored_path.to_string_lossy().to_string();
+    let plaintext = std::fs::read(src).map_err(|e| e.to_string())?;
+    let actual_size = plaintext.len() as i64;
 
-    // Get the actual size from the copied file (the Angular side may have sent 0
-    // for files opened via the native dialog, which doesn't provide size).
-    let actual_size = std::fs::metadata(&stored_path)
-        .map(|m| m.len() as i64)
-        .unwrap_or(file_size_bytes);
+    let doc_key = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let (key, _created) = doc_store::get_or_create_doc_key(db)?;
+        key
+    };
+
+    // Store encrypted file under <dir>/documents/<parent_entry_id>/<uuid>_<file_name>.enc
+    let safe_name = format!("{}_{}.enc", Uuid::new_v4(), file_name);
+    let rel_path = format!("documents/{}/{}", parent_entry_id, safe_name);
+    let dest = dir.join(&rel_path);
+    doc_store::write_encrypted_doc_atomic(&dest, &plaintext, &doc_key)?;
 
     let id = Uuid::new_v4();
     let now = Utc::now();
@@ -75,18 +64,49 @@ pub async fn attach_document(
              (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
-                id.to_string(), parent_entry_id, parent_entry_type,
-                stored_path_str, file_name, file_type, actual_size, now.to_rfc3339(),
+                id.to_string(),
+                parent_entry_id,
+                parent_entry_type,
+                rel_path,
+                file_name,
+                file_type,
+                actual_size,
+                now.to_rfc3339(),
             ],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
-    persist_db(&state).await?;
+    persist_db_in_dir(dir, state)?;
+
     Ok(serde_json::json!({
         "id": id.to_string(),
         "fileName": file_name,
-        "filePath": stored_path_str,
+        "filePath": rel_path,
         "fileSizeBytes": actual_size,
     }))
+}
+
+#[tauri::command]
+pub async fn attach_document(
+    parent_entry_id: String,
+    parent_entry_type: String,
+    file_path: String, // original path selected by the user
+    file_name: String,
+    file_type: String,
+    file_size_bytes: i64,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    db::ensure_dirs().map_err(|e| e.to_string())?;
+    attach_document_in_dir(
+        &db::app_dir(),
+        &parent_entry_id,
+        &parent_entry_type,
+        &file_path,
+        &file_name,
+        &file_type,
+        file_size_bytes,
+        &state,
+    )
 }
 
 #[tauri::command]
@@ -97,10 +117,12 @@ pub async fn list_documents(
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
-         FROM document WHERE parent_entry_id=?1"
-    ).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at
+             FROM document WHERE parent_entry_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
     let docs = stmt
         .query_map(params![parent_entry_id], |row| {
             Ok(serde_json::json!({
@@ -120,9 +142,7 @@ pub async fn list_documents(
     Ok(docs)
 }
 
-#[tauri::command]
-pub async fn delete_document(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    // Fetch the stored path before deleting the record so we can remove the file too.
+pub fn delete_document_in_dir(dir: &Path, id: &str, state: &AppState) -> Result<(), String> {
     let stored_path: Option<String> = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -142,11 +162,16 @@ pub async fn delete_document(id: String, state: State<'_, AppState>) -> Result<(
         conn.execute("DELETE FROM document WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
     }
-    persist_db(&state).await?;
+    persist_db_in_dir(dir, state)?;
 
-    // Best-effort: remove the stored file from disk.
     if let Some(path) = stored_path {
-        let _ = std::fs::remove_file(path);
+        let full = doc_store::resolve_doc_path(dir, &path);
+        let _ = std::fs::remove_file(full);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_document(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    delete_document_in_dir(&db::app_dir(), &id, &state)
 }

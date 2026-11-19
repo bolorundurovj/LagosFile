@@ -1,6 +1,11 @@
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS app_meta (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS taxpayer (
     id              TEXT PRIMARY KEY,
     full_name       TEXT NOT NULL,

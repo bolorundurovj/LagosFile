@@ -1,3 +1,4 @@
+pub mod doc_store;
 pub mod vault;
 
 use anyhow::Result;

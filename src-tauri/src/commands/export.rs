@@ -1,8 +1,12 @@
-use crate::AppState;
+use crate::{
+    db::{self, doc_store},
+    AppState,
+};
 use ::lopdf;
 use printpdf::*;
 use rusqlite::params;
 use std::io::BufWriter;
+use std::path::Path;
 use tauri::State;
 
 struct FilingSummary {
@@ -318,13 +322,13 @@ fn add_attachments_appendix(
 
 fn embed_image_page(
     doc: &PdfDocumentReference,
-    file_path: &str,
+    image_bytes: &[u8],
     file_name: &str,
 ) -> Result<(), String> {
     use ::image::GenericImageView;
 
-    let img =
-        ::image::open(file_path).map_err(|e| format!("Cannot open '{}': {}", file_name, e))?;
+    let img = ::image::load_from_memory(image_bytes)
+        .map_err(|e| format!("Cannot decode '{}': {}", file_name, e))?;
     let (w_px, h_px) = img.dimensions();
     let rgb = img.to_rgb8();
 
@@ -369,30 +373,31 @@ fn embed_image_page(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn export_filing_pdf(
-    filing_id: String,
-    save_path: String,
+pub fn export_filing_pdf_in_dir(
+    app_dir: &Path,
+    filing_id: &str,
+    save_path: &str,
     include_attachments: bool,
-    letterhead_style: Option<String>,
-    state: State<'_, AppState>,
+    letterhead_style: Option<&str>,
+    state: &AppState,
 ) -> Result<String, String> {
-    let (summary, documents) = {
+    let (summary, documents, doc_key) = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let doc_key = doc_store::get_doc_key(db)?.unwrap_or([0u8; 32]);
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let summary = load_summary(&conn, &filing_id)?;
+        let summary = load_summary(&conn, filing_id)?;
         let docs = if include_attachments {
-            load_filing_documents(&conn, &filing_id).unwrap_or_default()
+            load_filing_documents(&conn, filing_id).unwrap_or_default()
         } else {
             vec![]
         };
-        (summary, docs)
+        (summary, docs, doc_key)
     };
 
-    ensure_parent(&save_path)?;
+    ensure_parent(save_path)?;
 
-    let is_alt_fills = letterhead_style.as_deref() == Some("alt-fills");
+    let is_alt_fills = letterhead_style == Some("alt-fills");
 
     let (doc, page1, layer1) = PdfDocument::new(
         "LagosFile Tax Computation Statement",
@@ -776,6 +781,7 @@ pub async fn export_filing_pdf(
     draw_footer(&layer, &font, "Page 1  \u{00B7}  Tax Computation Statement");
 
     let mut pdf_att_paths: Vec<String> = Vec::new();
+    let _temp_pdf_dir: Option<doc_store::TempDirGuard>;
 
     if include_attachments && !documents.is_empty() {
         let mut images: Vec<&DocRecord> = Vec::new();
@@ -787,24 +793,41 @@ pub async fn export_filing_pdf(
                 images.push(rec);
             } else if is_pdf_attachment(&rec.file_type, &rec.file_name) {
                 pdfs.push(rec);
-                pdf_att_paths.push(rec.file_path.clone());
             } else {
                 others.push(rec);
             }
         }
 
+        // Decrypt PDF attachments into a scoped temp dir deleted when export returns.
+        _temp_pdf_dir = if !pdfs.is_empty() {
+            let guard = doc_store::TempDirGuard::new("lagosfile-pdf-merge")?;
+            for (idx, rec) in pdfs.iter().enumerate() {
+                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key) {
+                    let tmp_file = guard.path().join(format!("{}_{}", idx, rec.file_name));
+                    if std::fs::write(&tmp_file, plain).is_ok() {
+                        pdf_att_paths.push(tmp_file.to_string_lossy().to_string());
+                    }
+                }
+            }
+            Some(guard)
+        } else {
+            None
+        };
+
         let needs_folder = !pdfs.is_empty() || !others.is_empty();
         let attach_folder: Option<std::path::PathBuf> = if needs_folder {
-            let base = std::path::Path::new(&save_path);
+            let base = Path::new(save_path);
             let stem = base
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("export");
-            let parent = base.parent().unwrap_or(std::path::Path::new("."));
+            let parent = base.parent().unwrap_or(Path::new("."));
             let dir = parent.join(format!("{}_attachments", stem));
             let _ = std::fs::create_dir_all(&dir);
             for rec in pdfs.iter().chain(others.iter()) {
-                let _ = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
+                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key) {
+                    let _ = std::fs::write(dir.join(&rec.file_name), plain);
+                }
             }
             Some(dir)
         } else {
@@ -818,32 +841,59 @@ pub async fn export_filing_pdf(
         );
 
         for rec in &images {
-            if embed_image_page(&doc, &rec.file_path, &rec.file_name).is_err() {
-                let base = std::path::Path::new(&save_path);
-                let stem = base
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("export");
-                let parent = base.parent().unwrap_or(std::path::Path::new("."));
-                let dir = parent.join(format!("{}_attachments", stem));
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::copy(&rec.file_path, dir.join(&rec.file_name));
+            let decrypted = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key);
+            let embedded = match &decrypted {
+                Ok(plain) => embed_image_page(&doc, plain, &rec.file_name).is_ok(),
+                Err(_) => false,
+            };
+            if !embedded {
+                if let Ok(plain) = decrypted {
+                    let base = Path::new(save_path);
+                    let stem = base
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("export");
+                    let parent = base.parent().unwrap_or(Path::new("."));
+                    let dir = parent.join(format!("{}_attachments", stem));
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(dir.join(&rec.file_name), plain);
+                }
             }
         }
+    } else {
+        _temp_pdf_dir = None;
     }
 
     doc.save(&mut BufWriter::new(
-        std::fs::File::create(&save_path).map_err(|e| e.to_string())?,
+        std::fs::File::create(save_path).map_err(|e| e.to_string())?,
     ))
     .map_err(|e| e.to_string())?;
 
     if !pdf_att_paths.is_empty() {
-        if let Err(e) = append_pdf_attachments(&save_path, &pdf_att_paths) {
+        if let Err(e) = append_pdf_attachments(save_path, &pdf_att_paths) {
             eprintln!("Warning: could not merge PDF attachments: {}", e);
         }
     }
 
-    Ok(save_path)
+    Ok(save_path.to_string())
+}
+
+#[tauri::command]
+pub async fn export_filing_pdf(
+    filing_id: String,
+    save_path: String,
+    include_attachments: bool,
+    letterhead_style: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    export_filing_pdf_in_dir(
+        &db::app_dir(),
+        &filing_id,
+        &save_path,
+        include_attachments,
+        letterhead_style.as_deref(),
+        &state,
+    )
 }
 
 #[tauri::command]
@@ -983,25 +1033,27 @@ pub async fn export_filing_json(
 }
 
 #[tauri::command]
-pub async fn open_file(path: String) -> Result<(), String> {
+pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let target = doc_store::prepare_file_for_external_app(&db::app_dir(), &path, &state)?;
+    let target_str = target.to_string_lossy().to_string();
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(["/c", "start", "", &path])
+            .args(["/c", "start", "", &target_str])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&path)
+            .arg(&target_str)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg(&path)
+            .arg(&target_str)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -1010,15 +1062,17 @@ pub async fn open_file(path: String) -> Result<(), String> {
 
 /// Sends a file to the system's default printer handler.
 #[tauri::command]
-pub async fn print_file(path: String) -> Result<(), String> {
-    if !std::path::Path::new(&path).is_file() {
+pub async fn print_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let target = doc_store::prepare_file_for_external_app(&db::app_dir(), &path, &state)?;
+    if !target.is_file() {
         return Err(format!("File not found: {path}"));
     }
+    let target_str = target.to_string_lossy().to_string();
     #[cfg(target_os = "windows")]
     {
         let script = format!(
             "Start-Process -FilePath '{}' -Verb Print",
-            path.replace('\'', "''")
+            target_str.replace('\'', "''")
         );
         std::process::Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -1028,7 +1082,7 @@ pub async fn print_file(path: String) -> Result<(), String> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         std::process::Command::new("lpr")
-            .arg(&path)
+            .arg(&target_str)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

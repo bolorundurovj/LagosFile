@@ -256,6 +256,38 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
         assert_eq!(res.final_tax_payable, 628_000.0);
     }
 
+    // Verify S6 one-time migration encrypted all 3 legacy plaintext attachments and they still decrypt
+    {
+        let db_guard = state.db.lock().unwrap();
+        let db = db_guard.as_ref().unwrap();
+        let doc_key = lagosfile_lib::db::doc_store::get_doc_key(db)
+            .unwrap()
+            .expect("document_key must be generated during unlock migration");
+        for (parent_id, fname, expected) in [
+            (
+                "33333333-3333-4333-8333-333333333301",
+                "draft_payslip.txt",
+                b"draft payslip plaintext".as_slice(),
+            ),
+            (
+                "33333333-3333-4333-8333-333333333302",
+                "conf_payslip.txt",
+                b"confirmed payslip plaintext".as_slice(),
+            ),
+            (
+                "33333333-3333-4333-8333-333333333303",
+                "sub_invoice.txt",
+                b"submitted invoice plaintext".as_slice(),
+            ),
+        ] {
+            let rel = format!("documents/{}/{}", parent_id, fname);
+            let raw = std::fs::read(tmp.join(&rel)).unwrap();
+            assert!(lagosfile_lib::db::doc_store::is_encrypted_doc(&raw));
+            let dec = lagosfile_lib::db::doc_store::read_decrypted_doc(&tmp, &rel, &doc_key).unwrap();
+            assert_eq!(dec.as_slice(), expected);
+        }
+    }
+
     // First save upgrades the legacy fixture vault to v1 self-describing format and removes .salt
     lagosfile_lib::commands::auth::persist_db_in_dir(&tmp, &state).unwrap();
     let raw = std::fs::read(tmp.join("lagosfile.db.enc")).unwrap();

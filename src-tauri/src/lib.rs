@@ -13,6 +13,7 @@ pub struct AppState {
     pub salt: Mutex<Option<[u8; 16]>>,
     pub recovery_verified: Mutex<bool>,
     pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
+    pub temp_preview_files: Mutex<Vec<std::path::PathBuf>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

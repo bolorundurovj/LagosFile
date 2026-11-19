@@ -143,7 +143,7 @@ interface ChangelogEntry {
         <div class="backup-row">
           <div class="backup-item">
             <div class="backup-item__title">Backup vault</div>
-            <div class="backup-item__sub">Save an encrypted copy of all your filing data</div>
+            <div class="backup-item__sub">Save an encrypted archive of your filings and attached documents</div>
           </div>
           <button class="btn btn--secondary" (click)="backupDb()" [disabled]="backingUp()">
             @if (backingUp()) { Saving… } @else {
