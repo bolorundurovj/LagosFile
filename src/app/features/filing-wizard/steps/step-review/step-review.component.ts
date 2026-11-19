@@ -343,6 +343,7 @@ export class StepReviewComponent implements OnInit {
   result = signal<ComputationResult | null>(null);
   loading = signal(true);
   confirming = signal(false);
+  hasExemptOrDigitalIncome = signal(false);
 
   isDirty(): boolean {
     return false;
@@ -357,7 +358,12 @@ export class StepReviewComponent implements OnInit {
     const r = this.result();
     if (!r) return ['Tax computation has not been loaded yet.'];
     const issues: string[] = [];
-    if (r.totalGrossIncome <= 0) {
+    const hasAnyIncome =
+      r.totalGrossIncome > 0 ||
+      r.cgtExemptAmount > 0 ||
+      r.digitalAssetLossRingfenced > 0 ||
+      this.hasExemptOrDigitalIncome();
+    if (!hasAnyIncome) {
       issues.push('No income entries found. Add at least one income source in Step 1.');
     }
     if (r.chargeableIncome < 0) {
@@ -389,8 +395,14 @@ export class StepReviewComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     try {
-      const r = await this.filingService.compute(this.filingId());
+      const [r, entries] = await Promise.all([
+        this.filingService.compute(this.filingId()),
+        this.filingService.listIncomeEntries(this.filingId()).catch(() => []),
+      ]);
       this.result.set(r);
+      this.hasExemptOrDigitalIncome.set(
+        entries.some(e => e.incomeType === 'capital_gain_shares' || e.incomeType === 'digital_asset'),
+      );
       void this.loadPrior();
     } catch (err: unknown) {
       this.toast.error('Failed to compute tax: ' + (err instanceof Error ? err.message : String(err)));

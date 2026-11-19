@@ -175,7 +175,9 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
               <div class="form-group flex-1">
                 <label class="form-label">Amount (₦)</label>
                 <input type="number" class="form-input" [(ngModel)]="w.claimedAmount"
-                  [name]="'wamt_' + i" min="0" (change)="w.approvedAmount = w.claimedAmount" />
+                  [name]="'wamt_' + i" min="0"
+                  (ngModelChange)="w.approvedAmount = w.claimedAmount"
+                  (change)="w.approvedAmount = w.claimedAmount" />
               </div>
               <button class="btn btn--danger btn--sm" style="margin-top:22px" (click)="removeWht(w.id)">Remove</button>
             </div>
@@ -317,6 +319,7 @@ export class StepDeductionsComponent implements OnInit {
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   saving = signal(false);
   private removedIds: string[] = [];
+  private persistedStandardIds = new Set<string>();
   private initialSnapshot = '';
   private loaded = false;
 
@@ -349,6 +352,7 @@ export class StepDeductionsComponent implements OnInit {
           // earlier versions saved a new row on every pass; keep the latest, drop the rest
           if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
           this.standard[type] = r;
+          this.persistedStandardIds.add(r.id);
           this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
         } else if (r.reliefType === 'wht') {
           this.whtEntries.update(e => [...e, r]);
@@ -384,7 +388,9 @@ export class StepDeductionsComponent implements OnInit {
     return cap != null && cap >= 0 ? Math.min(amount, cap) : amount;
   }
 
-  totalWht = computed(() => this.whtEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0));
+  totalWht(): number {
+    return this.whtEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0);
+  }
 
   /** Mirrors the engine; WHT is a credit against tax, not a deduction from income. */
   totalDeductions(): number {
@@ -423,7 +429,16 @@ export class StepDeductionsComponent implements OnInit {
       const entries: ReliefEntry[] = [...this.whtEntries(), ...this.otherEntries()];
       for (const [type, key] of Object.entries(STANDARD_FIELDS) as [StandardRelief, FieldKey][]) {
         const entry = this.standard[type];
-        entry.claimedAmount = entry.approvedAmount = this.fields[key] || 0;
+        const amount = this.fields[key] || 0;
+        entry.claimedAmount = entry.approvedAmount = amount;
+        const hasDocs = (entry.documents?.length ?? 0) > 0;
+        if (amount <= 0 && !hasDocs) {
+          if (this.persistedStandardIds.has(entry.id)) {
+            await this.filingService.deleteReliefEntry(entry.id);
+            this.persistedStandardIds.delete(entry.id);
+          }
+          continue;
+        }
         entries.push(entry);
       }
 
@@ -433,6 +448,9 @@ export class StepDeductionsComponent implements OnInit {
           entry.approvedAmount = entry.claimedAmount;
         }
         await this.filingService.upsertReliefEntry({ ...entry, filingId: fid });
+        if (entry.reliefType in STANDARD_FIELDS) {
+          this.persistedStandardIds.add(entry.id);
+        }
         failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
       }
       if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));

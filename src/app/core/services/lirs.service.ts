@@ -82,14 +82,28 @@ export class LIRSService {
       groups.push({ section: 'Capital Allowances', fields: caFields });
     }
 
-    const reliefFields: LIRSFieldItem[] = reliefs.map(r => ({
-      label: this.reliefLabel(r.reliefType),
-      value: this.fmt(r.claimedAmount, true),
-      copyText: String(r.claimedAmount),
-    }));
+    const reliefFields: LIRSFieldItem[] = reliefs
+      .filter(r => r.claimedAmount > 0 || r.approvedAmount > 0)
+      .map(r => ({
+        label: this.reliefLabel(r.reliefType),
+        value: this.fmt(r.claimedAmount, true),
+        copyText: String(r.claimedAmount),
+      }));
     if (computation) {
-      reliefFields.push({ label: 'Rent Relief Applied', value: this.fmt(computation.rentReliefApplied, true), copyText: String(computation.rentReliefApplied) });
-      reliefFields.push({ label: 'WHT Credits', value: this.fmt(computation.whtCredits, true), copyText: String(computation.whtCredits) });
+      if (computation.rentReliefApplied > 0) {
+        reliefFields.push({ label: 'Rent Relief Applied', value: this.fmt(computation.rentReliefApplied, true), copyText: String(computation.rentReliefApplied) });
+      }
+      if (computation.whtCredits > 0) {
+        reliefFields.push({ label: 'WHT Credits', value: this.fmt(computation.whtCredits, true), copyText: String(computation.whtCredits) });
+      }
+      const paye = computation.payeCredits ?? 0;
+      if (paye > 0) {
+        reliefFields.push({ label: 'PAYE Credits', value: this.fmt(paye, true), copyText: String(paye) });
+      }
+      const ftc = computation.foreignTaxCredits ?? 0;
+      if (ftc > 0) {
+        reliefFields.push({ label: 'Foreign Tax Credits', value: this.fmt(ftc, true), copyText: String(ftc) });
+      }
     }
     groups.push({ section: 'Deductions & Reliefs', fields: reliefFields });
 
@@ -154,8 +168,9 @@ export class LIRSService {
       pension: 'Pension Contribution',
       nhis: 'NHIS (Health Insurance)',
       nhf: 'NHF (National Housing Fund)',
-      rent: 'Rent Relief',
+      rent: 'Rent paid',
       wht: 'Withholding Tax Credit',
+      paye: 'PAYE Already Deducted',
       life_assurance: 'Life Assurance',
       foreign_tax: 'Foreign Tax Credit',
       other_approved: 'Other Approved Deduction',

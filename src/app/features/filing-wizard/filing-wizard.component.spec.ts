@@ -337,4 +337,64 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
     expect(toastSpy.error).toHaveBeenCalledWith(jasmine.stringContaining('Filing is already confirmed'));
     expect(fixture.componentInstance.confirming()).toBeFalse();
   });
+
+  it('StepReviewComponent allows confirming returns with only CGT-exempt gains or digital-asset losses', async () => {
+    filingServiceSpy.compute.and.resolveTo({
+      totalGrossIncome: 0,
+      totalCapitalAllowances: 0,
+      proratedCapitalAllowances: 0,
+      totalDeductions: 0,
+      chargeableIncome: 0,
+      bandBreakdown: [],
+      graduatedTax: 0,
+      whtCredits: 0,
+      payeCredits: 0,
+      foreignTaxCredits: 0,
+      netTaxPayable: 0,
+      minimumTax: 0,
+      finalTaxPayable: 0,
+      cgtExemptAmount: 5_000_000,
+      digitalAssetLossRingfenced: 0,
+      configVersion: 'NTA 2025',
+      rentReliefApplied: 0,
+    });
+    filingServiceSpy.listIncomeEntries.and.resolveTo([
+      {
+        id: 'cgt-1',
+        filingId: 'filing-draft-1',
+        incomeType: 'capital_gain_shares',
+        grossAmountNgn: 5_000_000,
+        cgtProceeds: 20_000_000,
+        cgtGain: 5_000_000,
+        isForeign: false,
+        isCgtExempt: true,
+        documents: [],
+      },
+    ]);
+
+    const fixture = TestBed.createComponent(StepReviewComponent);
+    fixture.componentRef.setInput('filingId', 'filing-draft-1');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.validationIssues().length).toBe(0);
+
+    // Digital-asset loss only should also be confirmable
+    fixture.componentInstance.result.set({
+      ...fixture.componentInstance.result()!,
+      cgtExemptAmount: 0,
+      digitalAssetLossRingfenced: 1_200_000,
+    });
+    expect(fixture.componentInstance.validationIssues().length).toBe(0);
+
+    // Truly empty return (no income entries, zero gross/exempt/loss) is still blocked
+    fixture.componentInstance.hasExemptOrDigitalIncome.set(false);
+    fixture.componentInstance.result.set({
+      ...fixture.componentInstance.result()!,
+      cgtExemptAmount: 0,
+      digitalAssetLossRingfenced: 0,
+    });
+    expect(fixture.componentInstance.validationIssues().length).toBe(1);
+  });
 });

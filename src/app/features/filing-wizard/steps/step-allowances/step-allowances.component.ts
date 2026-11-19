@@ -90,7 +90,9 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
               <div class="form-group">
                 <label class="form-label">Cost (₦)</label>
                 <input type="number" class="form-input" [(ngModel)]="entry.assetCost"
-                  [name]="'acost_' + i" min="0" (change)="onCostChange(entry)" />
+                  [name]="'acost_' + i" min="0"
+                  (ngModelChange)="onCostChange(entry)"
+                  (change)="onCostChange(entry)" />
               </div>
               <div class="form-group">
                 <label class="form-label">Date of Acquisition</label>
@@ -218,6 +220,7 @@ export class StepAllowancesComponent implements OnInit {
   loadingPrior = signal(false);
   priorYearLoaded = signal(false);
   private removedIds: string[] = [];
+  private priorYearIds = new Set<string>();
   private initialSnapshot = '';
   private loaded = false;
 
@@ -235,6 +238,15 @@ export class StepAllowancesComponent implements OnInit {
     try {
       const existing = await this.filingService.listAllowances(this.filingId());
       this.entries.set(existing);
+      for (const e of existing) {
+        const acqYear = e.acquisitionDate ? Number(e.acquisitionDate.slice(0, 4)) : NaN;
+        if (
+          (e.taxWrittenDownValue > 0 && e.taxWrittenDownValue < e.assetCost) ||
+          (Number.isFinite(acqYear) && acqYear < this.yearOfAssessment())
+        ) {
+          this.priorYearIds.add(e.id);
+        }
+      }
     } catch (err) {
       this.toast.error('Could not load capital allowances: ' + String(err));
     } finally {
@@ -282,22 +294,32 @@ export class StepAllowancesComponent implements OnInit {
   }
 
   onCostChange(entry: CapitalAllowance): void {
-    if (!this.isFromPriorYear(entry) && (!entry.taxWrittenDownValue || entry.taxWrittenDownValue > entry.assetCost)) {
+    if (!this.isFromPriorYear(entry)) {
       entry.taxWrittenDownValue = entry.assetCost;
     }
     this.recalculate(entry);
   }
 
   isFromPriorYear(entry: CapitalAllowance): boolean {
-    return !!(entry as any)._fromPriorYear;
+    return this.priorYearIds.has(entry.id);
   }
 
-  /** Fetch closing WDV entries from the prior confirmed filing. */
+  private assetKey(a: {
+    assetDescription?: string;
+    assetType?: string;
+    assetCost?: number;
+    acquisitionDate?: string;
+  }): string {
+    return [
+      (a.assetDescription ?? '').trim().toLowerCase(),
+      (a.assetType ?? '').trim().toLowerCase(),
+      String(Number(a.assetCost ?? 0)),
+      (a.acquisitionDate ?? '').trim(),
+    ].join('|');
+  }
+
+  /** Fetch closing WDV entries from the prior confirmed filing, skipping assets already present. */
   async loadFromPriorYear(): Promise<void> {
-    if (this.priorYearLoaded()) {
-      this.toast.info(`Prior-year allowances for YOA ${this.yearOfAssessment() - 1} were already loaded.`);
-      return;
-    }
     this.loadingPrior.set(true);
     try {
       const prior = await this.filingService.getPriorYearAllowances(this.yearOfAssessment());
@@ -305,21 +327,33 @@ export class StepAllowancesComponent implements OnInit {
         this.toast.info(`No confirmed capital allowances found for YOA ${this.yearOfAssessment() - 1}.`);
         return;
       }
-      const newEntries: CapitalAllowance[] = prior.map(p => ({
-        id: crypto.randomUUID(),
-        filingId: this.filingId(),
-        assetType: (p.assetType ?? 'other') as AssetType,
-        assetDescription: p.assetDescription ?? '',
-        assetCost: p.assetCost ?? 0,
-        acquisitionDate: p.acquisitionDate ?? '',
-        taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
-        annualAllowanceRate: p.annualAllowanceRate ?? 0,
-        annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
-        documents: [],
-        _fromPriorYear: true,
-      } as CapitalAllowance & { _fromPriorYear: boolean }));
-      this.entries.update(e => [...e, ...newEntries]);
+      const existingKeys = new Set(this.entries().map(e => this.assetKey(e)));
+      const newEntries: CapitalAllowance[] = [];
+      for (const p of prior) {
+        const key = this.assetKey(p);
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        const id = crypto.randomUUID();
+        this.priorYearIds.add(id);
+        newEntries.push({
+          id,
+          filingId: this.filingId(),
+          assetType: (p.assetType ?? 'other') as AssetType,
+          assetDescription: p.assetDescription ?? '',
+          assetCost: p.assetCost ?? 0,
+          acquisitionDate: p.acquisitionDate ?? '',
+          taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
+          annualAllowanceRate: p.annualAllowanceRate ?? 0,
+          annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
+          documents: [],
+        });
+      }
       this.priorYearLoaded.set(true);
+      if (newEntries.length === 0) {
+        this.toast.info(`All prior-year assets for YOA ${this.yearOfAssessment() - 1} are already on this filing.`);
+        return;
+      }
+      this.entries.update(e => [...e, ...newEntries]);
       this.toast.success(`Loaded ${newEntries.length} asset(s) from YOA ${this.yearOfAssessment() - 1} with updated WDVs.`);
     } catch (err) {
       this.toast.error('Could not load prior year allowances: ' + String(err));

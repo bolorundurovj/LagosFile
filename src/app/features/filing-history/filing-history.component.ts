@@ -878,7 +878,10 @@ export class FilingHistoryComponent implements OnInit {
         ...allowances.flatMap(e => e.documents),
         ...reliefs.flatMap(e => e.documents),
       ].length;
-      this.previewCounts.set({ income: income.length, allowances: allowances.length, reliefs: reliefs.length, documents });
+      const realReliefs = reliefs.filter(
+        r => r.claimedAmount > 0 || r.approvedAmount > 0 || (r.documents?.length ?? 0) > 0,
+      );
+      this.previewCounts.set({ income: income.length, allowances: allowances.length, reliefs: realReliefs.length, documents });
     } catch { /* counts stay at 0 */ }
   }
   closePreview(): void { this.previewFiling.set(null); }
