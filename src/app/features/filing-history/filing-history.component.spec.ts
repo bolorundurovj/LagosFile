@@ -112,4 +112,33 @@ describe('FilingHistoryComponent', () => {
     expect(comp.currentPage).toBe(1);
     expect(comp.displayedFilings().length).toBe(1);
   });
+
+  it('filters by search query, status, and year and exposes appropriate actions per status', async () => {
+    const draft: Filing = { ...sampleFiling, id: 'f-draft', yearOfAssessment: 2024, status: 'Draft', filingReference: undefined };
+    const submitted: Filing = { ...sampleFiling, id: 'f-sub', yearOfAssessment: 2023, status: 'Submitted', filingReference: 'LIRS/REF/2023/00009' };
+    filingServiceSpy.listFilings.and.resolveTo([sampleFiling, draft, submitted]);
+
+    const fixture = TestBed.createComponent(FilingHistoryComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    expect(comp.displayedFilings().length).toBe(3);
+
+    comp.onSearchChange('00009');
+    expect(comp.displayedFilings().map(f => f.id)).toEqual(['f-sub']);
+
+    comp.onSearchChange('');
+    comp.onStatusChange('Draft');
+    expect(comp.displayedFilings().map(f => f.id)).toEqual(['f-draft']);
+
+    comp.onStatusChange('');
+    comp.onYearChange('2025');
+    expect(comp.displayedFilings().map(f => f.id)).toEqual(['f-1']);
+
+    expect(comp.getPrimaryActions(draft).map(a => a.id)).toContain('delete');
+    expect(comp.getPrimaryActions(sampleFiling).map(a => a.id)).toContain('fileWithLirs');
+    expect(comp.getMenuActions(sampleFiling).map(a => a.id)).toContain('amend');
+  });
 });
