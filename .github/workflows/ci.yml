@@ -223,6 +223,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Node dependencies for PAYE cross-check
+        run: npm ci
+
+      - name: Cross-check Rust engine against nigeria-paye
+        run: npm run test:paye
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
