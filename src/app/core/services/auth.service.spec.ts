@@ -213,12 +213,24 @@ describe('AuthService', () => {
 
   describe('changePin', () => {
     it('should invoke change_pin and set hasRecovery to false', async () => {
-      tauriSpy.invoke.and.resolveTo(undefined);
+      tauriSpy.invoke.and.resolveTo(true);
 
       await service.changePin('1234', '5678');
 
       expect(tauriSpy.invoke).toHaveBeenCalledWith('change_pin', { currentPin: '1234', newPin: '5678' });
       expect(service.hasRecovery()).toBeFalse();
+      expect(service.biometricEnabled()).toBeTrue();
+    });
+
+    it('should turn off biometricEnabled when change_pin reports keyring disabled', async () => {
+      tauriSpy.invoke.and.resolveTo(undefined);
+      await service.enableBiometric();
+      expect(service.biometricEnabled()).toBeTrue();
+
+      tauriSpy.invoke.and.resolveTo(false);
+      await service.changePin('1234', '5678');
+
+      expect(service.biometricEnabled()).toBeFalse();
     });
   });
 

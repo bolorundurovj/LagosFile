@@ -11,6 +11,7 @@ pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
     pub salt: Mutex<Option<[u8; 16]>>,
+    pub recovery_verified: Mutex<bool>,
     pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
 }
 

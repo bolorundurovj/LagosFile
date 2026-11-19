@@ -107,15 +107,21 @@ export class AuthService {
   }
 
   async resetPin(newPin: string): Promise<void> {
-    await this.tauri.invoke('reset_pin', { newPin });
+    const biometricEnabled = await this.tauri.invoke<boolean | undefined>('reset_pin', { newPin });
     this._hasRecovery.set(false);
+    if (typeof biometricEnabled === 'boolean') {
+      this._biometricEnabled.set(biometricEnabled);
+    }
   }
 
   // Change PIN
 
   async changePin(currentPin: string, newPin: string): Promise<void> {
-    await this.tauri.invoke('change_pin', { currentPin, newPin });
+    const biometricEnabled = await this.tauri.invoke<boolean | undefined>('change_pin', { currentPin, newPin });
     this._hasRecovery.set(false);
+    if (typeof biometricEnabled === 'boolean') {
+      this._biometricEnabled.set(biometricEnabled);
+    }
   }
 
   // Backup / Restore

@@ -23,6 +23,48 @@ use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
 const KEYRING_SERVICE: &str = "LagosFile";
 const KEYRING_USER: &str = "db_key";
 
+pub trait BiometricKeyStore {
+    fn get_key_hex(&self) -> Option<String>;
+    fn set_key_hex(&self, hex_key: &str) -> Result<(), String>;
+    fn delete_key(&self);
+}
+
+pub struct OsKeyringStore;
+
+impl BiometricKeyStore for OsKeyringStore {
+    fn get_key_hex(&self) -> Option<String> {
+        Entry::new(KEYRING_SERVICE, KEYRING_USER)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+    }
+
+    fn set_key_hex(&self, hex_key: &str) -> Result<(), String> {
+        let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
+        entry.set_password(hex_key).map_err(|e| e.to_string())
+    }
+
+    fn delete_key(&self) {
+        if let Ok(entry) = Entry::new(KEYRING_SERVICE, KEYRING_USER) {
+            let _ = entry.delete_password();
+        }
+    }
+}
+
+/// If biometric unlock is currently enabled in `store`, updates the stored key to `new_key`.
+/// If updating fails, deletes the stale keyring entry so biometric unlock is cleanly disabled.
+/// Returns whether biometric unlock remains enabled.
+fn sync_biometric_keyring(store: &dyn BiometricKeyStore, new_key: &[u8; 32]) -> bool {
+    if store.get_key_hex().is_none() {
+        return false;
+    }
+    if store.set_key_hex(&hex::encode(new_key)).is_ok() {
+        true
+    } else {
+        store.delete_key();
+        false
+    }
+}
+
 async fn check_biometric_available_internal() -> bool {
     #[cfg(windows)]
     {
@@ -205,6 +247,7 @@ pub fn unlock_with_biometric_key_in_dir(
     *state.db.lock().unwrap() = Some(db);
     *state.key.lock().unwrap() = Some(db_key);
     *state.salt.lock().unwrap() = Some(decoded.salt);
+    *state.recovery_verified.lock().unwrap() = false;
     Ok(taxpayer)
 }
 
@@ -247,6 +290,7 @@ pub fn setup_pin_in_dir(dir: &Path, pin: &str, state: &AppState) -> Result<(), S
     *state.db.lock().unwrap() = Some(new_db);
     *state.key.lock().unwrap() = Some(key);
     *state.salt.lock().unwrap() = Some(salt);
+    *state.recovery_verified.lock().unwrap() = false;
     Ok(())
 }
 
@@ -273,6 +317,7 @@ pub fn unlock_db_in_dir(
     *state.db.lock().unwrap() = Some(db);
     *state.key.lock().unwrap() = Some(decoded.key);
     *state.salt.lock().unwrap() = Some(decoded.salt);
+    *state.recovery_verified.lock().unwrap() = false;
     Ok(taxpayer)
 }
 
@@ -309,6 +354,7 @@ pub async fn lock_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> 
     *state.db.lock().unwrap() = None;
     *state.key.lock().unwrap() = None;
     *state.salt.lock().unwrap() = None;
+    *state.recovery_verified.lock().unwrap() = false;
     Ok(())
 }
 
@@ -397,6 +443,7 @@ pub fn recover_with_answers_in_dir(
     *state.db.lock().unwrap() = Some(db);
     *state.key.lock().unwrap() = Some(db_key);
     *state.salt.lock().unwrap() = Some(decoded.salt);
+    *state.recovery_verified.lock().unwrap() = true;
     Ok(taxpayer)
 }
 
@@ -410,35 +457,60 @@ pub async fn recover_with_answers(
     recover_with_answers_in_dir(&db::app_dir(), &[answer_1, answer_2, answer_3], &state)
 }
 
-pub fn reset_pin_in_dir(dir: &Path, new_pin: &str, state: &AppState) -> Result<(), String> {
+pub fn reset_pin_with_deps<F>(
+    dir: &Path,
+    new_pin: &str,
+    state: &AppState,
+    keyring: &dyn BiometricKeyStore,
+    before_rename: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    if !*state.recovery_verified.lock().unwrap() {
+        return Err("PIN reset is only allowed immediately after account recovery.".to_string());
+    }
+
+    let bytes = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        db.serialize().map_err(|e| e.to_string())?
+    };
+
     let new_salt = security::generate_salt();
     let new_key = security::derive_key(new_pin, &new_salt);
 
-    {
-        let guard = state.db.lock().unwrap();
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let bytes = db.serialize().map_err(|e| e.to_string())?;
-        vault::write_atomic(dir, &bytes, &new_key, &new_salt)?;
-    }
+    vault::write_atomic_with_hook(dir, &bytes, &new_key, &new_salt, before_rename)?;
 
     *state.key.lock().unwrap() = Some(new_key);
     *state.salt.lock().unwrap() = Some(new_salt);
+    *state.recovery_verified.lock().unwrap() = false;
 
+    let biometric_enabled = sync_biometric_keyring(keyring, &new_key);
     let _ = std::fs::remove_file(recovery_path_in_dir(dir));
-    Ok(())
+    Ok(biometric_enabled)
+}
+
+pub fn reset_pin_in_dir(dir: &Path, new_pin: &str, state: &AppState) -> Result<bool, String> {
+    reset_pin_with_deps(dir, new_pin, state, &OsKeyringStore, |_| Ok(()))
 }
 
 #[tauri::command]
-pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<bool, String> {
     reset_pin_in_dir(&db::app_dir(), &new_pin, &state)
 }
 
-pub fn change_pin_in_dir(
+pub fn change_pin_with_deps<F>(
     dir: &Path,
     current_pin: &str,
     new_pin: &str,
     state: &AppState,
-) -> Result<(), String> {
+    keyring: &dyn BiometricKeyStore,
+    before_rename: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
     let current_salt = {
         let salt_guard = state.salt.lock().unwrap();
         *salt_guard.as_ref().ok_or("Database not unlocked")?
@@ -452,21 +524,32 @@ pub fn change_pin_in_dir(
         }
     }
 
+    let bytes = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        db.serialize().map_err(|e| e.to_string())?
+    };
+
     let new_salt = security::generate_salt();
     let new_key = security::derive_key(new_pin, &new_salt);
 
-    {
-        let guard = state.db.lock().unwrap();
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let bytes = db.serialize().map_err(|e| e.to_string())?;
-        vault::write_atomic(dir, &bytes, &new_key, &new_salt)?;
-    }
+    vault::write_atomic_with_hook(dir, &bytes, &new_key, &new_salt, before_rename)?;
 
     *state.key.lock().unwrap() = Some(new_key);
     *state.salt.lock().unwrap() = Some(new_salt);
 
+    let biometric_enabled = sync_biometric_keyring(keyring, &new_key);
     let _ = std::fs::remove_file(recovery_path_in_dir(dir));
-    Ok(())
+    Ok(biometric_enabled)
+}
+
+pub fn change_pin_in_dir(
+    dir: &Path,
+    current_pin: &str,
+    new_pin: &str,
+    state: &AppState,
+) -> Result<bool, String> {
+    change_pin_with_deps(dir, current_pin, new_pin, state, &OsKeyringStore, |_| Ok(()))
 }
 
 #[tauri::command]
@@ -474,7 +557,7 @@ pub async fn change_pin(
     current_pin: String,
     new_pin: String,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     change_pin_in_dir(&db::app_dir(), &current_pin, &new_pin, &state)
 }
 
@@ -578,6 +661,7 @@ pub fn restore_backup_fresh_in_dir(
     *state.db.lock().unwrap() = Some(db);
     *state.key.lock().unwrap() = Some(decoded.key);
     *state.salt.lock().unwrap() = Some(decoded.salt);
+    *state.recovery_verified.lock().unwrap() = false;
     Ok(taxpayer)
 }
 

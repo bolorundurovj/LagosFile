@@ -138,6 +138,50 @@ pub fn decode_with_key(
     }
 }
 
+/// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`,
+/// invoking `before_rename` after the encrypted temp file has been written and flushed.
+/// Deletes any legacy `dir/.salt` file ONLY after the rename succeeds.
+pub fn write_atomic_with_hook<F>(
+    dir: &Path,
+    plaintext: &[u8],
+    key: &[u8; 32],
+    salt: &[u8; SALT_LEN],
+    before_rename: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    let encoded = encode(plaintext, key, salt)?;
+    let target = vault_path(dir);
+    let tmp = dir.join(format!("lagosfile.db.{}.tmp", uuid::Uuid::new_v4()));
+
+    let write_res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&encoded)?;
+        f.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+
+    if let Err(e) = before_rename(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+
+    // Remove legacy .salt only after the self-describing vault is safely on disk.
+    let _ = std::fs::remove_file(legacy_salt_path(dir));
+    Ok(())
+}
+
 /// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`.
 /// Deletes any legacy `dir/.salt` file ONLY after the rename succeeds.
 pub fn write_atomic(
@@ -146,27 +190,7 @@ pub fn write_atomic(
     key: &[u8; 32],
     salt: &[u8; SALT_LEN],
 ) -> Result<(), String> {
-    let encoded = encode(plaintext, key, salt)?;
-    let target = vault_path(dir);
-    let tmp = dir.join(format!("lagosfile.db.{}.tmp", uuid::Uuid::new_v4()));
-
-    let res = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(&encoded)?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, &target)?;
-        Ok(())
-    })();
-
-    if let Err(e) = res {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-
-    // Remove legacy .salt only after the self-describing vault is safely on disk.
-    let _ = std::fs::remove_file(legacy_salt_path(dir));
-    Ok(())
+    write_atomic_with_hook(dir, plaintext, key, salt, |_| Ok(()))
 }
 
 /// Exclusively creates a brand-new v1 vault at `dir/lagosfile.db.enc`.

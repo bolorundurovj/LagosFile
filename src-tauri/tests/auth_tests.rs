@@ -566,3 +566,164 @@ async fn test_s2_fresh_install_restore_and_settings_restore_different_pin() {
     let _ = std::fs::remove_dir_all(&fresh_dir);
     let _ = std::fs::remove_dir_all(&settings_dir);
 }
+
+struct MockKeyring {
+    value: std::sync::Mutex<Option<String>>,
+    fail_on_set: bool,
+}
+
+impl MockKeyring {
+    fn new(initial: Option<String>, fail_on_set: bool) -> Self {
+        Self {
+            value: std::sync::Mutex::new(initial),
+            fail_on_set,
+        }
+    }
+
+    fn current(&self) -> Option<String> {
+        self.value.lock().unwrap().clone()
+    }
+}
+
+impl lagosfile_lib::commands::auth::BiometricKeyStore for MockKeyring {
+    fn get_key_hex(&self) -> Option<String> {
+        self.value.lock().unwrap().clone()
+    }
+
+    fn set_key_hex(&self, hex_key: &str) -> Result<(), String> {
+        if self.fail_on_set {
+            return Err("keyring unavailable".to_string());
+        }
+        *self.value.lock().unwrap() = Some(hex_key.to_string());
+        Ok(())
+    }
+
+    fn delete_key(&self) {
+        *self.value.lock().unwrap() = None;
+    }
+}
+
+#[test]
+fn test_s3_change_pin_injected_failure_leaves_old_pin_working() {
+    use lagosfile_lib::{
+        commands::auth::{change_pin_with_deps, setup_pin_in_dir, unlock_db_in_dir},
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s3-fail-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1111", &state).unwrap();
+    let old_key_hex = hex::encode(state.key.lock().unwrap().unwrap());
+    let keyring = MockKeyring::new(Some(old_key_hex.clone()), false);
+
+    // Inject failure after encrypted temp file is written, right before rename
+    let err = change_pin_with_deps(&dir, "1111", "2222", &state, &keyring, |tmp_path| {
+        assert!(tmp_path.exists(), "encrypted temp file should exist before rename");
+        Err("simulated disk failure".to_string())
+    })
+    .expect_err("injected failure must abort PIN change");
+    assert!(err.contains("simulated disk failure"));
+
+    // Vault on disk must still open with old PIN "1111", not "2222"
+    let verify_state = AppState::default();
+    assert!(unlock_db_in_dir(&dir, "2222", &verify_state).is_err());
+    unlock_db_in_dir(&dir, "1111", &verify_state).expect("old PIN must still open vault");
+
+    // Keyring must still hold the old key
+    assert_eq!(keyring.current(), Some(old_key_hex));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_s3_change_pin_updates_keyring_so_biometric_unlock_still_works() {
+    use lagosfile_lib::{
+        commands::auth::{
+            change_pin_with_deps, setup_pin_in_dir, unlock_db_in_dir,
+            unlock_with_biometric_key_in_dir,
+        },
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s3-bio-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1111", &state).unwrap();
+    let old_key = state.key.lock().unwrap().unwrap();
+    let keyring = MockKeyring::new(Some(hex::encode(old_key)), false);
+
+    let bio_still_on =
+        change_pin_with_deps(&dir, "1111", "2222", &state, &keyring, |_| Ok(())).unwrap();
+    assert!(bio_still_on, "biometric should stay enabled after keyring sync");
+
+    let new_key_hex = keyring.current().expect("keyring must contain updated key");
+    assert_ne!(new_key_hex, hex::encode(old_key));
+    let mut new_key = [0u8; 32];
+    new_key.copy_from_slice(&hex::decode(&new_key_hex).unwrap());
+
+    // Biometric unlock with updated keyring key works on the re-encrypted vault
+    let bio_state = AppState::default();
+    unlock_with_biometric_key_in_dir(&dir, new_key, &bio_state)
+        .expect("biometric unlock must succeed after PIN change");
+
+    // New PIN works, old PIN does not
+    let pin_state = AppState::default();
+    assert!(unlock_db_in_dir(&dir, "1111", &pin_state).is_err());
+    unlock_db_in_dir(&dir, "2222", &pin_state).expect("new PIN must unlock");
+
+    // When keyring update fails, stale entry is deleted and biometric is disabled
+    let failing_keyring = MockKeyring::new(Some(new_key_hex), true);
+    let bio_after_fail =
+        change_pin_with_deps(&dir, "2222", "3333", &pin_state, &failing_keyring, |_| Ok(()))
+            .unwrap();
+    assert!(!bio_after_fail, "biometric must be turned off if keyring update fails");
+    assert!(failing_keyring.current().is_none(), "stale keyring key must be deleted");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_s3_reset_pin_requires_prior_recovery_and_syncs_keyring() {
+    use lagosfile_lib::{
+        commands::auth::{
+            recover_with_answers_in_dir, reset_pin_with_deps, unlock_db_in_dir,
+            unlock_with_biometric_key_in_dir,
+        },
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s3-reset-{}", uuid::Uuid::new_v4()));
+    let orig_key = create_legacy_vault_dir(&dir, "1234");
+    let keyring = MockKeyring::new(Some(hex::encode(orig_key)), false);
+
+    // Normal PIN unlock MUST NOT permit reset_pin
+    let normal_state = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &normal_state).unwrap();
+    let err = reset_pin_with_deps(&dir, "9999", &normal_state, &keyring, |_| Ok(()))
+        .expect_err("reset_pin without prior recovery must be rejected");
+    assert!(err.contains("after account recovery"), "unexpected error: {err}");
+
+    // Recover with answers -> reset_pin is now permitted once and syncs keyring
+    let rec_state = AppState::default();
+    recover_with_answers_in_dir(&dir, &["a1".into(), "a2".into(), "a3".into()], &rec_state)
+        .unwrap();
+    let bio_on = reset_pin_with_deps(&dir, "9999", &rec_state, &keyring, |_| Ok(())).unwrap();
+    assert!(bio_on);
+
+    // Second reset_pin in same session without another recovery must be rejected
+    let err2 = reset_pin_with_deps(&dir, "8888", &rec_state, &keyring, |_| Ok(()))
+        .expect_err("reset_pin must be single-use after recovery");
+    assert!(err2.contains("after account recovery"));
+
+    // New PIN and synced biometric key both open the vault
+    let verify_pin = AppState::default();
+    unlock_db_in_dir(&dir, "9999", &verify_pin).expect("new PIN must unlock after reset");
+
+    let new_key_bytes = hex::decode(keyring.current().unwrap()).unwrap();
+    let mut new_key = [0u8; 32];
+    new_key.copy_from_slice(&new_key_bytes);
+    let verify_bio = AppState::default();
+    unlock_with_biometric_key_in_dir(&dir, new_key, &verify_bio)
+        .expect("synced biometric key must unlock after reset");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
