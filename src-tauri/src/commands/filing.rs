@@ -455,10 +455,10 @@ pub fn copy_entries_to_next_year(
     conn.execute(
         &format!("INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
          foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-         fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain)
+         fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost)
          SELECT {SQL_UUID},?1,income_type,description,gross_amount_ngn,is_foreign,
          foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-         fx_rate_used,fx_rate_source,NULL,is_cgt_exempt,cgt_proceeds,cgt_gain
+         fx_rate_used,fx_rate_source,NULL,is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost
          FROM income_entry WHERE filing_id=?2"),
         params![to_id, from_id],
     )?;
@@ -569,7 +569,7 @@ pub async fn list_income_entries(
             "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                 foreign_currency,foreign_amount,income_date,fx_rate_fetched,
                 fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-                is_cgt_exempt,cgt_proceeds,cgt_gain
+                is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost
          FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -596,6 +596,8 @@ pub async fn list_income_entries(
                 is_cgt_exempt: row.get::<_, i32>(14)? == 1,
                 cgt_proceeds: row.get(15)?,
                 cgt_gain: row.get(16)?,
+                bik_category: row.get(17)?,
+                bik_cost: row.get(18)?,
                 documents: vec![],
             })
         })
@@ -625,8 +627,8 @@ pub fn upsert_income_entry_with_conn(
          (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
           foreign_currency,foreign_amount,income_date,fx_rate_fetched,
           fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-          is_cgt_exempt,cgt_proceeds,cgt_gain)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+          is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
         params![
             id,
             filing_id,
@@ -645,6 +647,8 @@ pub fn upsert_income_entry_with_conn(
             entry["isCgtExempt"].as_bool().unwrap_or(false) as i32,
             entry["cgtProceeds"].as_f64(),
             entry["cgtGain"].as_f64(),
+            entry["bikCategory"].as_str(),
+            entry["bikCost"].as_f64(),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -977,7 +981,7 @@ pub fn compute_filing_with_conn(
             "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                 foreign_currency,foreign_amount,income_date,fx_rate_fetched,
                 fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-                is_cgt_exempt,cgt_proceeds,cgt_gain
+                is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost
          FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -1004,6 +1008,8 @@ pub fn compute_filing_with_conn(
                 is_cgt_exempt: row.get::<_, i32>(14)? == 1,
                 cgt_proceeds: row.get(15)?,
                 cgt_gain: row.get(16)?,
+                bik_category: row.get(17)?,
+                bik_cost: row.get(18)?,
                 documents: vec![],
             })
         })
@@ -1083,13 +1089,17 @@ pub async fn compute_filing(
     compute_filing_with_conn(&conn, &filing_id)
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EstimateIncome {
     pub income_type: String,
     pub gross_amount_ngn: f64,
     pub cgt_proceeds: Option<f64>,
     pub cgt_gain: Option<f64>,
+    #[serde(default)]
+    pub bik_category: Option<String>,
+    #[serde(default)]
+    pub bik_cost: Option<f64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1147,6 +1157,8 @@ pub fn build_estimate_entries(
             gross_amount_ngn: e.gross_amount_ngn,
             cgt_proceeds: e.cgt_proceeds,
             cgt_gain: e.cgt_gain,
+            bik_category: e.bik_category,
+            bik_cost: e.bik_cost,
             ..Default::default()
         })
         .collect();

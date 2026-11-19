@@ -106,6 +106,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("filing", "submitted_at", "TEXT"),
     ("filing", "paye_credit", "REAL"),
     ("filing", "foreign_tax_credit", "REAL"),
+    ("income_entry", "bik_category", "TEXT"),
+    ("income_entry", "bik_cost", "REAL"),
 ];
 
 pub fn get_migration_notices(conn: &Connection) -> Vec<String> {

@@ -52,6 +52,12 @@ export type IncomeType =
 
 export type FxRateSource = 'fawazahmed0' | 'exchangerate-api' | 'cache' | 'manual' | 'cbn_override';
 
+export type BikCategory =
+  | 'employer_owned_asset'
+  | 'rented_asset'
+  | 'accommodation'
+  | 'other';
+
 export interface IncomeEntry {
   id: string;
   filingId: string;
@@ -70,6 +76,8 @@ export interface IncomeEntry {
   isCgtExempt: boolean;
   cgtProceeds?: number;
   cgtGain?: number;
+  bikCategory?: BikCategory;
+  bikCost?: number;
   documents: Document[];
 }
 

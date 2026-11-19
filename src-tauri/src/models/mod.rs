@@ -93,6 +93,8 @@ pub struct IncomeEntry {
     pub is_cgt_exempt: bool,
     pub cgt_proceeds: Option<f64>,
     pub cgt_gain: Option<f64>,
+    pub bik_category: Option<String>,
+    pub bik_cost: Option<f64>,
     pub documents: Vec<Document>,
 }
 
@@ -284,6 +286,8 @@ pub struct PendingFilingForeignIncome {
 #[serde(rename_all = "camelCase")]
 pub struct PendingFilingIncome {
     pub employment: f64,
+    #[serde(rename = "benefitsInKind")]
+    pub benefits_in_kind: f64,
     pub business: f64,
     pub rental: f64,
     pub dividend: f64,

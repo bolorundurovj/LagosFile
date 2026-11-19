@@ -938,7 +938,7 @@ pub async fn export_filing_csv(
     let mut stmt = conn
         .prepare(
             "SELECT income_type,description,gross_amount_ngn,is_foreign,foreign_currency,
-                    foreign_amount,income_date,fx_rate_used,fx_rate_source
+                    foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost
              FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -959,12 +959,12 @@ pub async fn export_filing_csv(
 
     csv.push_str(
         "income_type,description,gross_amount_ngn,is_foreign,foreign_currency,\
-         foreign_amount,income_date,fx_rate_used,fx_rate_source\r\n",
+         foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost\r\n",
     );
 
     stmt.query_map(params![filing_id], |row| {
         Ok(format!(
-            "{},{},{},{},{},{},{},{},{}\r\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\r\n",
             row.get::<_, String>(0)?,
             row.get::<_, Option<String>>(1)?.unwrap_or_default(),
             format_with_commas(row.get::<_, f64>(2)?),
@@ -976,6 +976,9 @@ pub async fn export_filing_csv(
             row.get::<_, Option<f64>>(7)?
                 .map_or(String::new(), |v| v.to_string()),
             row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+            row.get::<_, Option<f64>>(10)?
+                .map_or(String::new(), |v| format!("{:.2}", v)),
         ))
     })
     .map_err(|e| e.to_string())?
@@ -998,7 +1001,8 @@ pub fn export_filing_json_with_conn(
         .prepare(
             "SELECT income_type,description,gross_amount_ngn,is_foreign,
                     foreign_currency,foreign_amount,income_date,
-                    fx_rate_used,fx_rate_source,foreign_tax_paid_ngn
+                    fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
+                    bik_category,bik_cost
              FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -1016,6 +1020,8 @@ pub fn export_filing_json_with_conn(
                 "fxRateUsed":        row.get::<_,Option<f64>>(7)?,
                 "fxRateSource":      row.get::<_,Option<String>>(8)?,
                 "foreignTaxPaidNgn": row.get::<_,Option<f64>>(9)?,
+                "bikCategory":       row.get::<_,Option<String>>(10)?,
+                "bikCost":           row.get::<_,Option<f64>>(11)?,
             }))
         })
         .map_err(|e| e.to_string())?

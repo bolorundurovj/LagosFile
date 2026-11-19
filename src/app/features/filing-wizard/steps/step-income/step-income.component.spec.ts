@@ -4,7 +4,9 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { IncomeEntry, TaxConfig } from '../../../../core/models';
+import { LIRSService } from '../../../../core/services/lirs.service';
+import { TauriService } from '../../../../core/services/tauri.service';
+import { Filing, IncomeEntry, TaxConfig } from '../../../../core/models';
 import {
   LUCIDE_ICONS,
   LucideIconProvider,
@@ -161,5 +163,77 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     expect(saved.grossAmountNgn).toBe(15_000_000);
     expect(saved.cgtGain).toBe(15_000_000);
     expect(saved.isCgtExempt).toBeFalse();
+  });
+
+  it('reopening the step displays saved BIK category and cost and hides the foreign toggle', async () => {
+    const savedBik: IncomeEntry = {
+      id: 'bik-1',
+      filingId: 'filing-1',
+      incomeType: 'benefits_in_kind',
+      description: 'Company Car',
+      grossAmountNgn: 1_000_000,
+      bikCategory: 'employer_owned_asset',
+      bikCost: 20_000_000,
+      isForeign: false,
+      isCgtExempt: false,
+      documents: [],
+    };
+    filingServiceSpy.listIncomeEntries.and.resolveTo([savedBik]);
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    const el: HTMLElement = fixture.nativeElement;
+    expect(comp.entries()[0].bikCategory).toBe('employer_owned_asset');
+    expect(comp.entries()[0].bikCost).toBe(20_000_000);
+    expect(comp.estimatedBikValue(comp.entries()[0])).toBe(1_000_000);
+    expect(el.textContent).not.toContain('Foreign Currency Income');
+    expect(el.textContent).toContain('BIK Category');
+  });
+
+  it('includes Benefits-in-Kind in LIRSService.buildReferenceFields using s.14 valuation', () => {
+    const tauriMock = jasmine.createSpyObj('TauriService', ['invoke']);
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [LIRSService, { provide: TauriService, useValue: tauriMock }],
+    });
+    const lirs = TestBed.inject(LIRSService);
+    const filing: Filing = {
+      id: 'f-1',
+      taxpayerId: 'tp-1',
+      yearOfAssessment: 2026,
+      status: 'Confirmed',
+      createdAt: '2027-01-01T00:00:00Z',
+      taxConfigVersion: 'NTA 2025',
+    };
+    const entries: IncomeEntry[] = [
+      {
+        id: 'e-1',
+        filingId: 'f-1',
+        incomeType: 'employment',
+        grossAmountNgn: 10_000_000,
+        isForeign: false,
+        isCgtExempt: false,
+        documents: [],
+      },
+      {
+        id: 'e-2',
+        filingId: 'f-1',
+        incomeType: 'benefits_in_kind',
+        grossAmountNgn: 3_000_000,
+        bikCategory: 'accommodation',
+        bikCost: 3_000_000,
+        isForeign: false,
+        isCgtExempt: false,
+        documents: [],
+      },
+    ];
+    const groups = lirs.buildReferenceFields(filing, entries, [], []);
+    const incomeGroup = groups.find(g => g.section === 'Income Declaration');
+    const bikField = incomeGroup?.fields.find(f => f.label === 'Benefits-in-Kind');
+    expect(bikField).toBeTruthy();
+    expect(bikField?.copyText).toBe('2000000');
   });
 });

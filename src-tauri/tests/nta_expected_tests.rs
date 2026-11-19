@@ -269,6 +269,7 @@ fn test_s9_estimate_tax_5m_returns_690000_on_fresh_install() {
             gross_amount_ngn: 5_000_000.0,
             cgt_proceeds: None,
             cgt_gain: None,
+            ..Default::default()
         }],
         vec![],
         vec![],
@@ -647,4 +648,160 @@ fn test_s13_share_gain_migration_fixes_drafts_and_notifies_filed() {
         notices.iter().any(|n| n.contains("LIRS/REF/2024/00001")),
         "expected migration notice mentioning Submitted filing, got: {notices:?}"
     );
+}
+
+#[test]
+fn test_s14_bik_valuation_all_categories_and_accommodation_cap_recalc() {
+    let cfg = nta_2025_config(0.0);
+
+    // 1. Employer-owned asset: 5% of ₦20m = ₦1,000,000 (s.14(1)(a))
+    let owned = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("employer_owned_asset".to_string()),
+        bik_cost: Some(20_000_000.0),
+        gross_amount_ngn: 999.0, // engine must ignore stale gross_amount_ngn
+        ..Default::default()
+    };
+    let r_owned = ComputationEngine::compute(&[owned], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(r_owned.total_gross_income, 1_000_000.0, "employer-owned asset 5%");
+
+    // 2. Rented/hired asset: 100% of ₦2m = ₦2,000,000 (s.14(1)(b))
+    let rented = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("rented_asset".to_string()),
+        bik_cost: Some(2_000_000.0),
+        ..Default::default()
+    };
+    let r_rented = ComputationEngine::compute(&[rented], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(r_rented.total_gross_income, 2_000_000.0, "rented asset 100%");
+
+    // 3. Other BIK: 100% of ₦600k = ₦600,000 (s.14(1)(c))
+    let other = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("other".to_string()),
+        bik_cost: Some(600_000.0),
+        ..Default::default()
+    };
+    let r_other = ComputationEngine::compute(&[other], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(r_other.total_gross_income, 600_000.0, "other BIK 100%");
+
+    // 4. Accommodation: ₦3m rental value with ₦10m salary -> capped at 20% * 10m = ₦2m (s.14(6))
+    let accom = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("accommodation".to_string()),
+        bik_cost: Some(3_000_000.0),
+        gross_amount_ngn: 3_000_000.0,
+        ..Default::default()
+    };
+    let r_capped =
+        ComputationEngine::compute(&[employment_entry(10_000_000.0), accom.clone()], &[], &[], &cfg)
+            .unwrap();
+    assert_ngn_eq(
+        r_capped.total_gross_income,
+        12_000_000.0,
+        "accommodation capped at 20% of ₦10m salary",
+    );
+
+    // When salary increases to ₦20m (cap = ₦4m), the full ₦3m accommodation is taxable without touching the BIK row
+    let r_uncapped =
+        ComputationEngine::compute(&[employment_entry(20_000_000.0), accom], &[], &[], &cfg)
+            .unwrap();
+    assert_ngn_eq(
+        r_uncapped.total_gross_income,
+        23_000_000.0,
+        "accommodation recalculates when salary increases",
+    );
+}
+
+#[test]
+fn test_s14_bik_persists_duplicates_exports_and_maps_in_lirs_payload() {
+    use lagosfile_lib::{
+        commands::{
+            export::export_filing_json_with_conn,
+            filing::{
+                confirm_filing_with_conn, copy_entries_to_next_year, create_draft_filing_with_conn,
+                upsert_income_entry_with_conn,
+            },
+            lirs::build_pending_filing,
+        },
+        db::AppDb,
+    };
+    use serde_json::json;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let tp_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Bola', '1000000002', '2025-01-01T00:00:00Z')",
+        rusqlite::params![tp_id],
+    )
+    .unwrap();
+
+    let f1 = create_draft_filing_with_conn(&conn, 2024).unwrap();
+    let f2 = create_draft_filing_with_conn(&conn, 2025).unwrap();
+
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "filingId": f1.id.to_string(),
+            "incomeType": "employment",
+            "description": "Salary",
+            "grossAmountNgn": 10_000_000.0,
+            "isForeign": false,
+            "isCgtExempt": false
+        }),
+    )
+    .unwrap();
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "filingId": f1.id.to_string(),
+            "incomeType": "benefits_in_kind",
+            "description": "Company house",
+            "grossAmountNgn": 3_000_000.0,
+            "bikCategory": "accommodation",
+            "bikCost": 3_000_000.0,
+            "isForeign": false,
+            "isCgtExempt": false
+        }),
+    )
+    .unwrap();
+
+    // Duplicating preserves bik_category and bik_cost
+    copy_entries_to_next_year(&conn, &f1.id.to_string(), &f2.id.to_string()).unwrap();
+    let (copied_cat, copied_cost): (Option<String>, Option<f64>) = conn
+        .query_row(
+            "SELECT bik_category, bik_cost FROM income_entry WHERE filing_id=?1 AND income_type='benefits_in_kind'",
+            rusqlite::params![f2.id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(copied_cat.as_deref(), Some("accommodation"));
+    assert_eq!(copied_cost, Some(3_000_000.0));
+
+    // Confirm f1: total gross must be ₦10m + min(₦3m, 20% of ₦10m = ₦2m) = ₦12m
+    let confirmed = confirm_filing_with_conn(&conn, &f1.id.to_string()).unwrap();
+    assert_eq!(confirmed.total_income_ngn, Some(12_000_000.0));
+
+    // LIRS payload maps BIK to benefits_in_kind (₦2m), not other (₦0)
+    let pending = build_pending_filing(&conn, &f1.id.to_string()).unwrap();
+    assert_ngn_eq(pending.income.benefits_in_kind, 2_000_000.0, "LIRS payload BIK");
+    assert_ngn_eq(pending.income.other, 0.0, "LIRS payload other should not receive BIK");
+
+    // JSON export includes bikCategory and bikCost
+    let tmp = std::env::temp_dir().join(format!("lagosfile_s14_{}.json", uuid::Uuid::new_v4()));
+    export_filing_json_with_conn(&conn, &f1.id.to_string(), tmp.to_str().unwrap()).unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&tmp).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&tmp);
+    let bik_row = exported["incomeEntries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["incomeType"] == "benefits_in_kind")
+        .expect("BIK entry in JSON export");
+    assert_eq!(bik_row["bikCategory"], "accommodation");
+    assert_eq!(bik_row["bikCost"].as_f64(), Some(3_000_000.0));
 }

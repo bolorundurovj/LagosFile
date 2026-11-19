@@ -4,7 +4,7 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { IncomeEntry, IncomeType } from '../../../../core/models';
+import { BikCategory, IncomeEntry, IncomeType } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
@@ -28,6 +28,29 @@ const INCOME_TYPES: { value: IncomeType; label: string }[] = [
 ];
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR', 'GHS'];
+
+const BIK_CATEGORIES: { value: BikCategory; label: string; costLabel: string }[] = [
+  {
+    value: 'employer_owned_asset',
+    label: 'Employer-Owned Asset (5% of cost — s.14(1)(a))',
+    costLabel: 'Asset Cost to Employer (₦)',
+  },
+  {
+    value: 'rented_asset',
+    label: 'Rented / Hired Asset (100% of annual rent — s.14(1)(b))',
+    costLabel: 'Annual Rent / Hire Paid by Employer (₦)',
+  },
+  {
+    value: 'accommodation',
+    label: 'Employer-Provided Accommodation (capped at 20% of employment income — s.14(6))',
+    costLabel: 'Annual Rental Value of Accommodation (₦)',
+  },
+  {
+    value: 'other',
+    label: 'Other Benefit-in-Kind (100% of cost — s.14(1)(c))',
+    costLabel: 'Employer Cost of Benefit (₦)',
+  },
+];
 
 @Component({
   selector: 'lf-step-income',
@@ -68,14 +91,16 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </div>
             </div>
 
-            <!-- Foreign currency toggle -->
-            <div class="entry-row">
-              <label class="toggle-label">
-                <input type="checkbox" [(ngModel)]="entry.isForeign" [name]="'foreign_' + i"
-                  (change)="onForeignToggle(entry)" />
-                <span>Foreign Currency Income<lf-help text="Income earned in a foreign currency must be converted to Naira at the CBN official rate on the date of receipt (NTA 2025, s.20(4))."></lf-help></span>
-              </label>
-            </div>
+            <!-- Foreign currency toggle (hidden for Benefits-in-Kind) -->
+            @if (entry.incomeType !== 'benefits_in_kind') {
+              <div class="entry-row">
+                <label class="toggle-label">
+                  <input type="checkbox" [(ngModel)]="entry.isForeign" [name]="'foreign_' + i"
+                    (change)="onForeignToggle(entry)" />
+                  <span>Foreign Currency Income<lf-help text="Income earned in a foreign currency must be converted to Naira at the CBN official rate on the date of receipt (NTA 2025, s.20(4))."></lf-help></span>
+                </label>
+              </div>
+            }
 
             @if (!entry.isForeign && entry.incomeType !== 'benefits_in_kind' && entry.incomeType !== 'capital_gain_shares') {
               <div class="form-group">
@@ -85,7 +110,7 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               </div>
             }
 
-            @if (entry.isForeign) {
+            @if (entry.isForeign && entry.incomeType !== 'benefits_in_kind') {
               <!-- Foreign income fields -->
               <div class="alert alert--info" style="margin:var(--space-3) 0">
                 <span class="alert__icon">ℹ</span>
@@ -189,28 +214,42 @@ const CURRENCIES = ['USD', 'GBP', 'EUR', 'CAD', 'AUD', 'CHF', 'JPY', 'CNY', 'ZAR
               }
             }
 
-            <!-- BIK auto-calculation -->
+            <!-- BIK valuation per NTA 2025 s.14 -->
             @if (entry.incomeType === 'benefits_in_kind') {
               <div class="bik-section">
                 <div class="alert alert--info" style="margin-bottom:var(--space-3)">
                   <span class="alert__icon">ℹ</span>
                   <div class="alert__content">
-                    Under NTA 2025, benefits-in-kind are taxable at <strong>5% of the employer's cost</strong>
-                    of providing the benefit. Enter the cost below — the taxable value is auto-calculated.
+                    Under <strong>NTA 2025 s.14</strong>, benefits-in-kind are valued by category:
+                    <strong>5%</strong> of cost for employer-owned assets (s.14(1)(a)),
+                    <strong>100%</strong> of annual rent for rented/hired assets (s.14(1)(b)),
+                    annual rental value capped at <strong>20% of employment income</strong> for accommodation (s.14(6)),
+                    and <strong>100%</strong> of cost for other benefits (s.14(1)(c)).
                   </div>
                 </div>
-                <div class="form-group">
-                  <label class="form-label">Employer's Cost of Benefit (₦)<lf-help text="The cost to the employer of providing the benefit (e.g. cost of company car, accommodation, etc.). The taxable BIK value = 5% of this cost (NTA 2025)."></lf-help></label>
-                  <input type="number" class="form-input"
-                    [value]="getBikCost(entry)"
-                    (input)="onBikCostChange(entry, $event)"
-                    [name]="'bikcost_' + i"
-                    min="0" placeholder="0.00" />
+                <div class="entry-grid">
+                  <div class="form-group">
+                    <label class="form-label">BIK Category<lf-help text="Select how the benefit was provided by your employer so the tax engine applies the right NTA 2025 s.14 valuation rule."></lf-help></label>
+                    <select class="form-input" [(ngModel)]="entry.bikCategory"
+                      [name]="'bikcat_' + i" (ngModelChange)="onBikChange(entry)">
+                      @for (cat of bikCategories; track cat.value) {
+                        <option [value]="cat.value">{{ cat.label }}</option>
+                      }
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ bikCostLabel(entry.bikCategory) }}<lf-help text="Saved with this entry and used by the tax computation engine to value the taxable benefit."></lf-help></label>
+                    <input type="number" class="form-input"
+                      [(ngModel)]="entry.bikCost"
+                      (ngModelChange)="onBikChange(entry)"
+                      [name]="'bikcost_' + i"
+                      min="0" placeholder="0.00" />
+                  </div>
                 </div>
-                @if (getBikCost(entry) > 0) {
+                @if ((entry.bikCost ?? 0) > 0) {
                   <div class="bik-computed">
-                    <span class="bik-computed__label">Taxable BIK Value (5% × {{ getBikCost(entry) | naira }})</span>
-                    <span class="bik-computed__value">= <strong>{{ entry.grossAmountNgn | naira }}</strong></span>
+                    <span class="bik-computed__label">{{ bikFormulaHint(entry) }}</span>
+                    <span class="bik-computed__value">= <strong>{{ estimatedBikValue(entry) | naira }}</strong></span>
                   </div>
                 }
               </div>
@@ -364,6 +403,7 @@ export class StepIncomeComponent implements OnInit {
 
   readonly incomeTypes = INCOME_TYPES;
   readonly currencies = CURRENCIES;
+  readonly bikCategories = BIK_CATEGORIES;
 
   async ngOnInit(): Promise<void> {
     const existing = await this.filingService.listIncomeEntries(this.filingId());
@@ -400,12 +440,21 @@ export class StepIncomeComponent implements OnInit {
     } else {
       entry.grossAmountNgn = entry.cgtGain ?? 0;
     }
-    // Reset BIK cost if type changes away from benefits_in_kind
+    // Reset BIK fields if type changes away from benefits_in_kind; clear foreign fields if switching to BIK
     if (entry.incomeType !== 'benefits_in_kind') {
-      (entry as any)._bikCost = undefined;
+      entry.bikCategory = undefined;
+      entry.bikCost = undefined;
     } else {
-      // Reset grossAmountNgn so it's driven by the BIK cost field
-      entry.grossAmountNgn = 0;
+      entry.isForeign = false;
+      entry.foreignCurrency = undefined;
+      entry.foreignAmount = undefined;
+      entry.fxRateFetched = undefined;
+      entry.fxRateCbnOverride = undefined;
+      entry.fxRateUsed = undefined;
+      entry.fxRateSource = undefined;
+      entry.foreignTaxPaidNgn = undefined;
+      entry.bikCategory = entry.bikCategory ?? 'employer_owned_asset';
+      entry.grossAmountNgn = this.estimatedBikValue(entry);
     }
   }
 
@@ -415,16 +464,45 @@ export class StepIncomeComponent implements OnInit {
     }
   }
 
-  /** Returns the stored BIK cost for an entry (UI-only field, not persisted separately). */
-  getBikCost(entry: IncomeEntry): number {
-    return (entry as any)._bikCost ?? 0;
+  bikCostLabel(cat?: BikCategory): string {
+    return BIK_CATEGORIES.find(c => c.value === cat)?.costLabel ?? "Employer's Cost of Benefit (₦)";
   }
 
-  /** When BIK cost changes, auto-compute grossAmountNgn = cost × 5%. */
-  onBikCostChange(entry: IncomeEntry, event: Event): void {
-    const cost = parseFloat((event.target as HTMLInputElement).value) || 0;
-    (entry as any)._bikCost = cost;
-    entry.grossAmountNgn = cost * 0.05;
+  /** Mirror of ComputationEngine::bik_taxable_value for live UI preview; backend engine is authoritative. */
+  estimatedBikValue(entry: IncomeEntry): number {
+    if (entry.incomeType !== 'benefits_in_kind') return entry.grossAmountNgn ?? 0;
+    if (!entry.bikCategory || entry.bikCost == null) return Math.max(entry.grossAmountNgn ?? 0, 0);
+    const cost = Math.max(entry.bikCost, 0);
+    switch (entry.bikCategory) {
+      case 'employer_owned_asset':
+        return cost * 0.05;
+      case 'rented_asset':
+      case 'other':
+        return cost;
+      case 'accommodation': {
+        const totalEmployment = this.entries()
+          .filter(e => e.incomeType === 'employment')
+          .reduce((sum, e) => sum + Math.max(e.grossAmountNgn ?? 0, 0), 0);
+        return Math.min(cost, totalEmployment * 0.2);
+      }
+    }
+  }
+
+  bikFormulaHint(entry: IncomeEntry): string {
+    switch (entry.bikCategory) {
+      case 'employer_owned_asset':
+        return 'Estimated Taxable BIK (5% of cost)';
+      case 'rented_asset':
+        return 'Estimated Taxable BIK (100% of annual rent)';
+      case 'accommodation':
+        return 'Estimated Taxable BIK (capped at 20% of employment income)';
+      default:
+        return 'Estimated Taxable BIK (100% of cost)';
+    }
+  }
+
+  onBikChange(entry: IncomeEntry): void {
+    entry.grossAmountNgn = this.estimatedBikValue(entry);
   }
 
   onForeignToggle(entry: IncomeEntry): void {
@@ -503,7 +581,10 @@ export class StepIncomeComponent implements OnInit {
   }
 
   readonly totalNgn = () =>
-    this.entries().reduce((sum, e) => sum + (e.grossAmountNgn ?? 0), 0);
+    this.entries().reduce((sum, e) => {
+      if (e.incomeType === 'benefits_in_kind') return sum + this.estimatedBikValue(e);
+      return sum + (e.grossAmountNgn ?? 0);
+    }, 0);
 
   async saveAndNext(): Promise<void> {
     this.saving.set(true);
@@ -513,7 +594,12 @@ export class StepIncomeComponent implements OnInit {
       const exempt = this.cgtSummary().exempt;
       const failed: string[] = [];
       for (const entry of this.entries()) {
-        if (entry.isForeign) this.applyRate(entry);
+        if (entry.incomeType === 'benefits_in_kind') {
+          entry.isForeign = false;
+          entry.grossAmountNgn = this.estimatedBikValue(entry);
+        } else if (entry.isForeign) {
+          this.applyRate(entry);
+        }
         if (entry.incomeType === 'capital_gain_shares') {
           entry.grossAmountNgn = entry.cgtGain ?? 0;
           entry.isCgtExempt = exempt;

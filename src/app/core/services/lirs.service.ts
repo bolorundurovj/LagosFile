@@ -46,6 +46,7 @@ export class LIRSService {
     const incomeByType = this.aggregateIncomeByType(incomeEntries);
     const incomeFields = [
       { label: 'Salary / Employment', value: this.fmt(incomeByType.employment), copyText: String(incomeByType.employment) },
+      { label: 'Benefits-in-Kind', value: this.fmt(incomeByType.benefitsInKind), copyText: String(incomeByType.benefitsInKind) },
       { label: 'Trade / Business', value: this.fmt(incomeByType.business), copyText: String(incomeByType.business) },
       { label: 'Rental Income', value: this.fmt(incomeByType.rental), copyText: String(incomeByType.rental) },
       { label: 'Dividend', value: this.fmt(incomeByType.dividend), copyText: String(incomeByType.dividend) },
@@ -111,11 +112,31 @@ export class LIRSService {
 
   private aggregateIncomeByType(entries: IncomeEntry[]) {
     const map: Record<string, number> = {};
+    const totalEmployment = entries
+      .filter(e => e.incomeType === 'employment')
+      .reduce((sum, e) => sum + Math.max(e.grossAmountNgn, 0), 0);
+    let remainingAccomCap = totalEmployment * 0.2;
+
     for (const e of entries) {
-      map[e.incomeType] = (map[e.incomeType] ?? 0) + e.grossAmountNgn;
+      let val = e.grossAmountNgn;
+      if (e.incomeType === 'benefits_in_kind' && e.bikCategory && e.bikCost != null) {
+        const cost = Math.max(e.bikCost, 0);
+        if (e.bikCategory === 'employer_owned_asset') {
+          val = cost * 0.05;
+        } else if (e.bikCategory === 'accommodation') {
+          val = Math.min(cost, remainingAccomCap);
+          remainingAccomCap = Math.max(remainingAccomCap - val, 0);
+        } else {
+          val = cost;
+        }
+      } else if (e.incomeType === 'capital_gain_shares' && e.cgtGain != null) {
+        val = e.cgtGain;
+      }
+      map[e.incomeType] = (map[e.incomeType] ?? 0) + val;
     }
     return {
       employment: map['employment'] ?? 0,
+      benefitsInKind: map['benefits_in_kind'] ?? 0,
       business: map['business'] ?? 0,
       rental: map['rental'] ?? 0,
       dividend: map['dividend'] ?? 0,

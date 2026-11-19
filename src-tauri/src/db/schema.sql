@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS income_entry (
     foreign_tax_paid_ngn    REAL,
     is_cgt_exempt           INTEGER NOT NULL DEFAULT 0,
     cgt_proceeds            REAL,
-    cgt_gain                REAL
+    cgt_gain                REAL,
+    bik_category            TEXT,
+    bik_cost                REAL
 );
 
 CREATE TABLE IF NOT EXISTS capital_allowance (

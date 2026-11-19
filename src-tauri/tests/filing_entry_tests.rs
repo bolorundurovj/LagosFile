@@ -653,6 +653,7 @@ fn test_estimate_entries_use_config_allowance_rate() {
             gross_amount_ngn: 10_000_000.0,
             cgt_proceeds: None,
             cgt_gain: None,
+            ..Default::default()
         }],
         vec![EstimateAllowance {
             asset_type: "software_licence".into(),
@@ -679,6 +680,7 @@ fn test_estimate_entries_use_config_allowance_rate() {
             gross_amount_ngn: 10_000_000.0,
             cgt_proceeds: None,
             cgt_gain: None,
+            ..Default::default()
         }],
         vec![EstimateAllowance {
             asset_type: "software_licence".into(),

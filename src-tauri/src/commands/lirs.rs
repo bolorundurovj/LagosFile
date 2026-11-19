@@ -1,6 +1,9 @@
 use crate::{
     models::*,
-    services::{computation::ComputationEngine, config::ConfigService},
+    services::{
+        computation::{bik_taxable_value, ComputationEngine},
+        config::ConfigService,
+    },
     AppState,
 };
 use chrono::Utc;
@@ -132,40 +135,59 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
         )
         .map_err(|e| format!("Taxpayer not found: {}", e))?;
 
-    let mut ie_stmt = conn
+    let config = ConfigService::get_for_filing(conn, id).map_err(|e| e.to_string())?;
+
+    let mut ie_full_stmt = conn
         .prepare(
-            "SELECT income_type,gross_amount_ngn,is_foreign,foreign_currency,
-                    foreign_amount,fx_rate_used,fx_rate_source
+            "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+                    foreign_currency,foreign_amount,income_date,fx_rate_fetched,
+                    fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
+                    is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost
              FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
 
-    #[allow(clippy::type_complexity)]
-    let income_rows: Vec<(
-        String,
-        f64,
-        bool,
-        Option<String>,
-        Option<f64>,
-        Option<f64>,
-        Option<String>,
-    )> = ie_stmt
+    let income_entries: Vec<IncomeEntry> = ie_full_stmt
         .query_map(params![id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get::<_, i32>(2)? == 1,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-            ))
+            Ok(IncomeEntry {
+                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
+                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
+                    .unwrap_or_else(|_| Uuid::new_v4()),
+                income_type: row.get(2)?,
+                description: row.get(3)?,
+                gross_amount_ngn: row.get(4)?,
+                is_foreign: row.get::<_, i32>(5)? == 1,
+                foreign_currency: row.get(6)?,
+                foreign_amount: row.get(7)?,
+                income_date: row
+                    .get::<_, Option<String>>(8)?
+                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
+                fx_rate_fetched: row.get(9)?,
+                fx_rate_cbn_override: row.get(10)?,
+                fx_rate_used: row.get(11)?,
+                fx_rate_source: row.get(12)?,
+                foreign_tax_paid_ngn: row.get(13)?,
+                is_cgt_exempt: row.get::<_, i32>(14)? == 1,
+                cgt_proceeds: row.get(15)?,
+                cgt_gain: row.get(16)?,
+                bik_category: row.get(17)?,
+                bik_cost: row.get(18)?,
+                documents: vec![],
+            })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
 
+    let total_employment_income: f64 = income_entries
+        .iter()
+        .filter(|e| e.income_type == "employment")
+        .map(|e| e.gross_amount_ngn.max(0.0))
+        .sum();
+    let mut remaining_accommodation_cap = total_employment_income * 0.20;
+
     let mut employment = 0.0_f64;
+    let mut benefits_in_kind = 0.0_f64;
     let mut business = 0.0_f64;
     let mut rental = 0.0_f64;
     let mut dividend = 0.0_f64;
@@ -180,24 +202,38 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let mut foreign_rate = 0.0_f64;
     let mut foreign_source = String::new();
 
-    for (in_type, amt, is_foreign, _curr, f_amt, fx_used, fx_src) in &income_rows {
-        match in_type.as_str() {
-            "employment" => employment += amt,
-            "business" => business += amt,
-            "rental" => rental += amt,
-            "dividend" => dividend += amt,
-            "interest" => interest += amt,
-            "capital_gain_shares" => capital_gain += amt,
-            "digital_asset" => digital_asset += amt,
-            "royalty" => royalty += amt,
-            "prize" => prize += amt,
-            _ => other += amt,
+    for entry in &income_entries {
+        match entry.income_type.as_str() {
+            "employment" => employment += entry.gross_amount_ngn,
+            "benefits_in_kind" => {
+                let val = match (entry.bik_category.as_deref(), entry.bik_cost) {
+                    (Some("accommodation"), Some(cost)) => {
+                        let capped = cost.max(0.0).min(remaining_accommodation_cap);
+                        remaining_accommodation_cap =
+                            (remaining_accommodation_cap - capped).max(0.0);
+                        capped
+                    }
+                    _ => bik_taxable_value(entry, total_employment_income),
+                };
+                benefits_in_kind += val;
+            }
+            "business" => business += entry.gross_amount_ngn,
+            "rental" => rental += entry.gross_amount_ngn,
+            "dividend" => dividend += entry.gross_amount_ngn,
+            "interest" => interest += entry.gross_amount_ngn,
+            "capital_gain_shares" => {
+                capital_gain += entry.cgt_gain.unwrap_or(entry.gross_amount_ngn)
+            }
+            "digital_asset" => digital_asset += entry.gross_amount_ngn,
+            "royalty" => royalty += entry.gross_amount_ngn,
+            "prize" => prize += entry.gross_amount_ngn,
+            _ => other += entry.gross_amount_ngn,
         }
-        if *is_foreign {
-            foreign_total_usd += f_amt.unwrap_or(0.0);
-            if let (Some(r), Some(s)) = (fx_used, fx_src) {
-                foreign_naira = *r * f_amt.unwrap_or(0.0);
-                foreign_rate = *r;
+        if entry.is_foreign {
+            foreign_total_usd += entry.foreign_amount.unwrap_or(0.0);
+            if let (Some(r), Some(ref s)) = (entry.fx_rate_used, &entry.fx_rate_source) {
+                foreign_naira = r * entry.foreign_amount.unwrap_or(0.0);
+                foreign_rate = r;
                 foreign_source = s.clone();
             }
         }
@@ -229,48 +265,6 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             _ => {}
         }
     }
-
-    let config = ConfigService::get_for_filing(conn, id).map_err(|e| e.to_string())?;
-
-    let mut ie_full_stmt = conn
-        .prepare(
-            "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
-                    foreign_currency,foreign_amount,income_date,fx_rate_fetched,
-                    fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-                    is_cgt_exempt,cgt_proceeds,cgt_gain
-             FROM income_entry WHERE filing_id=?1",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let income_entries: Vec<IncomeEntry> = ie_full_stmt
-        .query_map(params![id], |row| {
-            Ok(IncomeEntry {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-                filing_id: Uuid::parse_str(&row.get::<_, String>(1)?)
-                    .unwrap_or_else(|_| Uuid::new_v4()),
-                income_type: row.get(2)?,
-                description: row.get(3)?,
-                gross_amount_ngn: row.get(4)?,
-                is_foreign: row.get::<_, i32>(5)? == 1,
-                foreign_currency: row.get(6)?,
-                foreign_amount: row.get(7)?,
-                income_date: row
-                    .get::<_, Option<String>>(8)?
-                    .and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()),
-                fx_rate_fetched: row.get(9)?,
-                fx_rate_cbn_override: row.get(10)?,
-                fx_rate_used: row.get(11)?,
-                fx_rate_source: row.get(12)?,
-                foreign_tax_paid_ngn: row.get(13)?,
-                is_cgt_exempt: row.get::<_, i32>(14)? == 1,
-                cgt_proceeds: row.get(15)?,
-                cgt_gain: row.get(16)?,
-                documents: vec![],
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
 
     let mut ca_stmt = conn
         .prepare(
@@ -351,6 +345,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
         filing_reference: filing.filing_reference.clone(),
         income: PendingFilingIncome {
             employment,
+            benefits_in_kind,
             business,
             rental,
             dividend,

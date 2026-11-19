@@ -37,6 +37,26 @@ pub fn straight_line_allowance(ca: &CapitalAllowance) -> f64 {
         .max(0.0)
 }
 
+/// Computes the taxable value of a benefits-in-kind entry per NTA 2025 s.14:
+/// - `employer_owned_asset`: 5% of employer's acquisition/market cost (s.14(1)(a))
+/// - `rented_asset`: 100% of annual rent or hire paid by employer (s.14(1)(b))
+/// - `accommodation`: annual rental value capped at 20% of annual gross employment income (s.14(6))
+/// - `other`: 100% of employer's cost (s.14(1)(c))
+///
+/// Legacy rows without `bik_category`/`bik_cost` fall back to `gross_amount_ngn`.
+pub fn bik_taxable_value(entry: &IncomeEntry, total_employment_income: f64) -> f64 {
+    match (entry.bik_category.as_deref(), entry.bik_cost) {
+        (Some("employer_owned_asset"), Some(cost)) => (cost.max(0.0)) * 0.05,
+        (Some("rented_asset"), Some(cost)) => cost.max(0.0),
+        (Some("accommodation"), Some(cost)) => {
+            let cap_20pct = (total_employment_income.max(0.0)) * 0.20;
+            cost.max(0.0).min(cap_20pct)
+        }
+        (Some("other"), Some(cost)) => cost.max(0.0),
+        _ => entry.gross_amount_ngn.max(0.0),
+    }
+}
+
 pub struct ComputationEngine;
 
 impl ComputationEngine {
@@ -61,6 +81,13 @@ impl ComputationEngine {
 
         let share_disposals_exempt = cgt_shares_exempt(income_entries, &config.cgt_thresholds);
 
+        let total_employment_income: f64 = income_entries
+            .iter()
+            .filter(|e| e.income_type == "employment")
+            .map(|e| e.gross_amount_ngn.max(0.0))
+            .sum();
+        let mut remaining_accommodation_cap = total_employment_income * 0.20;
+
         let mut cgt_exempt_amount = 0.0;
         let mut effective_other_income = 0.0;
 
@@ -72,6 +99,19 @@ impl ComputationEngine {
                     continue;
                 }
                 effective_other_income += gain_amount;
+                continue;
+            }
+            if entry.income_type == "benefits_in_kind" {
+                let val = match (entry.bik_category.as_deref(), entry.bik_cost) {
+                    (Some("accommodation"), Some(cost)) => {
+                        let capped = cost.max(0.0).min(remaining_accommodation_cap);
+                        remaining_accommodation_cap =
+                            (remaining_accommodation_cap - capped).max(0.0);
+                        capped
+                    }
+                    _ => bik_taxable_value(entry, total_employment_income),
+                };
+                effective_other_income += val;
                 continue;
             }
             effective_other_income += entry.gross_amount_ngn;
@@ -172,6 +212,8 @@ impl ComputationEngine {
                 if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
                     let entry_amount = if entry.income_type == "capital_gain_shares" {
                         entry.cgt_gain.unwrap_or(entry.gross_amount_ngn)
+                    } else if entry.income_type == "benefits_in_kind" {
+                        bik_taxable_value(entry, total_employment_income)
                     } else {
                         entry.gross_amount_ngn
                     };
