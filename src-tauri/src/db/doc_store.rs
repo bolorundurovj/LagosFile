@@ -1,9 +1,4 @@
-use crate::{
-    commands::auth::persist_db_in_dir,
-    db::AppDb,
-    services::security,
-    AppState,
-};
+use crate::{db::AppDb, services::security, AppState};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use rusqlite::params;
@@ -201,9 +196,14 @@ pub struct MigrationReport {
 /// 3. Encrypt each plaintext file in place via temp-file + atomic rename, and normalize
 ///    `document.file_path` to a portable relative path where applicable.
 /// 4. Persist the vault if any `file_path` metadata changed.
-pub fn migrate_plaintext_documents_with_hook<P, B>(
+///
+/// Migrates any unencrypted document files on disk for `db` without touching `AppState`.
+/// When `vault_creds` is `Some((key, salt))`, durably persists the vault after creating `document_key`
+/// and after normalizing legacy absolute paths.
+pub fn migrate_plaintext_documents_for_db_with_hook<P, B>(
     dir: &Path,
-    state: &AppState,
+    db: &AppDb,
+    vault_creds: Option<(&[u8; 32], &[u8; 16])>,
     mut on_progress: P,
     mut before_file: B,
 ) -> Result<MigrationReport, String>
@@ -212,8 +212,6 @@ where
     B: FnMut(usize, &str) -> Result<(), String>,
 {
     let rows: Vec<(String, String, String)> = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare("SELECT id, file_path, file_name FROM document ORDER BY uploaded_at ASC, id ASC")
@@ -228,6 +226,7 @@ where
 
     let mut report = MigrationReport::default();
     let mut to_migrate: Vec<(String, String, String, PathBuf)> = Vec::new();
+    let mut already_encrypted_abs: Vec<(String, String)> = Vec::new();
 
     for (id, stored_path, file_name) in rows {
         let full = resolve_doc_path(dir, &stored_path);
@@ -237,50 +236,54 @@ where
         let raw = std::fs::read(&full).map_err(|e| e.to_string())?;
         if is_encrypted_doc(&raw) {
             report.skipped_already_encrypted += 1;
+            if let Some(rel) = extract_documents_rel(&stored_path) {
+                if rel != stored_path {
+                    already_encrypted_abs.push((id, rel));
+                }
+            }
         } else {
             to_migrate.push((id, stored_path, file_name, full));
         }
     }
 
     report.total_found = to_migrate.len();
-    if to_migrate.is_empty() {
-        if let Ok(guard) = state.db.lock() {
-            if let Some(db) = guard.as_ref() {
-                if let Ok(conn) = db.conn.lock() {
-                    let _ = sweep_orphan_doc_files(dir, &conn);
-                }
+    let mut db_paths_updated = false;
+
+    if !already_encrypted_abs.is_empty() {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        for (id, rel) in already_encrypted_abs {
+            let _ = conn.execute(
+                "UPDATE document SET file_path = ?1 WHERE id = ?2",
+                params![rel, id],
+            );
+            db_paths_updated = true;
+        }
+    }
+
+    if !to_migrate.is_empty() {
+        // Phase 1: Ensure document_key exists in app_meta and is durably persisted to the vault
+        // BEFORE touching any plaintext file on disk.
+        let (doc_key, created_key) = get_or_create_doc_key(db)?;
+        if created_key {
+            if let Some((key, salt)) = vault_creds {
+                let bytes = db.serialize().map_err(|e| e.to_string())?;
+                crate::db::vault::write_atomic(dir, &bytes, key, salt)?;
             }
         }
-        return Ok(report);
-    }
 
-    // Phase 1: Ensure document_key exists in app_meta and is durably persisted to the vault
-    // BEFORE touching any plaintext file on disk.
-    let (doc_key, created_key) = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        get_or_create_doc_key(db)?
-    };
-    if created_key {
-        persist_db_in_dir(dir, state)?;
-    }
+        // Phase 2: Encrypt each plaintext file atomically in place.
+        let total = to_migrate.len();
+        for (idx, (id, stored_path, file_name, full)) in to_migrate.into_iter().enumerate() {
+            before_file(idx, &file_name)?;
+            let plaintext = std::fs::read(&full).map_err(|e| e.to_string())?;
+            if !is_encrypted_doc(&plaintext) {
+                write_encrypted_doc_atomic(&full, &plaintext, &doc_key)?;
+                report.encrypted_count += 1;
+            }
 
-    // Phase 2: Encrypt each plaintext file atomically in place.
-    let mut db_paths_updated = false;
-    let total = to_migrate.len();
-    for (idx, (id, stored_path, file_name, full)) in to_migrate.into_iter().enumerate() {
-        before_file(idx, &file_name)?;
-        let plaintext = std::fs::read(&full).map_err(|e| e.to_string())?;
-        if !is_encrypted_doc(&plaintext) {
-            write_encrypted_doc_atomic(&full, &plaintext, &doc_key)?;
-            report.encrypted_count += 1;
-        }
-
-        // Normalize absolute paths into portable relative paths when under `dir/documents/`.
-        if Path::new(&stored_path).is_absolute() {
+            // Normalize legacy/absolute paths into portable relative paths when under `dir/documents/`.
             if let Some(rel) = extract_documents_rel(&stored_path) {
-                let guard = state.db.lock().map_err(|e| e.to_string())?;
-                if let Some(db) = guard.as_ref() {
+                if rel != stored_path {
                     let conn = db.conn.lock().map_err(|e| e.to_string())?;
                     let _ = conn.execute(
                         "UPDATE document SET file_path = ?1 WHERE id = ?2",
@@ -289,24 +292,44 @@ where
                     db_paths_updated = true;
                 }
             }
+            on_progress(idx + 1, total, &file_name);
         }
-        on_progress(idx + 1, total, &file_name);
     }
 
     if db_paths_updated {
-        persist_db_in_dir(dir, state)?;
-    }
-
-    // Startup sweep: remove any orphaned files in documents/ not referenced by any document row.
-    if let Ok(guard) = state.db.lock() {
-        if let Some(db) = guard.as_ref() {
-            if let Ok(conn) = db.conn.lock() {
-                let _ = sweep_orphan_doc_files(dir, &conn);
-            }
+        if let Some((key, salt)) = vault_creds {
+            let bytes = db.serialize().map_err(|e| e.to_string())?;
+            crate::db::vault::write_atomic(dir, &bytes, key, salt)?;
         }
     }
 
+    // Startup sweep: remove any orphaned files in documents/ not referenced by any document row.
+    if let Ok(conn) = db.conn.lock() {
+        let _ = sweep_orphan_doc_files(dir, &conn);
+    }
+
     Ok(report)
+}
+
+pub fn migrate_plaintext_documents_with_hook<P, B>(
+    dir: &Path,
+    state: &AppState,
+    on_progress: P,
+    before_file: B,
+) -> Result<MigrationReport, String>
+where
+    P: FnMut(usize, usize, &str),
+    B: FnMut(usize, &str) -> Result<(), String>,
+{
+    let db_guard = state.db.lock().map_err(|e| e.to_string())?;
+    let key_guard = state.key.lock().map_err(|e| e.to_string())?;
+    let salt_guard = state.salt.lock().map_err(|e| e.to_string())?;
+    let db = db_guard.as_ref().ok_or("Database not unlocked")?;
+    let creds = match (key_guard.as_ref(), salt_guard.as_ref()) {
+        (Some(k), Some(s)) => Some((k, s)),
+        _ => None,
+    };
+    migrate_plaintext_documents_for_db_with_hook(dir, db, creds, on_progress, before_file)
 }
 
 /// Removes candidate document files on disk ONLY if no remaining `document` row
@@ -405,12 +428,11 @@ pub fn migrate_plaintext_documents(dir: &Path, state: &AppState) -> Result<Migra
     migrate_plaintext_documents_with_hook(dir, state, |_, _, _| {}, |_, _| Ok(()))
 }
 
-/// Collects all referenced document files for inclusion in a backup archive.
-/// Ensures every bundled document is encrypted with `doc_key` (never writes plaintext into a backup).
-pub fn collect_backup_documents(
-    dir: &Path,
-    db: &AppDb,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub type BackupDocRefs = (Option<[u8; 32]>, Vec<(String, String)>);
+
+/// Reads document references and `document_key` from SQLite without touching disk files,
+/// so async backup commands can offload disk I/O and encryption onto `spawn_blocking`.
+pub fn collect_backup_doc_refs(db: &AppDb) -> Result<BackupDocRefs, String> {
     let rows: Vec<(String, String)> = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
@@ -425,26 +447,38 @@ pub fn collect_backup_documents(
     };
 
     if rows.is_empty() {
-        return Ok(vec![]);
+        return Ok((None, vec![]));
     }
 
     let (doc_key, _created) = get_or_create_doc_key(db)?;
+    Ok((Some(doc_key), rows))
+}
+
+/// Reads and encrypts referenced backup documents from disk.
+pub fn read_backup_documents_from_refs(
+    dir: &Path,
+    doc_key: Option<[u8; 32]>,
+    rows: &[(String, String)],
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let doc_key = doc_key.ok_or_else(|| "Missing document encryption key".to_string())?;
     let mut seen = std::collections::HashSet::new();
     let mut docs = Vec::new();
 
     for (parent_entry_id, stored_path) in rows {
-        let full = resolve_doc_path(dir, &stored_path);
+        let full = resolve_doc_path(dir, stored_path);
         if !full.is_file() {
             continue;
         }
-        let rel = extract_documents_rel(&stored_path).unwrap_or_else(|| {
+        let rel = extract_documents_rel(stored_path).unwrap_or_else(|| {
             let fname = full
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("attachment");
             format!("documents/{}/{}", parent_entry_id, fname)
         });
-        // Validate path safety before packing
         validate_safe_rel_doc_path(&rel)?;
         if !seen.insert(rel.clone()) {
             continue;
@@ -459,6 +493,16 @@ pub fn collect_backup_documents(
     }
 
     Ok(docs)
+}
+
+/// Collects all referenced document files for inclusion in a backup archive.
+/// Ensures every bundled document is encrypted with `doc_key` (never writes plaintext into a backup).
+pub fn collect_backup_documents(
+    dir: &Path,
+    db: &AppDb,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let (doc_key, rows) = collect_backup_doc_refs(db)?;
+    read_backup_documents_from_refs(dir, doc_key, &rows)
 }
 
 /// Encodes a backup archive bundling the v1 encrypted vault and encrypted documents:
@@ -516,6 +560,12 @@ pub fn decode_backup_archive(raw: &[u8]) -> Result<DecodedBackupArchive<'_>, Str
     let doc_count = u32::from_le_bytes(raw[pos..pos + 4].try_into().unwrap()) as usize;
     pos += 4;
 
+    // Each document entry requires at least 4 (rel_len) + 12 ("documents/a") + 8 (data_len) bytes.
+    let remaining = raw.len().saturating_sub(pos);
+    if doc_count > remaining / 12 {
+        return Err("Corrupt backup archive (invalid document count)".to_string());
+    }
+
     let mut documents = Vec::with_capacity(doc_count);
     for _ in 0..doc_count {
         if raw.len() < pos + 4 {
@@ -551,10 +601,19 @@ pub fn decode_backup_archive(raw: &[u8]) -> Result<DecodedBackupArchive<'_>, Str
     })
 }
 
-/// Unpacks encrypted document entries from a backup archive into `dir/documents/...`.
-pub fn unpack_backup_documents(dir: &Path, docs: &[(String, &[u8])]) -> Result<(), String> {
-    for (rel, data) in docs {
+/// Unpacks encrypted document entries from a backup archive into `dir/documents/...`,
+/// invoking `before_doc(index, rel_path)` before writing each entry.
+pub fn unpack_backup_documents_with_hook<F>(
+    dir: &Path,
+    docs: &[(String, &[u8])],
+    mut before_doc: F,
+) -> Result<(), String>
+where
+    F: FnMut(usize, &str) -> Result<(), String>,
+{
+    for (idx, (rel, data)) in docs.iter().enumerate() {
         let safe_rel = validate_safe_rel_doc_path(rel)?;
+        before_doc(idx, rel)?;
         let dest = dir.join(safe_rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -574,6 +633,11 @@ pub fn unpack_backup_documents(dir: &Path, docs: &[(String, &[u8])]) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Unpacks encrypted document entries from a backup archive into `dir/documents/...`.
+pub fn unpack_backup_documents(dir: &Path, docs: &[(String, &[u8])]) -> Result<(), String> {
+    unpack_backup_documents_with_hook(dir, docs, |_, _| Ok(()))
 }
 
 /// Writes an archive atomically to `dest`.

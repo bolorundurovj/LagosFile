@@ -14,6 +14,16 @@ pub struct AppState {
     pub recovery_verified: Mutex<bool>,
     pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
     pub temp_preview_files: Mutex<Vec<std::path::PathBuf>>,
+    /// Serializes all async vault persistence and lifecycle transitions
+    /// (`persist_db`, `lock_db`, `unlock_*`, `change_pin`, `reset_pin`, `restore_*`, `setup_pin`)
+    /// so `spawn_blocking` writes cannot reorder or race with PIN changes or lock.
+    pub vault_io_lock: tokio::sync::Mutex<()>,
+}
+
+pub fn cleanup_session_artifacts(dir: &std::path::Path, state: &AppState) {
+    commands::lirs::stop_bridge(state);
+    db::doc_store::cleanup_temp_previews(state);
+    let _ = std::fs::remove_file(dir.join("pending_filing.json"));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -106,6 +116,14 @@ pub fn run() {
             commands::export::open_file,
             commands::export::print_file,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    cleanup_session_artifacts(&db::app_dir(), &state);
+                }
+            }
+        });
 }

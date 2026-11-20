@@ -727,3 +727,313 @@ fn test_s3_reset_pin_requires_prior_recovery_and_syncs_keyring() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn test_concurrent_persist_and_change_pin_are_strictly_serialized() {
+    use lagosfile_lib::{
+        commands::auth::{
+            change_pin_in_dir_async, persist_db_in_dir_async_with_hook, setup_pin_in_dir,
+            unlock_db_in_dir,
+        },
+        AppState,
+    };
+    use std::sync::Arc;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-serial-io-{}", uuid::Uuid::new_v4()));
+    let state = Arc::new(AppState::default());
+    setup_pin_in_dir(&dir, "1111", &state).unwrap();
+
+    // Seed initial taxpayer row so we can mutate it between overlapping writes.
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-1', 'Initial', '12345678-0001', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Start save 1 and pause inside its before_rename hook while change_pin queues behind vault_io_lock.
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let state1 = Arc::clone(&state);
+    let dir1 = dir.clone();
+
+    mutate_taxpayer_name(&state, "Older Write");
+    let t1 = tokio::spawn(async move {
+        persist_db_in_dir_async_with_hook(dir1, &state1, move |_| {
+            let _ = entered_tx.send(());
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            Ok(())
+        })
+        .await
+    });
+
+    // Await (non-blocking) until t1 is actively inside spawn_blocking (holding vault_io_lock).
+    entered_rx.await.unwrap();
+
+    // Mutate DB to newer state and trigger change_pin concurrently; it MUST serialize after t1.
+    mutate_taxpayer_name(&state, "Newer Write");
+    let state2 = Arc::clone(&state);
+    let dir2 = dir.clone();
+    let t2 = tokio::spawn(async move {
+        change_pin_in_dir_async(dir2, "1111".to_string(), "2222".to_string(), &state2, false).await
+    });
+
+    t1.await.unwrap().unwrap();
+    t2.await.unwrap().unwrap();
+
+    // Reopen from disk: new PIN MUST work and data MUST reflect "Newer Write", never "Older Write".
+    let verify = AppState::default();
+    let tp = unlock_db_in_dir(&dir, "2222", &verify)
+        .expect("new PIN must unlock after serialized persist + change_pin")
+        .unwrap();
+    assert_eq!(tp.full_name, "Newer Write");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn test_lock_db_waits_for_inflight_change_pin_and_leaves_no_key_leak() {
+    use lagosfile_lib::{
+        commands::auth::{change_pin_in_dir_async, lock_db_in_dir, setup_pin_in_dir, unlock_db_in_dir},
+        AppState,
+    };
+    use std::sync::Arc;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-lock-race-{}", uuid::Uuid::new_v4()));
+    let state = Arc::new(AppState::default());
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let s1 = Arc::clone(&state);
+    let d1 = dir.clone();
+    let s2 = Arc::clone(&state);
+    let d2 = dir.clone();
+
+    let t_change = tokio::spawn(async move {
+        change_pin_in_dir_async(d1, "1234".into(), "5678".into(), &s1, false).await
+    });
+    tokio::task::yield_now().await;
+    let t_lock = tokio::spawn(async move { lock_db_in_dir(&d2, &s2).await });
+
+    let change_res = t_change.await.unwrap();
+    let lock_res = t_lock.await.unwrap();
+    assert!(lock_res.is_ok());
+
+    // After both finish, if lock ran second, state MUST be completely locked (no leaked key or db).
+    // Even if lock ran first (making change_pin return "Database not unlocked"), state MUST be locked.
+    assert!(state.db.lock().unwrap().is_none(), "db must be None after lock");
+    assert!(state.key.lock().unwrap().is_none(), "key must be None after lock");
+    assert!(state.salt.lock().unwrap().is_none(), "salt must be None after lock");
+
+    let expected_pin = if change_res.is_ok() { "5678" } else { "1234" };
+    let reopened = AppState::default();
+    unlock_db_in_dir(&dir, expected_pin, &reopened).expect("vault must reopen cleanly with consistent PIN");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_failed_restore_on_second_attachment_preserves_original_vault_and_documents() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{
+                backup_db_to_path_in_dir, restore_backup_fresh_in_dir_with_hook,
+                restore_db_in_dir_with_hook, setup_pin_in_dir, unlock_db_in_dir,
+            },
+            document::attach_document_in_dir,
+        },
+        db::doc_store,
+        AppState,
+    };
+
+    // 1. Build a source backup containing two encrypted documents.
+    let src_dir = std::env::temp_dir().join(format!("lagosfile-res-src-{}", uuid::Uuid::new_v4()));
+    let src_state = AppState::default();
+    setup_pin_in_dir(&src_dir, "9999", &src_state).unwrap();
+    {
+        let guard = src_state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-b', 'Backup User', '11111111-0001', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f-b', 'tp-b', 2025, 'Draft', 'v1', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES ('inc-b', 'f-b', 'employment', 1000000)",
+            [],
+        ).unwrap();
+    }
+    let tmp_a = src_dir.join("a.txt");
+    let tmp_b = src_dir.join("b.txt");
+    std::fs::write(&tmp_a, b"backup doc A").unwrap();
+    std::fs::write(&tmp_b, b"backup doc B").unwrap();
+    attach_document_in_dir(&src_dir, "inc-b", "income", tmp_a.to_str().unwrap(), "a.txt", "text/plain", 12, &src_state).unwrap();
+    attach_document_in_dir(&src_dir, "inc-b", "income", tmp_b.to_str().unwrap(), "b.txt", "text/plain", 12, &src_state).unwrap();
+
+    let backup_path = src_dir.join("backup.lgfa");
+    backup_db_to_path_in_dir(&src_dir, &backup_path, &src_state).unwrap();
+
+    // 2. Create a live target vault with its own taxpayer + original attachment.
+    let live_dir = std::env::temp_dir().join(format!("lagosfile-res-live-{}", uuid::Uuid::new_v4()));
+    let live_state = AppState::default();
+    setup_pin_in_dir(&live_dir, "1111", &live_state).unwrap();
+    {
+        let guard = live_state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-orig', 'Original User', '22222222-0001', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f-orig', 'tp-orig', 2025, 'Draft', 'v1', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES ('inc-orig', 'f-orig', 'employment', 500000)",
+            [],
+        ).unwrap();
+    }
+    let orig_src = live_dir.join("orig.txt");
+    std::fs::write(&orig_src, b"original secret doc").unwrap();
+    let orig_doc = attach_document_in_dir(&live_dir, "inc-orig", "income", orig_src.to_str().unwrap(), "orig.txt", "text/plain", 19, &live_state).unwrap();
+    let orig_rel = orig_doc["filePath"].as_str().unwrap().to_string();
+
+    // 3. Inject failure on 2nd attachment during Settings restore -> original vault & doc MUST survive restart!
+    let err = restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &live_state, |idx, _| {
+        if idx == 1 {
+            Err("simulated disk full on 2nd attachment".to_string())
+        } else {
+            Ok(())
+        }
+    })
+    .expect_err("restore must fail on injected 2nd-attachment error");
+    assert!(err.contains("simulated disk full"));
+
+    let restarted = AppState::default();
+    let tp = unlock_db_in_dir(&live_dir, "1111", &restarted).unwrap().unwrap();
+    assert_eq!(tp.full_name, "Original User", "original DB must remain untouched on disk");
+    let orig_bytes = {
+        let guard = restarted.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let dk = doc_store::get_doc_key(db).unwrap().unwrap();
+        let raw = std::fs::read(doc_store::resolve_doc_path(&live_dir, &orig_rel)).unwrap();
+        doc_store::decrypt_doc(&raw, &dk).unwrap()
+    };
+    assert_eq!(orig_bytes, b"original secret doc");
+
+    // 4. Successful Settings restore sweeps prior vault's documents cleanly.
+    restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &restarted, |_, _| Ok(())).unwrap();
+    assert!(
+        !doc_store::resolve_doc_path(&live_dir, &orig_rel).exists(),
+        "prior vault's document must be swept after successful restore"
+    );
+
+    // 5. Fresh restore failing on 2nd attachment must NOT leave lagosfile.db.enc blocking retry.
+    let fresh_dir = std::env::temp_dir().join(format!("lagosfile-res-fresh-{}", uuid::Uuid::new_v4()));
+    let fresh_state = AppState::default();
+    let fresh_err = restore_backup_fresh_in_dir_with_hook(&fresh_dir, &backup_path, "9999", &fresh_state, |idx, _| {
+        if idx == 1 {
+            Err("simulated fresh failure".to_string())
+        } else {
+            Ok(())
+        }
+    })
+    .expect_err("fresh restore must fail");
+    assert!(fresh_err.contains("simulated fresh failure"));
+    assert!(!fresh_dir.join("lagosfile.db.enc").exists(), "failed fresh restore must not leave vault file");
+
+    // Retry succeeds cleanly.
+    let tp_fresh = restore_backup_fresh_in_dir_with_hook(&fresh_dir, &backup_path, "9999", &fresh_state, |_, _| Ok(()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(tp_fresh.full_name, "Backup User");
+
+    let _ = std::fs::remove_dir_all(&src_dir);
+    let _ = std::fs::remove_dir_all(&live_dir);
+    let _ = std::fs::remove_dir_all(&fresh_dir);
+}
+
+#[test]
+fn test_vault_safety_guards_missing_salt_exclusive_abort_oom_and_unlock_migration_error() {
+    use lagosfile_lib::{
+        commands::auth::{setup_pin_in_dir, unlock_db_in_dir_with_hook},
+        db::{doc_store, vault},
+        services::security,
+        AppState,
+    };
+
+    // 1. Legacy vault missing .salt in decode_with_key MUST error instead of fabricating random salt.
+    let dir = std::env::temp_dir().join(format!("lagosfile-guards-{}", uuid::Uuid::new_v4()));
+    let orig_key = create_legacy_vault_dir(&dir, "1234");
+    std::fs::remove_file(dir.join(".salt")).unwrap();
+    let raw = std::fs::read(dir.join("lagosfile.db.enc")).unwrap();
+    let err = vault::decode_with_key(&raw, &orig_key, Some(&dir.join(".salt")))
+        .err()
+        .expect("missing legacy .salt must error instead of generating a random salt");
+    assert!(err.contains(".salt"));
+
+    // 2. Interrupted write_new_exclusive leaves no lagosfile.db.enc blocking retry.
+    let setup_dir = std::env::temp_dir().join(format!("lagosfile-excl-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&setup_dir).unwrap();
+    let salt = security::generate_salt();
+    let key = security::derive_key("4321", &salt);
+    let _ = vault::write_new_exclusive_with_hook(&setup_dir, b"hello", &key, &salt, |_| {
+        Err("simulated crash before claim".to_string())
+    });
+    assert!(!setup_dir.join("lagosfile.db.enc").exists(), "failed exclusive write must not leave vault file");
+    vault::write_new_exclusive(&setup_dir, b"hello", &key, &salt).expect("retry must succeed");
+
+    // 3. Corrupt 20-byte LGFA archive with u32::MAX doc_count is rejected cleanly without OOM abort.
+    let mut bad_archive = Vec::new();
+    bad_archive.extend_from_slice(b"LGFA");
+    bad_archive.push(1u8);
+    bad_archive.extend_from_slice(&0u64.to_le_bytes()); // vault_len = 0
+    bad_archive.extend_from_slice(&u32::MAX.to_le_bytes()); // bogus doc_count
+    let oom_err = doc_store::decode_backup_archive(&bad_archive)
+        .err()
+        .expect("huge doc_count must be rejected before allocation");
+    assert!(oom_err.contains("document count"));
+
+    // 4. Unlock failure during document migration leaves AppState completely locked.
+    let mig_dir = std::env::temp_dir().join(format!("lagosfile-mig-fail-{}", uuid::Uuid::new_v4()));
+    {
+        let st = AppState::default();
+        setup_pin_in_dir(&mig_dir, "5555", &st).unwrap();
+        let doc_path = mig_dir.join("documents").join("inc-1").join("plain.txt");
+        std::fs::create_dir_all(doc_path.parent().unwrap()).unwrap();
+        std::fs::write(&doc_path, b"plaintext").unwrap();
+        {
+            let guard = st.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO document (id, parent_entry_id, parent_entry_type, file_path, file_name, file_type, file_size_bytes, uploaded_at)
+                 VALUES ('d1', 'inc-1', 'income', 'documents/inc-1/plain.txt', 'plain.txt', 'text/plain', 9, '2026-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+        }
+        lagosfile_lib::commands::auth::persist_db_in_dir(&mig_dir, &st).unwrap();
+    }
+    let locked_state = AppState::default();
+    let mig_err = unlock_db_in_dir_with_hook(&mig_dir, "5555", &locked_state, |_, _| {
+        Err("simulated migration failure".to_string())
+    })
+    .expect_err("unlock must fail when migration fails");
+    assert!(mig_err.contains("simulated migration failure"));
+    assert!(locked_state.db.lock().unwrap().is_none(), "AppState.db must remain None on migration error");
+    assert!(locked_state.key.lock().unwrap().is_none(), "AppState.key must remain None on migration error");
+    assert!(locked_state.salt.lock().unwrap().is_none(), "AppState.salt must remain None on migration error");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&setup_dir);
+    let _ = std::fs::remove_dir_all(&mig_dir);
+}

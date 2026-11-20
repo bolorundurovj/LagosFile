@@ -127,8 +127,16 @@ pub fn decode_with_key(
         let plaintext =
             security::decrypt(raw, key).map_err(|_| "Could not decrypt database.".to_string())?;
         let salt = legacy_salt_file
-            .and_then(|p| read_salt_file(p).ok())
-            .unwrap_or_else(security::generate_salt);
+            .ok_or_else(|| {
+                "Legacy vault is missing its .salt file and cannot safely preserve PIN unlock."
+                    .to_string()
+            })
+            .and_then(|p| {
+                read_salt_file(p).map_err(|_| {
+                    "Legacy vault .salt file is missing or unreadable; refusing to unlock with an unknown salt."
+                        .to_string()
+                })
+            })?;
         Ok(DecodedVault {
             plaintext,
             key: *key,
@@ -194,42 +202,62 @@ pub fn write_atomic(
 }
 
 /// Exclusively creates a brand-new v1 vault at `dir/lagosfile.db.enc`.
-/// Fails if a vault already exists (atomic via `create_new`), and cleans up any leftover `.salt`.
-pub fn write_new_exclusive(
+/// Writes and fsyncs a temp file first, then claims `target` atomically via `hard_link`
+/// (failing with a friendly message if a vault already exists) so an interrupted write can
+/// never leave a partial/0-byte file at `lagosfile.db.enc` blocking future setup retries.
+pub fn write_new_exclusive_with_hook<F>(
     dir: &Path,
     plaintext: &[u8],
     key: &[u8; 32],
     salt: &[u8; SALT_LEN],
-) -> Result<(), String> {
+    before_claim: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
     let encoded = encode(plaintext, key, salt)?;
     let target = vault_path(dir);
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&target)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                "A vault already exists. Please unlock with your PIN instead.".to_string()
-            } else {
-                e.to_string()
-            }
-        })?;
+    let tmp = dir.join(format!("lagosfile.db.new.{}.tmp", uuid::Uuid::new_v4()));
 
     let write_res = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
         file.write_all(&encoded)?;
         file.sync_all()?;
         Ok(())
     })();
 
     if let Err(e) = write_res {
-        drop(file);
-        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+
+    if let Err(e) = before_claim(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    let claim_res = std::fs::hard_link(&tmp, &target);
+    let _ = std::fs::remove_file(&tmp);
+
+    if let Err(e) = claim_res {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
+        }
         return Err(e.to_string());
     }
 
     let _ = std::fs::remove_file(legacy_salt_path(dir));
     Ok(())
+}
+
+/// Exclusively creates a brand-new v1 vault at `dir/lagosfile.db.enc`.
+pub fn write_new_exclusive(
+    dir: &Path,
+    plaintext: &[u8],
+    key: &[u8; 32],
+    salt: &[u8; SALT_LEN],
+) -> Result<(), String> {
+    write_new_exclusive_with_hook(dir, plaintext, key, salt, |_| Ok(()))
 }
 
 /// Writes a self-describing v1 vault backup atomically to an arbitrary destination path.
