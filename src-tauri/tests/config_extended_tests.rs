@@ -220,7 +220,7 @@ fn test_config_minimum_tax_rate_default() {
     )
     .unwrap();
 
-    assert_eq!(saved.minimum_tax_rate, 0.01);
+    assert_eq!(saved.minimum_tax_rate, 0.0);
 }
 
 #[test]
@@ -402,4 +402,91 @@ fn test_s20_exported_config_imports_again() {
     assert_eq!(reimported.bands.len(), active.bands.len());
     assert_eq!(reimported.minimum_tax_rate, active.minimum_tax_rate);
     assert_eq!(reimported.relief_caps.rent_relief_cap, active.relief_caps.rent_relief_cap);
+}
+
+#[test]
+fn test_save_config_validates_relief_caps_cgt_thresholds_and_allowance_rates() {
+    let db = AppDb::open_in_memory().unwrap();
+
+    // Missing/null allowanceRates must fail (not save literal "null")
+    let err_null_rates = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "bad-null-rates",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {},
+            "cgtThresholds": {}
+        }),
+    )
+    .unwrap_err();
+    assert!(err_null_rates.to_string().contains("allowanceRates"));
+
+    // Out-of-range allowance rate (> 1.0) must fail
+    let err_bad_rate = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "bad-rate",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {},
+            "cgtThresholds": {},
+            "allowanceRates": {"computer_laptop": 1.5}
+        }),
+    )
+    .unwrap_err();
+    assert!(err_bad_rate.to_string().contains("between 0 and 1"));
+
+    // Negative rentReliefCap must fail
+    let err_neg_cap = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "bad-cap",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {"rentReliefCap": -100, "rentReliefRate": 0.2},
+            "cgtThresholds": {},
+            "allowanceRates": {}
+        }),
+    )
+    .unwrap_err();
+    assert!(err_neg_cap.to_string().contains("Rent relief cap"));
+
+    // Negative CGT threshold must fail
+    let err_neg_cgt = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "bad-cgt",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {},
+            "cgtThresholds": {"proceedsThreshold": -1, "gainThreshold": 10000000},
+            "allowanceRates": {}
+        }),
+    )
+    .unwrap_err();
+    assert!(err_neg_cgt.to_string().contains("CGT thresholds"));
+
+    // Fresh install saving a custom config then re-running migrate() must NOT emit a bogus legacy upgrade notice.
+    ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "my-custom-fresh",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {"rentReliefCap": 500000, "rentReliefRate": 0.20, "craEnabled": false},
+            "cgtThresholds": {"proceedsThreshold": 150000000, "gainThreshold": 10000000},
+            "allowanceRates": {"computer_laptop": 0.25}
+        }),
+    )
+    .unwrap();
+    let bytes = db.serialize().unwrap();
+    let db2 = AppDb::open_in_memory().unwrap();
+    db2.load_from_bytes(&bytes).unwrap();
+    let conn = db2.conn.lock().unwrap();
+    let notices = lagosfile_lib::db::get_migration_notices(&conn);
+    assert!(
+        notices.is_empty(),
+        "fresh install saving custom config must not emit legacy upgrade notice, got: {notices:?}"
+    );
 }

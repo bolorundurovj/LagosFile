@@ -54,6 +54,17 @@ pub async fn get_active_config(state: State<'_, AppState>) -> Result<TaxConfig, 
 }
 
 #[tauri::command]
+pub async fn get_config_for_filing(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<TaxConfig, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    ConfigService::get_for_filing(&conn, &filing_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn list_configs(state: State<'_, AppState>) -> Result<Vec<TaxConfig>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;

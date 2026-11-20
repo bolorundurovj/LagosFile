@@ -92,6 +92,7 @@ pub fn run() {
             commands::filing::estimate_tax,
             // Config
             commands::config::get_active_config,
+            commands::config::get_config_for_filing,
             commands::config::list_configs,
             commands::config::save_config,
             commands::config::export_config_json,

@@ -177,7 +177,7 @@ INSERT OR IGNORE INTO tax_config (
       {"lower":1600000,"upper":3200000,"rate":0.21},
       {"lower":3200000,"upper":null,"rate":0.24}
     ]',
-    '{"rentReliefCap":500000,"rentReliefRate":0.20}',
+    '{"rentReliefCap":0,"rentReliefRate":0.0,"craEnabled":true}',
     '{"proceedsThreshold":150000000,"gainThreshold":10000000}',
     '{"computer_laptop":0.25,"router_networking":0.25,"monitor":0.25,"keyboard_peripherals":0.25,"camera_recording":0.25,"software_licence":0.25,"other":0.25}',
     0.01,

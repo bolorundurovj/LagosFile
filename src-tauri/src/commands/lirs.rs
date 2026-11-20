@@ -349,7 +349,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
                     &row.get::<_, String>(5)?,
                     "%Y-%m-%d",
                 )
-                .unwrap_or_default(),
+                .ok(),
                 tax_written_down_value: row.get(6)?,
                 annual_allowance_rate: row.get(7)?,
                 annual_allowance_amount: row.get(8)?,

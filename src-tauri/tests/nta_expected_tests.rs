@@ -52,6 +52,7 @@ fn nta_2025_config(minimum_tax_rate: f64) -> TaxConfig {
         relief_caps: ReliefCaps {
             rent_relief_cap: 500_000.0,
             rent_relief_rate: 0.20,
+            cra_enabled: false,
             pension_cap: None,
             nhis_cap: None,
             nhf_cap: None,
@@ -804,4 +805,288 @@ fn test_s14_bik_persists_duplicates_exports_and_maps_in_lirs_payload() {
         .expect("BIK entry in JSON export");
     assert_eq!(bik_row["bikCategory"], "accommodation");
     assert_eq!(bik_row["bikCost"].as_f64(), Some(3_000_000.0));
+}
+
+#[test]
+fn test_pita_2025_applies_consolidated_relief_allowance_and_zero_rent_relief() {
+    use lagosfile_lib::commands::filing::{estimate_tax_for_year_with_conn, EstimateIncome, EstimateRelief};
+    use lagosfile_lib::db::AppDb;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+
+    // Hand-computed PITA (Finance Act 2020) on ₦5,000,000 salary (income year 2025):
+    //   CRA = max(₦200,000, 1% * ₦5,000,000) + 20% * ₦5,000,000 = ₦200,000 + ₦1,000,000 = ₦1,200,000
+    //   Chargeable = ₦5,000,000 - ₦1,200,000 = ₦3,800,000
+    //   Bands: 300k@7% (21k) + 300k@11% (33k) + 500k@15% (75k) + 500k@19% (95k)
+    //        + 1.6m@21% (336k) + 600k@24% (144k) = ₦704,000
+    let res_no_rent = estimate_tax_for_year_with_conn(
+        &conn,
+        vec![EstimateIncome {
+            income_type: "employment".to_string(),
+            gross_amount_ngn: 5_000_000.0,
+            ..Default::default()
+        }],
+        vec![],
+        vec![],
+        Some(2025),
+    )
+    .unwrap();
+    assert_ngn_eq(res_no_rent.consolidated_relief_allowance, 1_200_000.0, "PITA CRA on 5m");
+    assert_ngn_eq(res_no_rent.rent_relief_applied, 0.0, "PITA must have 0 rent relief");
+    assert_ngn_eq(res_no_rent.chargeable_income, 3_800_000.0, "PITA chargeable on 5m");
+    assert_ngn_eq(res_no_rent.final_tax_payable, 704_000.0, "PITA tax on 5m");
+
+    // Entering annual rent under PITA must NOT grant NTA 2025 rent relief (tax stays ₦704,000).
+    let res_with_rent = estimate_tax_for_year_with_conn(
+        &conn,
+        vec![EstimateIncome {
+            income_type: "employment".to_string(),
+            gross_amount_ngn: 5_000_000.0,
+            ..Default::default()
+        }],
+        vec![],
+        vec![EstimateRelief {
+            relief_type: "rent".to_string(),
+            claimed_amount: 2_500_000.0,
+        }],
+        Some(2025),
+    )
+    .unwrap();
+    assert_ngn_eq(res_with_rent.rent_relief_applied, 0.0, "PITA ignores NTA rent relief");
+    assert_ngn_eq(res_with_rent.final_tax_payable, 704_000.0, "PITA tax unchanged by rent");
+
+    // Same ₦5m + ₦2.5m rent under income year 2026 uses NTA 2025 (no CRA, ₦500k rent relief -> ₦4.5m chargeable -> ₦600k tax).
+    let res_nta = estimate_tax_for_year_with_conn(
+        &conn,
+        vec![EstimateIncome {
+            income_type: "employment".to_string(),
+            gross_amount_ngn: 5_000_000.0,
+            ..Default::default()
+        }],
+        vec![],
+        vec![EstimateRelief {
+            relief_type: "rent".to_string(),
+            claimed_amount: 2_500_000.0,
+        }],
+        Some(2026),
+    )
+    .unwrap();
+    assert_ngn_eq(res_nta.consolidated_relief_allowance, 0.0, "NTA 2025 has no CRA");
+    assert_ngn_eq(res_nta.rent_relief_applied, 500_000.0, "NTA 2025 caps rent relief at 500k");
+    assert_ngn_eq(res_nta.final_tax_payable, 600_000.0, "NTA 2025 tax on 4.5m chargeable");
+}
+
+#[test]
+fn test_ftc_netted_digital_assets_multiple_accommodation_biks_and_negative_cgt_gain() {
+    let cfg = nta_2025_config(0.0);
+
+    // 1. Digital asset +₦10M foreign gain with ₦3M foreign tax paid, paired with -₦8M digital loss
+    //    and ₦10M domestic salary -> digital_net = ₦2M, total_gross = ₦12M.
+    //    FTC attributable to digital assets must be capped at tax_before_credits * (2M / 12M), NOT (10M / 12M)!
+    let salary = employment_entry(10_000_000.0);
+    let dig_gain = IncomeEntry {
+        income_type: "digital_asset".to_string(),
+        gross_amount_ngn: 10_000_000.0,
+        is_foreign: true,
+        foreign_tax_paid_ngn: Some(3_000_000.0),
+        ..Default::default()
+    };
+    let dig_loss = IncomeEntry {
+        income_type: "digital_asset".to_string(),
+        gross_amount_ngn: -8_000_000.0,
+        ..Default::default()
+    };
+    let r_dig = ComputationEngine::compute(&[salary, dig_gain, dig_loss], &[], &[], &cfg).unwrap();
+    assert_ngn_eq(r_dig.total_gross_income, 12_000_000.0, "total gross with netted digital gain");
+    let expected_cap = r_dig.graduated_tax * (2_000_000.0 / 12_000_000.0);
+    assert_ngn_eq(
+        r_dig.foreign_tax_credits,
+        expected_cap,
+        "digital FTC must be capped by netted digital contribution (2M/12M)",
+    );
+
+    // 2. Two accommodation BIK entries on ₦10M salary (cap = ₦2M):
+    //    First accommodation (₦2M, no foreign tax) exhausts the 20% cap.
+    //    Second accommodation (₦3M, with ₦500k foreign tax) contributes ₦0 to total_gross,
+    //    so it MUST receive ₦0 foreign tax credit!
+    let accomm1 = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("accommodation".to_string()),
+        bik_cost: Some(2_000_000.0),
+        ..Default::default()
+    };
+    let accomm2 = IncomeEntry {
+        income_type: "benefits_in_kind".to_string(),
+        bik_category: Some("accommodation".to_string()),
+        bik_cost: Some(3_000_000.0),
+        is_foreign: true,
+        foreign_tax_paid_ngn: Some(500_000.0),
+        ..Default::default()
+    };
+    let r_bik = ComputationEngine::compute(
+        &[employment_entry(10_000_000.0), accomm1, accomm2],
+        &[],
+        &[],
+        &cfg,
+    )
+    .unwrap();
+    assert_ngn_eq(r_bik.total_gross_income, 12_000_000.0, "total gross with 2 accommodation BIKs");
+    assert_ngn_eq(
+        r_bik.foreign_tax_credits,
+        0.0,
+        "second accommodation BIK past 20% cap contributed ₦0 so FTC must be ₦0",
+    );
+
+    // 3. Negative share gain (loss) must NOT produce negative cgt_exempt_amount or offset salary.
+    let share_loss = IncomeEntry {
+        income_type: "capital_gain_shares".to_string(),
+        gross_amount_ngn: -5_000_000.0,
+        cgt_proceeds: Some(200_000_000.0),
+        cgt_gain: Some(-5_000_000.0),
+        ..Default::default()
+    };
+    let r_loss =
+        ComputationEngine::compute(&[employment_entry(5_000_000.0), share_loss], &[], &[], &cfg)
+            .unwrap();
+    assert_ngn_eq(r_loss.cgt_exempt_amount, 0.0, "negative share gain must not produce negative exempt amount");
+    assert_ngn_eq(r_loss.total_gross_income, 5_000_000.0, "share loss must not reduce salary");
+}
+
+#[test]
+fn test_migrations_backfill_unique_label_repin_seed_drafts_and_distribute_foreign_tax() {
+    use lagosfile_lib::db::{AppDb, PITA_CONFIG_ID, SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL};
+    use rusqlite::{params, Connection};
+
+    let tmp_db = std::env::temp_dir().join(format!("lagosfile-mig-test-{}.db", uuid::Uuid::new_v4()));
+    let raw = Connection::open(&tmp_db).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE taxpayer (id TEXT PRIMARY KEY, full_name TEXT NOT NULL, tin TEXT NOT NULL, created_at TEXT NOT NULL);
+         CREATE TABLE filing (
+             id TEXT PRIMARY KEY, taxpayer_id TEXT NOT NULL, parent_filing_id TEXT,
+             year_of_assessment INTEGER NOT NULL, status TEXT NOT NULL, filing_reference TEXT,
+             created_at TEXT NOT NULL, confirmed_at TEXT,
+             total_income_ngn REAL, chargeable_income REAL, tax_payable REAL, wht_credit REAL,
+             net_tax_payable REAL, minimum_tax REAL, final_tax_payable REAL,
+             tax_config_version TEXT NOT NULL, payment_date TEXT, payment_reference TEXT,
+             amount_paid REAL
+         );
+         CREATE TABLE income_entry (
+             id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, income_type TEXT NOT NULL,
+             description TEXT, gross_amount_ngn REAL NOT NULL DEFAULT 0, is_foreign INTEGER NOT NULL DEFAULT 0,
+             foreign_currency TEXT, foreign_amount REAL, income_date TEXT, fx_rate_fetched REAL,
+             fx_rate_cbn_override REAL, fx_rate_used REAL, fx_rate_source TEXT,
+             foreign_tax_paid_ngn REAL, is_cgt_exempt INTEGER NOT NULL DEFAULT 0,
+             cgt_proceeds REAL, cgt_gain REAL
+         );
+         CREATE TABLE capital_allowance (
+             id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, asset_description TEXT NOT NULL,
+             asset_type TEXT NOT NULL, asset_cost REAL NOT NULL DEFAULT 0, acquisition_date TEXT NOT NULL,
+             tax_written_down_value REAL NOT NULL DEFAULT 0, annual_allowance_rate REAL NOT NULL DEFAULT 0,
+             annual_allowance_amount REAL NOT NULL DEFAULT 0
+         );
+         CREATE TABLE relief_entry (
+             id TEXT PRIMARY KEY, filing_id TEXT NOT NULL, relief_type TEXT NOT NULL,
+             claimed_amount REAL NOT NULL DEFAULT 0, approved_amount REAL NOT NULL DEFAULT 0,
+             wht_ref TEXT, wht_income_type TEXT, wht_date TEXT, description TEXT
+         );
+         CREATE TABLE document (
+             id TEXT PRIMARY KEY, parent_entry_id TEXT NOT NULL, parent_entry_type TEXT NOT NULL,
+             file_path TEXT NOT NULL, file_name TEXT NOT NULL, file_type TEXT NOT NULL,
+             file_size_bytes INTEGER NOT NULL, uploaded_at TEXT NOT NULL
+         );
+         CREATE TABLE tax_config (
+             id TEXT PRIMARY KEY, version_label TEXT NOT NULL, governed_by TEXT NOT NULL,
+             bands_json TEXT NOT NULL, relief_caps_json TEXT NOT NULL, cgt_thresholds_json TEXT NOT NULL,
+             allowance_rates_json TEXT NOT NULL, minimum_tax_rate REAL NOT NULL,
+             is_active INTEGER NOT NULL DEFAULT 0, last_modified TEXT NOT NULL, modified_by TEXT NOT NULL DEFAULT 'system'
+         );",
+    )
+    .unwrap();
+
+    raw.execute(
+        "INSERT INTO taxpayer VALUES ('tp1', 'Tunde', '11111111-0001', '2025-01-01T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    // Seed v1 (active, system) + one unique historical config 'Custom-2023' (inactive)
+    let bands = r#"[{"lower":0,"upper":800000,"rate":0.0},{"lower":800000,"upper":null,"rate":0.15}]"#;
+    raw.execute(
+        "INSERT INTO tax_config VALUES (?1,?2,'NTA',?3,'{}','{}','{}',0.01,1,'2025-01-01T00:00:00Z','system')",
+        params![SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL, bands],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO tax_config VALUES ('hist-cfg-2023','Custom-2023','PITA',?1,'{}','{}','{}',0.01,0,'2023-01-01T00:00:00Z','user')",
+        params![bands],
+    )
+    .unwrap();
+
+    // 1. Draft 2025 on SEED_V1 -> must be re-pinned to PITA_CONFIG_ID on upgrade!
+    raw.execute(
+        "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,filing_reference,tax_config_version,created_at) VALUES ('f-draft-2025','tp1',2025,'Draft',NULL,?1,'2025-02-01T00:00:00Z')",
+        params![SEED_V1_CONFIG_LABEL],
+    )
+    .unwrap();
+    // 2. Confirmed 2024 on SEED_V1 -> must STAY pinned to SEED_V1_CONFIG_ID (immutable)!
+    raw.execute(
+        "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,filing_reference,tax_config_version,created_at) VALUES ('f-conf-2024','tp1',2024,'Confirmed','LIRS/REF/2024/00001',?1,'2025-01-15T00:00:00Z')",
+        params![SEED_V1_CONFIG_LABEL],
+    )
+    .unwrap();
+    // 3. Confirmed 2023 with unique label 'Custom-2023' -> must backfill to 'hist-cfg-2023', NOT active!
+    raw.execute(
+        "INSERT INTO filing (id,taxpayer_id,year_of_assessment,status,filing_reference,tax_config_version,created_at) VALUES ('f-hist-2023','tp1',2023,'Confirmed','LIRS/REF/2023/00001','Custom-2023','2024-01-15T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+
+    // Draft 2025 has two foreign income entries (₦6M and ₦4M) and a legacy ₦1M foreign_tax relief
+    raw.execute(
+        "INSERT INTO income_entry (id,filing_id,income_type,gross_amount_ngn,is_foreign) VALUES ('ie-f1','f-draft-2025','employment',6000000,1)",
+        [],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO income_entry (id,filing_id,income_type,gross_amount_ngn,is_foreign) VALUES ('ie-f2','f-draft-2025','business',4000000,1)",
+        [],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO relief_entry (id,filing_id,relief_type,claimed_amount,approved_amount) VALUES ('rel-ft','f-draft-2025','foreign_tax',1000000,1000000)",
+        [],
+    )
+    .unwrap();
+
+    drop(raw);
+    let bytes = std::fs::read(&tmp_db).unwrap();
+    let _ = std::fs::remove_file(&tmp_db);
+    let db = AppDb::open_in_memory().unwrap();
+    db.load_from_bytes(&bytes).unwrap();
+    let conn = db.conn.lock().unwrap();
+
+    let draft_cfg: String = conn
+        .query_row("SELECT tax_config_id FROM filing WHERE id='f-draft-2025'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(draft_cfg, PITA_CONFIG_ID, "Draft 2025 on SEED_V1 must re-pin to PITA_CONFIG_ID");
+
+    let conf_cfg: String = conn
+        .query_row("SELECT tax_config_id FROM filing WHERE id='f-conf-2024'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(conf_cfg, SEED_V1_CONFIG_ID, "Confirmed 2024 must remain pinned to SEED_V1_CONFIG_ID");
+
+    let hist_cfg: String = conn
+        .query_row("SELECT tax_config_id FROM filing WHERE id='f-hist-2023'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(hist_cfg, "hist-cfg-2023", "Uniquely-labelled filing must backfill to its matching config");
+
+    // Foreign tax relief ₦1,000,000 must be distributed 60/40 across ie-f1 (₦600k) and ie-f2 (₦400k).
+    let ft1: f64 = conn
+        .query_row("SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f1'", [], |r| r.get(0))
+        .unwrap();
+    let ft2: f64 = conn
+        .query_row("SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f2'", [], |r| r.get(0))
+        .unwrap();
+    assert_ngn_eq(ft1, 600_000.0, "proportional foreign tax on 6M entry");
+    assert_ngn_eq(ft2, 400_000.0, "proportional foreign tax on 4M entry");
 }

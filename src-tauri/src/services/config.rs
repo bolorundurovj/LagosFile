@@ -159,7 +159,92 @@ impl ConfigService {
         };
         Self::validate_bands(&bands)?;
 
-        let min_tax = config["minimumTaxRate"].as_f64().unwrap_or(0.01);
+        let relief_caps: ReliefCaps = match &config["reliefCaps"] {
+            serde_json::Value::Object(_) => serde_json::from_value(config["reliefCaps"].clone())
+                .map_err(|e| anyhow::anyhow!("Invalid reliefCaps: {}", e))?,
+            serde_json::Value::String(s) => serde_json::from_str(s)
+                .map_err(|e| anyhow::anyhow!("Invalid reliefCaps JSON: {}", e))?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Tax configuration must provide a valid reliefCaps object."
+                ));
+            }
+        };
+        if !relief_caps.rent_relief_cap.is_finite() || relief_caps.rent_relief_cap < 0.0 {
+            return Err(anyhow::anyhow!(
+                "Rent relief cap must be a non-negative finite number."
+            ));
+        }
+        if !relief_caps.rent_relief_rate.is_finite()
+            || !(0.0..=1.0).contains(&relief_caps.rent_relief_rate)
+        {
+            return Err(anyhow::anyhow!(
+                "Rent relief rate must be between 0 and 1."
+            ));
+        }
+        for (name, cap_opt) in [
+            ("pensionCap", relief_caps.pension_cap),
+            ("nhisCap", relief_caps.nhis_cap),
+            ("nhfCap", relief_caps.nhf_cap),
+        ] {
+            if let Some(v) = cap_opt {
+                if !v.is_finite() || v < 0.0 {
+                    return Err(anyhow::anyhow!(
+                        "{} must be a non-negative finite number.",
+                        name
+                    ));
+                }
+            }
+        }
+
+        let cgt_thresholds: CgtThresholds = match &config["cgtThresholds"] {
+            serde_json::Value::Object(_) => {
+                serde_json::from_value(config["cgtThresholds"].clone())
+                    .map_err(|e| anyhow::anyhow!("Invalid cgtThresholds: {}", e))?
+            }
+            serde_json::Value::String(s) => serde_json::from_str(s)
+                .map_err(|e| anyhow::anyhow!("Invalid cgtThresholds JSON: {}", e))?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Tax configuration must provide a valid cgtThresholds object."
+                ));
+            }
+        };
+        if !cgt_thresholds.proceeds_threshold.is_finite()
+            || cgt_thresholds.proceeds_threshold < 0.0
+            || !cgt_thresholds.gain_threshold.is_finite()
+            || cgt_thresholds.gain_threshold < 0.0
+        {
+            return Err(anyhow::anyhow!(
+                "CGT thresholds must be non-negative finite numbers."
+            ));
+        }
+
+        let allowance_rates: std::collections::HashMap<String, f64> =
+            match &config["allowanceRates"] {
+                serde_json::Value::Object(_) => {
+                    serde_json::from_value(config["allowanceRates"].clone())
+                        .map_err(|e| anyhow::anyhow!("Invalid allowanceRates: {}", e))?
+                }
+                serde_json::Value::String(s) => serde_json::from_str(s)
+                    .map_err(|e| anyhow::anyhow!("Invalid allowanceRates JSON: {}", e))?,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Tax configuration must provide a valid allowanceRates object."
+                    ));
+                }
+            };
+        for (asset, rate) in &allowance_rates {
+            if !rate.is_finite() || !(0.0..=1.0).contains(rate) {
+                return Err(anyhow::anyhow!(
+                    "Allowance rate for '{}' ({}) must be between 0 and 1.",
+                    asset,
+                    rate
+                ));
+            }
+        }
+
+        let min_tax = config["minimumTaxRate"].as_f64().unwrap_or(0.0);
         if !min_tax.is_finite() || !(0.0..=1.0).contains(&min_tax) {
             return Err(anyhow::anyhow!(
                 "Minimum tax rate ({}) must be between 0 and 1.",
@@ -168,6 +253,9 @@ impl ConfigService {
         }
 
         let bands_json = serde_json::to_string(&bands)?;
+        let relief_caps_json = serde_json::to_string(&relief_caps)?;
+        let cgt_thresholds_json = serde_json::to_string(&cgt_thresholds)?;
+        let allowance_rates_json = serde_json::to_string(&allowance_rates)?;
         let id = Uuid::new_v4();
         let now = Utc::now();
 
@@ -196,9 +284,9 @@ impl ConfigService {
                 label,
                 config["governedBy"].as_str().unwrap_or("NTA 2025"),
                 bands_json,
-                config["reliefCaps"].to_string(),
-                config["cgtThresholds"].to_string(),
-                config["allowanceRates"].to_string(),
+                relief_caps_json,
+                cgt_thresholds_json,
+                allowance_rates_json,
                 min_tax,
                 now.to_rfc3339(),
             ],

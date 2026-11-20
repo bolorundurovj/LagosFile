@@ -93,7 +93,7 @@ impl ComputationEngine {
 
         for entry in &other_entries {
             if entry.income_type == "capital_gain_shares" {
-                let gain_amount = entry.cgt_gain.unwrap_or(entry.gross_amount_ngn);
+                let gain_amount = entry.cgt_gain.unwrap_or(entry.gross_amount_ngn).max(0.0);
                 if share_disposals_exempt {
                     cgt_exempt_amount += gain_amount;
                     continue;
@@ -114,7 +114,7 @@ impl ComputationEngine {
                 effective_other_income += val;
                 continue;
             }
-            effective_other_income += entry.gross_amount_ngn;
+            effective_other_income += entry.gross_amount_ngn.max(0.0);
         }
 
         let total_gross = effective_other_income + digital_net;
@@ -157,13 +157,35 @@ impl ComputationEngine {
         }
 
         let rent_relief = (annual_rent * config.relief_caps.rent_relief_rate)
-            .min(config.relief_caps.rent_relief_cap);
+            .min(config.relief_caps.rent_relief_cap)
+            .max(0.0);
 
         let pension = cap(pension, config.relief_caps.pension_cap);
         let nhis = cap(nhis, config.relief_caps.nhis_cap);
         let nhf = cap(nhf, config.relief_caps.nhf_cap);
 
-        let total_deductions = pension + nhis + nhf + life_assurance + rent_relief + other_approved;
+        // PITA (Finance Act 2020 s.33) Consolidated Relief Allowance:
+        // max(₦200,000, 1% of gross income after tax-exempt items) + 20% of that gross income.
+        // NTA 2025 replaces CRA with rent relief (cra_enabled = false).
+        let consolidated_relief_allowance = if config.relief_caps.cra_enabled {
+            let cra_base =
+                (total_gross - prorated_ca - pension - nhis - nhf - life_assurance).max(0.0);
+            if cra_base > 0.0 {
+                (200_000.0_f64.max(cra_base * 0.01) + cra_base * 0.20).min(cra_base)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let total_deductions = pension
+            + nhis
+            + nhf
+            + life_assurance
+            + rent_relief
+            + consolidated_relief_allowance
+            + other_approved;
 
         let chargeable_income = (total_gross - prorated_ca - total_deductions).max(0.0);
 
@@ -199,24 +221,43 @@ impl ComputationEngine {
         let tax_before_credits = graduated_tax.max(minimum_tax);
 
         // Foreign tax credit is limited per income entry to the Nigerian tax attributable
-        // to that entry (tax_before_credits * entry_gross / total_gross), never the whole return.
+        // to that entry's actual contribution to `total_gross` (respecting netted digital gains
+        // and the cumulative 20% employment-income cap on accommodation BIKs).
         let mut foreign_tax_credits = 0.0f64;
         if total_gross > 0.0 && tax_before_credits > 0.0 {
+            let positive_digital_sum: f64 = digital_entries
+                .iter()
+                .map(|e| e.gross_amount_ngn.max(0.0))
+                .sum();
+            let mut ftc_remaining_accomm_cap = total_employment_income * 0.20;
+
             for entry in income_entries {
                 if entry.income_type == "capital_gain_shares" && share_disposals_exempt {
                     continue;
                 }
-                if entry.income_type == "digital_asset" && digital_net <= 0.0 {
-                    continue;
-                }
-                if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
-                    let entry_amount = if entry.income_type == "capital_gain_shares" {
-                        entry.cgt_gain.unwrap_or(entry.gross_amount_ngn)
-                    } else if entry.income_type == "benefits_in_kind" {
-                        bik_taxable_value(entry, total_employment_income)
+                let entry_amount = if entry.income_type == "digital_asset" {
+                    if digital_net <= 0.0 || positive_digital_sum <= 0.0 {
+                        0.0
                     } else {
-                        entry.gross_amount_ngn
-                    };
+                        digital_net * (entry.gross_amount_ngn.max(0.0) / positive_digital_sum)
+                    }
+                } else if entry.income_type == "capital_gain_shares" {
+                    entry.cgt_gain.unwrap_or(entry.gross_amount_ngn).max(0.0)
+                } else if entry.income_type == "benefits_in_kind" {
+                    match (entry.bik_category.as_deref(), entry.bik_cost) {
+                        (Some("accommodation"), Some(cost)) => {
+                            let capped = cost.max(0.0).min(ftc_remaining_accomm_cap);
+                            ftc_remaining_accomm_cap =
+                                (ftc_remaining_accomm_cap - capped).max(0.0);
+                            capped
+                        }
+                        _ => bik_taxable_value(entry, total_employment_income),
+                    }
+                } else {
+                    entry.gross_amount_ngn.max(0.0)
+                };
+
+                if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
                     if ft_paid > 0.0 && entry_amount > 0.0 {
                         let attributable_tax =
                             tax_before_credits * (entry_amount / total_gross);
@@ -248,6 +289,7 @@ impl ComputationEngine {
             digital_asset_loss_ringfenced,
             config_version: config.version_label.clone(),
             rent_relief_applied: rent_relief,
+            consolidated_relief_allowance,
         })
     }
 }

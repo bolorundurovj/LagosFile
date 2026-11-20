@@ -1110,7 +1110,7 @@ pub async fn list_allowances(
                     &row.get::<_, String>(5)?,
                     "%Y-%m-%d",
                 )
-                .unwrap_or_default(),
+                .ok(),
                 tax_written_down_value: row.get(6)?,
                 annual_allowance_rate: row.get(7)?,
                 annual_allowance_amount: row.get(8)?,
@@ -1809,7 +1809,7 @@ pub fn compute_filing_with_conn(
                     &row.get::<_, String>(5)?,
                     "%Y-%m-%d",
                 )
-                .unwrap_or_default(),
+                .ok(),
                 tax_written_down_value: row.get(6)?,
                 annual_allowance_rate: row.get(7)?,
                 annual_allowance_amount: row.get(8)?,
@@ -1890,17 +1890,32 @@ pub struct EstimateRelief {
 }
 
 /// Runs the engine on unsaved figures so the calculator can give an estimate
-/// without creating a draft filing.
+/// without creating a draft filing. When `income_year` is provided, picks the
+/// regime-appropriate configuration (`PITA + CRA` for <=2025, `NTA 2025` for >=2026)
+/// matching actual filings; otherwise uses the active configuration.
+pub fn estimate_tax_for_year_with_conn(
+    conn: &rusqlite::Connection,
+    income_entries: Vec<EstimateIncome>,
+    capital_allowances: Vec<EstimateAllowance>,
+    relief_entries: Vec<EstimateRelief>,
+    income_year: Option<i32>,
+) -> Result<ComputationResult, String> {
+    let config = match income_year {
+        Some(yr) => ConfigService::get_for_income_year(conn, yr).map_err(|e| e.to_string())?,
+        None => load_active_config(conn).map_err(|e| e.to_string())?,
+    };
+    let (income, allowances, reliefs) =
+        build_estimate_entries(income_entries, capital_allowances, relief_entries, &config);
+    ComputationEngine::compute(&income, &allowances, &reliefs, &config).map_err(|e| e.to_string())
+}
+
 pub fn estimate_tax_with_conn(
     conn: &rusqlite::Connection,
     income_entries: Vec<EstimateIncome>,
     capital_allowances: Vec<EstimateAllowance>,
     relief_entries: Vec<EstimateRelief>,
 ) -> Result<ComputationResult, String> {
-    let config = load_active_config(conn).map_err(|e| e.to_string())?;
-    let (income, allowances, reliefs) =
-        build_estimate_entries(income_entries, capital_allowances, relief_entries, &config);
-    ComputationEngine::compute(&income, &allowances, &reliefs, &config).map_err(|e| e.to_string())
+    estimate_tax_for_year_with_conn(conn, income_entries, capital_allowances, relief_entries, None)
 }
 
 #[tauri::command]
@@ -1908,12 +1923,19 @@ pub async fn estimate_tax(
     income_entries: Vec<EstimateIncome>,
     capital_allowances: Vec<EstimateAllowance>,
     relief_entries: Vec<EstimateRelief>,
+    income_year: Option<i32>,
     state: State<'_, AppState>,
 ) -> Result<ComputationResult, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    estimate_tax_with_conn(&conn, income_entries, capital_allowances, relief_entries)
+    estimate_tax_for_year_with_conn(
+        &conn,
+        income_entries,
+        capital_allowances,
+        relief_entries,
+        income_year,
+    )
 }
 
 pub fn build_estimate_entries(
@@ -1948,7 +1970,7 @@ pub fn build_estimate_entries(
                 asset_description: String::new(),
                 asset_type: a.asset_type,
                 asset_cost: a.asset_cost,
-                acquisition_date: chrono::NaiveDate::default(),
+                acquisition_date: None,
                 tax_written_down_value: a.tax_written_down_value.unwrap_or(0.0),
                 annual_allowance_rate: rate,
                 annual_allowance_amount: 0.0,

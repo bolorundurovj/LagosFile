@@ -106,7 +106,8 @@ pub struct CapitalAllowance {
     pub asset_description: String,
     pub asset_type: String,
     pub asset_cost: f64,
-    pub acquisition_date: NaiveDate,
+    #[serde(default)]
+    pub acquisition_date: Option<NaiveDate>,
     pub tax_written_down_value: f64,
     pub annual_allowance_rate: f64,
     pub annual_allowance_amount: f64,
@@ -162,11 +163,31 @@ pub struct TaxBand {
     pub rate: f64,
 }
 
+fn default_rent_relief_cap() -> f64 {
+    500_000.0
+}
+
+fn default_rent_relief_rate() -> f64 {
+    0.20
+}
+
+fn default_proceeds_threshold() -> f64 {
+    150_000_000.0
+}
+
+fn default_gain_threshold() -> f64 {
+    10_000_000.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReliefCaps {
+    #[serde(default = "default_rent_relief_cap")]
     pub rent_relief_cap: f64,
+    #[serde(default = "default_rent_relief_rate")]
     pub rent_relief_rate: f64,
+    #[serde(default)]
+    pub cra_enabled: bool,
     #[serde(default)]
     pub pension_cap: Option<f64>,
     #[serde(default)]
@@ -178,8 +199,9 @@ pub struct ReliefCaps {
 impl Default for ReliefCaps {
     fn default() -> Self {
         Self {
-            rent_relief_cap: 500_000.0,
-            rent_relief_rate: 0.20,
+            rent_relief_cap: default_rent_relief_cap(),
+            rent_relief_rate: default_rent_relief_rate(),
+            cra_enabled: false,
             pension_cap: None,
             nhis_cap: None,
             nhf_cap: None,
@@ -190,8 +212,19 @@ impl Default for ReliefCaps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CgtThresholds {
+    #[serde(default = "default_proceeds_threshold")]
     pub proceeds_threshold: f64,
+    #[serde(default = "default_gain_threshold")]
     pub gain_threshold: f64,
+}
+
+impl Default for CgtThresholds {
+    fn default() -> Self {
+        Self {
+            proceeds_threshold: default_proceeds_threshold(),
+            gain_threshold: default_gain_threshold(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +285,8 @@ pub struct ComputationResult {
     pub digital_asset_loss_ringfenced: f64,
     pub config_version: String,
     pub rent_relief_applied: f64,
+    #[serde(default)]
+    pub consolidated_relief_allowance: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
