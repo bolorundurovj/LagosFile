@@ -89,21 +89,73 @@ pub fn decrypt_doc(raw: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Resolves a `document.file_path` value (either relative `documents/...` or legacy absolute path)
-/// against `app_dir`. If an absolute path no longer exists (e.g. restored on another machine),
-/// falls back to the `documents/...` suffix inside `app_dir`.
+/// Returns `true` if `stored_path` looks like an absolute path on either POSIX (`/...`)
+/// or Windows (`C:\...`, `C:/...`, `\\server\...`), regardless of the current host OS.
+fn looks_like_any_os_absolute(stored_path: &str) -> bool {
+    if stored_path.starts_with('/') || stored_path.starts_with('\\') {
+        return true;
+    }
+    let bytes = stored_path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+/// Sanitizes an untrusted attachment filename into a single safe path segment
+/// (stripping directory components, path separators, `..`, and forbidden characters).
+pub fn sanitize_file_name(file_name: &str) -> String {
+    // Take only the leaf segment after any `/` or `\`.
+    let leaf = file_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let mut cleaned = String::with_capacity(leaf.len());
+    for ch in leaf.chars() {
+        if ch.is_control()
+            || matches!(
+                ch,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+            )
+        {
+            cleaned.push('_');
+        } else {
+            cleaned.push(ch);
+        }
+    }
+
+    // Collapse any `..` traversal sequences and trim leading/trailing dots/spaces.
+    while cleaned.contains("..") {
+        cleaned = cleaned.replace("..", "_");
+    }
+    let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if trimmed.is_empty() {
+        "attachment".to_string()
+    } else {
+        trimmed.chars().take(180).collect()
+    }
+}
+
+/// Resolves a `document.file_path` value (either relative `documents/...` or legacy absolute path
+/// from the same or another OS) against `app_dir`. If an absolute path no longer exists
+/// (e.g. restored on another OS/machine), falls back to the `documents/...` suffix inside `app_dir`.
 pub fn resolve_doc_path(app_dir: &Path, stored_path: &str) -> PathBuf {
     let p = Path::new(stored_path);
-    if !p.is_absolute() {
-        return app_dir.join(p);
+    if p.is_absolute() && p.exists() {
+        return p.to_path_buf();
     }
-    if p.exists() {
+    if looks_like_any_os_absolute(stored_path) || p.is_absolute() {
+        if let Some(rel) = extract_documents_rel(stored_path) {
+            return app_dir.join(rel);
+        }
         return p.to_path_buf();
     }
     if let Some(rel) = extract_documents_rel(stored_path) {
         return app_dir.join(rel);
     }
-    p.to_path_buf()
+    app_dir.join(p)
 }
 
 /// Extracts a portable forward-slash `documents/...` relative path from either an absolute
@@ -684,26 +736,21 @@ impl Drop for TempDirGuard {
     }
 }
 
-/// If `path` refers to an encrypted document (`LGFD\x01`), decrypts it to a temporary file
-/// for external viewing/printing and registers the temp folder in `state.temp_preview_files`
-/// so it is wiped when the vault locks. Plaintext files are returned unchanged.
-pub fn prepare_file_for_external_app(
+/// Decrypts `path` (if `LGFD\x01`-encrypted) to a temporary preview directory without touching
+/// `AppState`, returning `(target_file_path, Option<created_temp_dir>)`. Intended for `spawn_blocking`.
+pub fn prepare_file_for_external_app_sync(
     app_dir: &Path,
     path: &str,
-    state: &AppState,
-) -> Result<PathBuf, String> {
+    doc_key: Option<[u8; 32]>,
+) -> Result<(PathBuf, Option<PathBuf>), String> {
     let resolved = resolve_doc_path(app_dir, path);
     let raw = std::fs::read(&resolved).map_err(|e| format!("File not found: {} ({})", path, e))?;
     if !is_encrypted_doc(&raw) {
-        return Ok(resolved);
+        return Ok((resolved, None));
     }
 
-    let doc_key = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        get_doc_key(db)?.ok_or("Document key not found in database")?
-    };
-    let plaintext = decrypt_doc(&raw, &doc_key)?;
+    let key = doc_key.ok_or("Document key not found in database")?;
+    let plaintext = decrypt_doc(&raw, &key)?;
 
     let temp_dir = std::env::temp_dir().join(format!("lagosfile-view-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
@@ -718,10 +765,33 @@ pub fn prepare_file_for_external_app(
                 .and_then(|n| n.to_str())
                 .unwrap_or("attachment")
         });
-    let out_path = temp_dir.join(orig_name);
+    let safe_name = sanitize_file_name(orig_name);
+    let out_path = temp_dir.join(safe_name);
     std::fs::write(&out_path, plaintext).map_err(|e| e.to_string())?;
 
-    state.temp_preview_files.lock().unwrap().push(temp_dir);
+    Ok((out_path, Some(temp_dir)))
+}
+
+/// If `path` refers to an encrypted document (`LGFD\x01`), decrypts it to a temporary file
+/// for external viewing/printing and registers the temp folder in `state.temp_preview_files`
+/// so it is wiped when the vault locks. Plaintext files are returned unchanged.
+pub fn prepare_file_for_external_app(
+    app_dir: &Path,
+    path: &str,
+    state: &AppState,
+) -> Result<PathBuf, String> {
+    let doc_key = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            get_doc_key(db)?
+        } else {
+            None
+        }
+    };
+    let (out_path, temp_dir) = prepare_file_for_external_app_sync(app_dir, path, doc_key)?;
+    if let Some(td) = temp_dir {
+        state.temp_preview_files.lock().unwrap().push(td);
+    }
     Ok(out_path)
 }
 

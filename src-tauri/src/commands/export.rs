@@ -1456,37 +1456,85 @@ pub async fn export_filing_json(
 
 #[tauri::command]
 pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let target = doc_store::prepare_file_for_external_app(&db::app_dir(), &path, &state)?;
-    open::that(&target).map_err(|e| e.to_string())?;
+    let dir = db::app_dir();
+    let doc_key = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            doc_store::get_doc_key(db)?
+        } else {
+            None
+        }
+    };
+    let (target, temp_dir) = tokio::task::spawn_blocking(move || {
+        doc_store::prepare_file_for_external_app_sync(&dir, &path, doc_key)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    if let Some(td) = temp_dir {
+        state.temp_preview_files.lock().unwrap().push(td);
+    }
+
+    tokio::task::spawn_blocking(move || open::that(&target).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(())
 }
 
-/// Sends a file to the system's default printer handler.
+/// Sends a file to the system's default printer handler without interpolating paths into shell syntax.
 #[tauri::command]
 pub async fn print_file(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let target = doc_store::prepare_file_for_external_app(&db::app_dir(), &path, &state)?;
+    let dir = db::app_dir();
+    let doc_key = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            doc_store::get_doc_key(db)?
+        } else {
+            None
+        }
+    };
+    let orig_path = path.clone();
+    let (target, temp_dir) = tokio::task::spawn_blocking(move || {
+        doc_store::prepare_file_for_external_app_sync(&dir, &path, doc_key)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    if let Some(td) = temp_dir {
+        state.temp_preview_files.lock().unwrap().push(td);
+    }
+
     if !target.is_file() {
-        return Err(format!("File not found: {path}"));
+        return Err(format!("File not found: {orig_path}"));
     }
-    let target_str = target.to_string_lossy().to_string();
-    #[cfg(target_os = "windows")]
-    {
-        let script = format!(
-            "Start-Process -FilePath '{}' -Verb Print",
-            target_str.replace('\'', "''")
-        );
-        std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        std::process::Command::new("lpr")
-            .arg(&target_str)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
+
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            // Pass the path via an environment variable so curly/smart quotes or special
+            // characters in filenames can never break out of PowerShell string quoting.
+            std::process::Command::new("powershell")
+                .env("LAGOSFILE_PRINT_PATH", &target)
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Process -FilePath $env:LAGOSFILE_PRINT_PATH -Verb Print",
+                ])
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            std::process::Command::new("lpr")
+                .arg(&target)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(())
 }
 

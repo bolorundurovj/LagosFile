@@ -491,3 +491,90 @@ fn test_s18_shared_file_survives_single_row_delete_and_orphan_sweep_removes_stra
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_attach_sanitizes_path_traversal_and_cross_os_resolve_preserves_docs() {
+    let dir = std::env::temp_dir().join(format!("lagosfile-sec-doc-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+    let (_filing_id, entry_id) = seed_taxpayer_and_filing(&state);
+
+    let src = dir.join("input.pdf");
+    std::fs::write(&src, b"receipt bytes").unwrap();
+
+    // 1. Path traversal file_name must be sanitized into a safe path strictly inside documents/<entry_id>/
+    let att = attach_document_in_dir(
+        &dir,
+        &entry_id,
+        "income_entry",
+        src.to_str().unwrap(),
+        "../../evil\\..\\receipt.pdf",
+        "pdf",
+        13,
+        &state,
+    )
+    .expect("attach with untrusted filename must sanitize safely");
+    let rel = att["filePath"].as_str().unwrap();
+    assert!(rel.starts_with(&format!("documents/{}/", entry_id)), "unexpected rel path: {rel}");
+    assert!(!rel.contains(".."), "path must not contain traversal: {rel}");
+    assert!(doc_store::validate_safe_rel_doc_path(rel).is_ok());
+
+    // 2. Cross-OS legacy absolute paths (POSIX path on Windows, Windows path on POSIX) resolve to app_dir/documents/...
+    let posix_stored = format!("/Users/alice/LagosFile/documents/{}/unix_doc.enc", entry_id);
+    let win_stored = format!("C:\\Users\\alice\\LagosFile\\documents\\{}\\win_doc.enc", entry_id);
+    assert_eq!(
+        doc_store::resolve_doc_path(&dir, &posix_stored),
+        dir.join(format!("documents/{}/unix_doc.enc", entry_id))
+    );
+    assert_eq!(
+        doc_store::resolve_doc_path(&dir, &win_stored),
+        dir.join(format!("documents/{}/win_doc.enc", entry_id))
+    );
+
+    // 3. Create actual encrypted files for both cross-OS paths, insert rows, and verify unlock normalizes
+    //    their paths and orphan sweep does NOT delete them!
+    let doc_key = {
+        let guard = state.db.lock().unwrap();
+        doc_store::get_or_create_doc_key(guard.as_ref().unwrap()).unwrap().0
+    };
+    let unix_file = dir.join(format!("documents/{}/unix_doc.enc", entry_id));
+    let win_file = dir.join(format!("documents/{}/win_doc.enc", entry_id));
+    doc_store::write_encrypted_doc_atomic(&unix_file, b"unix payload", &doc_key).unwrap();
+    doc_store::write_encrypted_doc_atomic(&win_file, b"win payload", &doc_key).unwrap();
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO document (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
+             VALUES ('doc-unix',?1,'income_entry',?2,'unix_doc.pdf','pdf',12,'2025-01-01T00:00:00Z')",
+            params![entry_id, posix_stored],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO document (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
+             VALUES ('doc-win',?1,'income_entry',?2,'win_doc.pdf','pdf',11,'2025-01-01T00:00:00Z')",
+            params![entry_id, win_stored],
+        ).unwrap();
+    }
+    lagosfile_lib::commands::auth::persist_db_in_dir(&dir, &state).unwrap();
+
+    let restarted = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &restarted).unwrap();
+    assert!(unix_file.exists(), "cross-OS POSIX-pathed doc must not be swept as orphan");
+    assert!(win_file.exists(), "cross-OS Windows-pathed doc must not be swept as orphan");
+
+    // Verify paths were normalized to portable relative paths even though files were already encrypted.
+    {
+        let guard = restarted.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        let u_path: String = conn
+            .query_row("SELECT file_path FROM document WHERE id='doc-unix'", [], |r| r.get(0))
+            .unwrap();
+        let w_path: String = conn
+            .query_row("SELECT file_path FROM document WHERE id='doc-win'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(u_path, format!("documents/{}/unix_doc.enc", entry_id));
+        assert_eq!(w_path, format!("documents/{}/win_doc.enc", entry_id));
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -163,11 +163,26 @@ pub fn require_draft_for_parent_entry(
     require_draft_filing(conn, &filing_id)
 }
 
+fn parent_types_for_table(table: &str) -> (&'static str, &'static str) {
+    match table {
+        "income_entry" => ("income", "income_entry"),
+        "capital_allowance" => ("allowance", "capital_allowance"),
+        "relief_entry" => ("relief", "relief_entry"),
+        _ => ("", ""),
+    }
+}
+
+/// Checks that `entry_id` (if present in `table`) belongs to a Draft filing — and, when
+/// `expected_filing_id` is `Some`, belongs specifically to that filing.
+/// Rejects cross-table IDs (an ID that exists in a different entry table) and cross-filing IDs.
+/// Returns `Ok(true)` if the row exists in `table` and is safe to delete, or `Ok(false)` if
+/// it does not exist in any entry table.
 fn require_draft_for_entry_id(
     conn: &rusqlite::Connection,
     table: &str,
     entry_id: &str,
-) -> Result<(), String> {
+    expected_filing_id: Option<&str>,
+) -> Result<bool, String> {
     let filing_id: Option<String> = conn
         .query_row(
             &format!("SELECT filing_id FROM {table} WHERE id=?1"),
@@ -176,9 +191,36 @@ fn require_draft_for_entry_id(
         )
         .ok();
     if let Some(fid) = filing_id {
+        if let Some(expected) = expected_filing_id {
+            if fid != expected {
+                return Err(format!(
+                    "Entry '{entry_id}' belongs to a different filing and cannot be modified here."
+                ));
+            }
+        }
         require_draft_filing(conn, &fid)?;
+        return Ok(true);
     }
-    Ok(())
+
+    // Reject cross-table IDs so deleting via the wrong endpoint cannot touch another entry's docs.
+    for other_table in ["income_entry", "capital_allowance", "relief_entry"] {
+        if other_table == table {
+            continue;
+        }
+        let exists_elsewhere: bool = conn
+            .query_row(
+                &format!("SELECT 1 FROM {other_table} WHERE id=?1 LIMIT 1"),
+                params![entry_id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if exists_elsewhere {
+            return Err(format!(
+                "Entry '{entry_id}' does not belong to table '{table}'."
+            ));
+        }
+    }
+    Ok(false)
 }
 
 fn next_filing_reference(conn: &rusqlite::Connection, yoa: i32) -> Result<String, String> {
@@ -645,7 +687,8 @@ pub fn amend_filing_with_conn(
 
     let mut copied_files: Vec<std::path::PathBuf> = Vec::new();
     let res: Result<(), String> = (|| {
-        conn.execute(
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        tx.execute(
             "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
              VALUES (?1,?2,?3,?4,'Draft',?5,?6,?7)",
             params![new_id_str, taxpayer_id, id, yoa, now, config_ver, config_id],
@@ -657,7 +700,7 @@ pub fn amend_filing_with_conn(
 
         // 1. Copy income entries as-is
         {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare("SELECT id FROM income_entry WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
             let old_ids: Vec<String> = stmt
@@ -667,7 +710,7 @@ pub fn amend_filing_with_conn(
                 .collect();
             for old_entry_id in old_ids {
                 let new_entry_id = Uuid::new_v4().to_string();
-                conn.execute(
+                tx.execute(
                     "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                      foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
                      fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
@@ -686,7 +729,7 @@ pub fn amend_filing_with_conn(
 
         // 2. Copy capital allowances as-is (same year — do not reduce WDV)
         {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare("SELECT id FROM capital_allowance WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
             let old_ids: Vec<String> = stmt
@@ -696,7 +739,7 @@ pub fn amend_filing_with_conn(
                 .collect();
             for old_entry_id in old_ids {
                 let new_entry_id = Uuid::new_v4().to_string();
-                conn.execute(
+                tx.execute(
                     "INSERT INTO capital_allowance
                        (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
                         tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
@@ -712,7 +755,7 @@ pub fn amend_filing_with_conn(
 
         // 3. Copy relief entries as-is (including WHT, PAYE, rent, pension, etc. for same year)
         {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare("SELECT id FROM relief_entry WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
             let old_ids: Vec<String> = stmt
@@ -722,7 +765,7 @@ pub fn amend_filing_with_conn(
                 .collect();
             for old_entry_id in old_ids {
                 let new_entry_id = Uuid::new_v4().to_string();
-                conn.execute(
+                tx.execute(
                     "INSERT INTO relief_entry
                        (id,filing_id,relief_type,claimed_amount,approved_amount,
                         wht_ref,wht_income_type,wht_date,description)
@@ -738,7 +781,7 @@ pub fn amend_filing_with_conn(
 
         // 4. Copy attached documents to independent files under each new entry's folder
         for (old_entry_id, new_entry_id, parent_type) in &entry_id_map {
-            let mut stmt = conn
+            let mut stmt = tx
                 .prepare(
                     "SELECT file_path,file_name,file_type,file_size_bytes,uploaded_at
                      FROM document WHERE parent_entry_id=?1",
@@ -768,27 +811,32 @@ pub fn amend_filing_with_conn(
 
             for doc in docs {
                 let src = crate::db::doc_store::resolve_doc_path(dir, &doc.file_path);
+                if !src.is_file() {
+                    // Do not insert dangling document rows when the underlying file is missing.
+                    continue;
+                }
                 let suffix = if doc.file_path.ends_with(".enc") {
                     ".enc"
                 } else {
                     ""
                 };
+                let safe_name = crate::db::doc_store::sanitize_file_name(&doc.file_name);
                 let new_doc_id = Uuid::new_v4();
                 let new_rel = format!(
                     "documents/{}/{}_{}{}",
-                    new_entry_id, new_doc_id, doc.file_name, suffix
+                    new_entry_id, new_doc_id, safe_name, suffix
                 );
-                let dest = dir.join(&new_rel);
-                if src.exists() {
-                    if let Some(parent) = dest.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                    }
-                    std::fs::copy(&src, &dest).map_err(|e| {
-                        format!("Failed to copy attachment '{}': {}", doc.file_name, e)
-                    })?;
-                    copied_files.push(dest);
+                let validated_rel = crate::db::doc_store::validate_safe_rel_doc_path(&new_rel)?;
+                let dest = dir.join(validated_rel);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                conn.execute(
+                std::fs::copy(&src, &dest).map_err(|e| {
+                    format!("Failed to copy attachment '{}': {}", safe_name, e)
+                })?;
+                copied_files.push(dest);
+
+                tx.execute(
                     "INSERT INTO document
                      (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
                      VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -797,7 +845,7 @@ pub fn amend_filing_with_conn(
                         new_entry_id,
                         parent_type,
                         new_rel,
-                        doc.file_name,
+                        safe_name,
                         doc.file_type,
                         doc.file_size_bytes,
                         doc.uploaded_at,
@@ -807,11 +855,11 @@ pub fn amend_filing_with_conn(
             }
         }
 
+        tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     })();
 
     if let Err(err) = res {
-        let _ = conn.execute("DELETE FROM filing WHERE id=?1", params![new_id_str]);
         for path in copied_files {
             let _ = std::fs::remove_file(path);
         }
@@ -838,7 +886,15 @@ pub fn amend_filing_in_dir(
 
 #[tauri::command]
 pub async fn amend_filing(id: String, state: State<'_, AppState>) -> Result<Filing, String> {
-    amend_filing_in_dir(&crate::db::app_dir(), &id, &state)
+    let dir = crate::db::app_dir();
+    let filing = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        amend_filing_with_conn(&conn, &dir, &id)?
+    };
+    persist_db(&state).await?;
+    Ok(filing)
 }
 
 #[tauri::command]
@@ -905,7 +961,7 @@ pub fn upsert_income_entry_with_conn(
         .to_string();
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
-    require_draft_for_entry_id(conn, "income_entry", &id)?;
+    require_draft_for_entry_id(conn, "income_entry", &id, Some(filing_id))?;
 
     conn.execute(
         "INSERT OR REPLACE INTO income_entry
@@ -961,22 +1017,7 @@ fn delete_entry_and_docs_tx(
     id: &str,
 ) -> Result<Vec<String>, String> {
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-    require_draft_for_entry_id(&tx, table, id)?;
-    let paths: Vec<String> = {
-        let mut stmt = tx
-            .prepare("SELECT file_path FROM document WHERE parent_entry_id=?1")
-            .map_err(|e| e.to_string())?;
-        let collected = stmt
-            .query_map(params![id], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        collected
-    };
-    tx.execute("DELETE FROM document WHERE parent_entry_id=?1", params![id])
-        .map_err(|e| e.to_string())?;
-    tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), params![id])
-        .map_err(|e| e.to_string())?;
+    let paths = collect_and_delete_entry_in_tx(&tx, table, id, None)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(paths)
 }
@@ -1004,6 +1045,25 @@ fn delete_entry_in_dir(
     Ok(())
 }
 
+async fn delete_entry_async(table: &str, id: &str, state: &AppState) -> Result<(), String> {
+    let dir = crate::db::app_dir();
+    let candidate_paths = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        delete_entry_and_docs_tx(&conn, table, id)?
+    };
+    persist_db(state).await?;
+    if !candidate_paths.is_empty() {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(&dir, &conn, &candidate_paths);
+        }
+    }
+    Ok(())
+}
+
 pub fn delete_income_entry_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<(), String> {
     delete_entry_and_docs_tx(conn, "income_entry", id)?;
     Ok(())
@@ -1019,7 +1079,7 @@ pub fn delete_income_entry_in_dir(
 
 #[tauri::command]
 pub async fn delete_income_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    delete_income_entry_in_dir(&crate::db::app_dir(), &id, &state)
+    delete_entry_async("income_entry", &id, &state).await
 }
 
 #[tauri::command]
@@ -1076,7 +1136,7 @@ pub fn upsert_allowance_with_conn(
         .to_string();
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
-    require_draft_for_entry_id(conn, "capital_allowance", &id)?;
+    require_draft_for_entry_id(conn, "capital_allowance", &id, Some(filing_id))?;
 
     conn.execute(
         "INSERT OR REPLACE INTO capital_allowance
@@ -1129,7 +1189,7 @@ pub fn delete_allowance_in_dir(
 
 #[tauri::command]
 pub async fn delete_allowance(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    delete_allowance_in_dir(&crate::db::app_dir(), &id, &state)
+    delete_entry_async("capital_allowance", &id, &state).await
 }
 
 /// Return capital allowances from the most recent *Confirmed* filing
@@ -1249,7 +1309,7 @@ pub fn upsert_relief_entry_with_conn(
         .to_string();
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
-    require_draft_for_entry_id(conn, "relief_entry", &id)?;
+    require_draft_for_entry_id(conn, "relief_entry", &id, Some(filing_id))?;
 
     conn.execute(
         "INSERT OR REPLACE INTO relief_entry
@@ -1301,28 +1361,39 @@ pub fn delete_relief_entry_in_dir(
 
 #[tauri::command]
 pub async fn delete_relief_entry(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    delete_relief_entry_in_dir(&crate::db::app_dir(), &id, &state)
+    delete_entry_async("relief_entry", &id, &state).await
 }
 
 fn collect_and_delete_entry_in_tx(
     tx: &rusqlite::Transaction<'_>,
     table: &str,
     id: &str,
+    expected_filing_id: Option<&str>,
 ) -> Result<Vec<String>, String> {
-    require_draft_for_entry_id(tx, table, id)?;
+    let exists = require_draft_for_entry_id(tx, table, id, expected_filing_id)?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let (pt_short, pt_long) = parent_types_for_table(table);
     let paths: Vec<String> = {
         let mut stmt = tx
-            .prepare("SELECT file_path FROM document WHERE parent_entry_id=?1")
+            .prepare(
+                "SELECT file_path FROM document
+                 WHERE parent_entry_id=?1 AND parent_entry_type IN (?2, ?3)",
+            )
             .map_err(|e| e.to_string())?;
         let collected = stmt
-            .query_map(params![id], |r| r.get::<_, String>(0))
+            .query_map(params![id, pt_short, pt_long], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
             .filter_map(|r| r.ok())
             .collect();
         collected
     };
-    tx.execute("DELETE FROM document WHERE parent_entry_id=?1", params![id])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM document WHERE parent_entry_id=?1 AND parent_entry_type IN (?2, ?3)",
+        params![id, pt_short, pt_long],
+    )
+    .map_err(|e| e.to_string())?;
     tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), params![id])
         .map_err(|e| e.to_string())?;
     Ok(paths)
@@ -1424,6 +1495,54 @@ struct BatchSaveRequest<'a> {
     state: &'a AppState,
 }
 
+fn save_batch_db_tx<V, U>(
+    table: &str,
+    filing_id: &str,
+    upserts: &[serde_json::Value],
+    delete_ids: &[String],
+    state: &AppState,
+    validate: V,
+    upsert: U,
+) -> Result<(Vec<String>, Vec<String>), String>
+where
+    V: Fn(&serde_json::Value) -> Result<(), String>,
+    U: Fn(&rusqlite::Connection, &serde_json::Value) -> Result<String, String>,
+{
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    require_draft_filing(&tx, filing_id)?;
+
+    let mut candidate_paths = Vec::new();
+    for del_id in delete_ids {
+        candidate_paths.extend(collect_and_delete_entry_in_tx(
+            &tx,
+            table,
+            del_id,
+            Some(filing_id),
+        )?);
+    }
+
+    let mut saved_ids = Vec::with_capacity(upserts.len());
+    for raw_entry in upserts {
+        let normalized = normalize_batch_entry(filing_id, raw_entry)?;
+        if let Some(existing_id) = normalized
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            require_draft_for_entry_id(&tx, table, existing_id, Some(filing_id))?;
+        }
+        validate(&normalized)?;
+        let id = upsert(&tx, &normalized)?;
+        saved_ids.push(id);
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok((saved_ids, candidate_paths))
+}
+
 fn save_batch_in_dir_with_hook<F, V, U>(
     req: BatchSaveRequest<'_>,
     validate: V,
@@ -1435,29 +1554,15 @@ where
     V: Fn(&serde_json::Value) -> Result<(), String>,
     U: Fn(&rusqlite::Connection, &serde_json::Value) -> Result<String, String>,
 {
-    let (saved_ids, candidate_paths) = {
-        let guard = req.state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-        require_draft_filing(&tx, req.filing_id)?;
-
-        let mut candidate_paths = Vec::new();
-        for del_id in req.delete_ids {
-            candidate_paths.extend(collect_and_delete_entry_in_tx(&tx, req.table, del_id)?);
-        }
-
-        let mut saved_ids = Vec::with_capacity(req.upserts.len());
-        for raw_entry in req.upserts {
-            let normalized = normalize_batch_entry(req.filing_id, raw_entry)?;
-            validate(&normalized)?;
-            let id = upsert(&tx, &normalized)?;
-            saved_ids.push(id);
-        }
-
-        tx.commit().map_err(|e| e.to_string())?;
-        (saved_ids, candidate_paths)
-    };
+    let (saved_ids, candidate_paths) = save_batch_db_tx(
+        req.table,
+        req.filing_id,
+        req.upserts,
+        req.delete_ids,
+        req.state,
+        validate,
+        upsert,
+    )?;
 
     crate::commands::auth::persist_db_in_dir_with_hook(req.dir, req.state, on_vault_write)?;
 
@@ -1466,6 +1571,36 @@ where
         if let Some(db) = guard.as_ref() {
             let conn = db.conn.lock().map_err(|e| e.to_string())?;
             crate::db::doc_store::remove_unreferenced_doc_files(req.dir, &conn, &candidate_paths);
+        }
+    }
+
+    Ok(saved_ids)
+}
+
+async fn save_batch_async<V, U>(
+    table: &str,
+    filing_id: &str,
+    upserts: &[serde_json::Value],
+    delete_ids: &[String],
+    state: &AppState,
+    validate: V,
+    upsert: U,
+) -> Result<Vec<String>, String>
+where
+    V: Fn(&serde_json::Value) -> Result<(), String>,
+    U: Fn(&rusqlite::Connection, &serde_json::Value) -> Result<String, String>,
+{
+    let dir = crate::db::app_dir();
+    let (saved_ids, candidate_paths) =
+        save_batch_db_tx(table, filing_id, upserts, delete_ids, state, validate, upsert)?;
+
+    persist_db(state).await?;
+
+    if !candidate_paths.is_empty() {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(&dir, &conn, &candidate_paths);
         }
     }
 
@@ -1557,14 +1692,16 @@ pub async fn save_income_entries(
     delete_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    save_income_entries_in_dir_with_hook(
-        &crate::db::app_dir(),
+    save_batch_async(
+        "income_entry",
         &filing_id,
         &upserts,
         &delete_ids,
         &state,
-        |_| Ok(()),
+        validate_income_entry,
+        upsert_income_entry_with_conn,
     )
+    .await
 }
 
 #[tauri::command]
@@ -1574,14 +1711,16 @@ pub async fn save_allowances(
     delete_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    save_allowances_in_dir_with_hook(
-        &crate::db::app_dir(),
+    save_batch_async(
+        "capital_allowance",
         &filing_id,
         &upserts,
         &delete_ids,
         &state,
-        |_| Ok(()),
+        validate_allowance_entry,
+        upsert_allowance_with_conn,
     )
+    .await
 }
 
 #[tauri::command]
@@ -1591,14 +1730,16 @@ pub async fn save_relief_entries(
     delete_ids: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    save_relief_entries_in_dir_with_hook(
-        &crate::db::app_dir(),
+    save_batch_async(
+        "relief_entry",
         &filing_id,
         &upserts,
         &delete_ids,
         &state,
-        |_| Ok(()),
+        validate_relief_entry,
+        upsert_relief_entry_with_conn,
     )
+    .await
 }
 
 pub fn compute_filing_with_conn(

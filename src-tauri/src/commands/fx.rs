@@ -1,5 +1,5 @@
 use crate::{
-    commands::auth::persist_db_in_dir,
+    commands::auth::{persist_db, persist_db_in_dir, persist_db_in_dir_async},
     db,
     models::{FxCacheEntry, FxResult},
     services::fx::{FxFetcher, FxService, LiveFxFetcher},
@@ -73,7 +73,7 @@ pub async fn resolve_fx_rate_in_dir(
         }
     }
     if wrote_cache {
-        persist_db_in_dir(dir, state)?;
+        persist_db_in_dir_async(dir.to_path_buf(), state).await?;
     }
 
     Ok(result)
@@ -138,5 +138,13 @@ pub fn clear_fx_cache_in_dir(dir: &Path, state: &AppState) -> Result<(), String>
 
 #[tauri::command]
 pub async fn clear_fx_cache(state: State<'_, AppState>) -> Result<(), String> {
-    clear_fx_cache_in_dir(&db::app_dir(), &state)
+    {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM fx_cache", [])
+            .map_err(|e| e.to_string())?;
+    }
+    persist_db(&state).await?;
+    Ok(())
 }

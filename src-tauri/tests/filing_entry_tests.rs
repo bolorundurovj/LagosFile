@@ -922,3 +922,137 @@ fn test_s25_batch_saves_execute_one_vault_write_per_step_and_rollback_on_invalid
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_cross_table_and_cross_filing_delete_bypass_blocked() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            document::attach_document_in_dir,
+            filing::{
+                confirm_filing_with_conn, delete_income_entry_with_conn,
+                save_income_entries_in_dir_with_hook,
+            },
+        },
+        AppState,
+    };
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-xtable-{}", Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let draft_a = Uuid::new_v4().to_string();
+    let draft_b = Uuid::new_v4().to_string();
+    let filed_id = Uuid::new_v4().to_string();
+    let inc_a = Uuid::new_v4().to_string();
+    let inc_b = Uuid::new_v4().to_string();
+    let filed_relief_id = Uuid::new_v4().to_string();
+    let filed_inc_id = Uuid::new_v4().to_string();
+
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-1', 'Ada', '11111111-0001', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        for (fid, yr) in [(&draft_a, 2025), (&draft_b, 2024), (&filed_id, 2023)] {
+            conn.execute(
+                "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+                 VALUES (?1, 'tp-1', ?2, 'Draft', 'v1', '2026-01-01T00:00:00Z')",
+                rusqlite::params![fid, yr],
+            ).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 1000000)",
+            rusqlite::params![inc_a, draft_a],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 2000000)",
+            rusqlite::params![inc_b, draft_b],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 3000000)",
+            rusqlite::params![filed_inc_id, filed_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO relief_entry (id, filing_id, relief_type, claimed_amount, approved_amount) VALUES (?1, ?2, 'pension', 200000, 200000)",
+            rusqlite::params![filed_relief_id, filed_id],
+        ).unwrap();
+    }
+
+    let doc_src = dir.join("pension.txt");
+    std::fs::write(&doc_src, b"pension proof").unwrap();
+    attach_document_in_dir(
+        &dir,
+        &filed_relief_id,
+        "relief_entry",
+        doc_src.to_str().unwrap(),
+        "pension.txt",
+        "txt",
+        13,
+        &state,
+    )
+    .unwrap();
+
+    // Confirm filed_id so its entries & documents are immutable.
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        confirm_filing_with_conn(&conn, &filed_id).unwrap();
+
+        // 1. Cross-table delete: passing a Confirmed filing's relief_entry ID to delete_income_entry MUST fail and keep its doc!
+        let err = delete_income_entry_with_conn(&conn, &filed_relief_id)
+            .expect_err("cross-table delete must be rejected");
+        assert!(err.contains("does not belong to table"));
+        let doc_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM document WHERE parent_entry_id=?1",
+                rusqlite::params![filed_relief_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(doc_count, 1, "Confirmed filing's relief document must remain intact");
+    }
+
+    // 2. Cross-filing batch delete: saving Draft A with Draft B's income ID in delete_ids MUST reject the whole batch!
+    let batch_err = save_income_entries_in_dir_with_hook(
+        &dir,
+        &draft_a,
+        &[json!({ "id": inc_a, "incomeType": "employment", "grossAmountNgn": 1_500_000.0 })],
+        std::slice::from_ref(&inc_b),
+        &state,
+        |_| Ok(()),
+    )
+    .expect_err("cross-filing delete_id in batch save must fail");
+    assert!(batch_err.contains("different filing"));
+
+    // Both Draft A and Draft B remain untouched (batch rolled back).
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        let a_amt: f64 = conn
+            .query_row("SELECT gross_amount_ngn FROM income_entry WHERE id=?1", rusqlite::params![inc_a], |r| r.get(0))
+            .unwrap();
+        let b_exists: i64 = conn
+            .query_row("SELECT COUNT(*) FROM income_entry WHERE id=?1", rusqlite::params![inc_b], |r| r.get(0))
+            .unwrap();
+        assert_eq!(a_amt, 1_000_000.0);
+        assert_eq!(b_exists, 1);
+    }
+
+    // 3. Cross-filing batch upsert hijack: trying to overwrite Draft B's entry ID inside Draft A's batch MUST fail!
+    let hijack_err = save_income_entries_in_dir_with_hook(
+        &dir,
+        &draft_a,
+        &[json!({ "id": inc_b, "incomeType": "employment", "grossAmountNgn": 999.0 })],
+        &[],
+        &state,
+        |_| Ok(()),
+    )
+    .expect_err("cross-filing upsert ID hijack must fail");
+    assert!(hijack_err.contains("different filing"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
