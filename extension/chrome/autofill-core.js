@@ -341,15 +341,19 @@
     const target = normalizeLabel(tabLabel);
     const win = d.defaultView || (typeof window !== 'undefined' ? window : null);
 
-    const candidates = d.querySelectorAll(
-      '[role="tab"], .nav-link, .nav-item a, .nav-item button, .mat-tab-label, .mat-mdc-tab, ul.nav li a, button, a'
-    );
-    for (let i = 0; i < candidates.length; i++) {
-      const el = candidates[i];
-      if (!isVisibleElement(el, win)) continue;
-      if (normalizeLabel(el.textContent) !== target) continue;
-      el.click();
-      return true;
+    const tiers = [
+      '[role="tab"], .nav-link, .nav-item a, .nav-item button, .mat-tab-label, .mat-mdc-tab, ul.nav li a',
+      'button, a',
+    ];
+    for (let t = 0; t < tiers.length; t++) {
+      const candidates = d.querySelectorAll(tiers[t]);
+      for (let i = 0; i < candidates.length; i++) {
+        const el = candidates[i];
+        if (!isVisibleElement(el, win)) continue;
+        if (normalizeLabel(el.textContent) !== target) continue;
+        el.click();
+        return true;
+      }
     }
     return false;
   }

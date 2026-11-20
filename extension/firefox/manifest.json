@@ -34,6 +34,16 @@
         "https://etax.lirs.net/*"
       ],
       "js": [
+        "token-capture.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://etax.lirs.gov.ng/*",
+        "https://etax.lirs.net/*"
+      ],
+      "js": [
         "autofill-core.js",
         "content-script.js"
       ],

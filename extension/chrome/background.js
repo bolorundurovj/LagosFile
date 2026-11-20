@@ -4,8 +4,30 @@ let cachedFilings = [];
 let currentFiling = null;
 let bridgeToken = null;
 
-function restoreFromStorage(cb) {
-  chrome.storage.local.get(['filingsData', 'filingData', 'bridgeToken'], (r) => {
+// Ephemeral session storage (in-memory only, cleared on browser exit, never persisted to disk).
+function sessionStore() {
+  return chrome.storage && chrome.storage.session ? chrome.storage.session : null;
+}
+
+function purgeLegacyLocalStorage() {
+  if (chrome.storage && chrome.storage.local) {
+    chrome.storage.local.remove(['filingsData', 'filingData', 'bridgeToken'], () => {
+      void chrome.runtime.lastError;
+    });
+  }
+}
+
+function restoreFromSession(cb) {
+  const store = sessionStore();
+  if (!store) {
+    if (cb) cb();
+    return;
+  }
+  store.get(['filingsData', 'filingData', 'bridgeToken'], (r) => {
+    if (chrome.runtime.lastError || !r) {
+      if (cb) cb();
+      return;
+    }
     if (r.filingsData) cachedFilings = r.filingsData;
     if (r.filingData) currentFiling = r.filingData;
     if (r.bridgeToken) bridgeToken = r.bridgeToken;
@@ -13,13 +35,29 @@ function restoreFromStorage(cb) {
   });
 }
 
+function clearCachedFilings(cb) {
+  cachedFilings = [];
+  currentFiling = null;
+  const store = sessionStore();
+  if (store) {
+    store.remove(['filingsData', 'filingData'], () => {
+      void chrome.runtime.lastError;
+      if (cb) cb();
+    });
+  } else if (cb) {
+    cb();
+  }
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log('[LagosFile] v' + EXT_VERSION + ' installed.');
-  restoreFromStorage();
+  purgeLegacyLocalStorage();
+  restoreFromSession();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  restoreFromStorage();
+  purgeLegacyLocalStorage();
+  restoreFromSession();
 });
 
 function withToken(fn) {
@@ -27,63 +65,79 @@ function withToken(fn) {
     fn(bridgeToken);
     return;
   }
-  chrome.storage.local.get(['bridgeToken'], (r) => {
-    bridgeToken = r.bridgeToken || null;
+  const store = sessionStore();
+  if (!store) {
+    fn(null);
+    return;
+  }
+  store.get(['bridgeToken'], (r) => {
+    bridgeToken = !chrome.runtime.lastError && r && r.bridgeToken ? r.bridgeToken : null;
     fn(bridgeToken);
   });
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  const store = sessionStore();
   switch (msg.type) {
     case 'SET_BRIDGE_TOKEN':
       bridgeToken = typeof msg.token === 'string' && msg.token.length > 0 ? msg.token : null;
+      if (!store) {
+        sendResponse({ ok: true });
+        return false;
+      }
       if (bridgeToken) {
-        chrome.storage.local.set({ bridgeToken }, () => sendResponse({ ok: true }));
+        store.set({ bridgeToken }, () => sendResponse({ ok: true }));
       } else {
-        chrome.storage.local.remove('bridgeToken', () => sendResponse({ ok: true }));
+        store.remove('bridgeToken', () => sendResponse({ ok: true }));
       }
       return true;
 
     case 'SET_FILINGS_DATA':
-      cachedFilings = msg.data || [];
-      chrome.storage.local.set({ filingsData: cachedFilings }, () => sendResponse({ ok: true }));
+      cachedFilings = Array.isArray(msg.data) ? msg.data : [];
+      if (!store) {
+        sendResponse({ ok: true });
+        return false;
+      }
+      store.set({ filingsData: cachedFilings }, () => sendResponse({ ok: true }));
       return true;
 
     case 'GET_FILINGS_DATA':
-      if (cachedFilings.length > 0) {
+      if (cachedFilings.length > 0 || !store) {
         sendResponse(cachedFilings);
-      } else {
-        chrome.storage.local.get(['filingsData'], (r) => {
-          cachedFilings = r.filingsData || [];
-          sendResponse(cachedFilings);
-        });
+        return false;
       }
+      store.get(['filingsData'], (r) => {
+        cachedFilings = !chrome.runtime.lastError && r && Array.isArray(r.filingsData) ? r.filingsData : [];
+        sendResponse(cachedFilings);
+      });
       return true;
 
     case 'SET_FILING_DATA':
       currentFiling = msg.data ?? null;
+      if (!store) {
+        sendResponse({ ok: true });
+        return false;
+      }
       if (currentFiling) {
-        chrome.storage.local.set({ filingData: currentFiling }, () => sendResponse({ ok: true }));
+        store.set({ filingData: currentFiling }, () => sendResponse({ ok: true }));
       } else {
-        chrome.storage.local.remove('filingData', () => sendResponse({ ok: true }));
+        store.remove('filingData', () => sendResponse({ ok: true }));
       }
       return true;
 
     case 'GET_FILING_DATA':
-      if (currentFiling) {
+      if (currentFiling || !store) {
         sendResponse(currentFiling);
-      } else {
-        chrome.storage.local.get(['filingData'], (r) => {
-          currentFiling = r.filingData || null;
-          sendResponse(currentFiling);
-        });
+        return false;
       }
+      store.get(['filingData'], (r) => {
+        currentFiling = !chrome.runtime.lastError && r ? r.filingData || null : null;
+        sendResponse(currentFiling);
+      });
       return true;
 
     case 'CLEAR_FILING_DATA':
-      cachedFilings = [];
-      currentFiling = null;
-      chrome.storage.local.remove(['filingsData', 'filingData'], () => sendResponse({ ok: true }));
+      clearCachedFilings(() => sendResponse({ ok: true }));
       return true;
 
     // Proxy bridge fetches through the service worker with the per-session token
@@ -91,10 +145,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case 'FETCH_BRIDGE':
       withToken((token) => {
         if (!token) {
-          sendResponse({
-            ok: false,
-            status: 403,
-            error: 'No bridge session token. Click "File with LIRS" in LagosFile to connect.',
+          clearCachedFilings(() => {
+            sendResponse({
+              ok: false,
+              status: 403,
+              error: 'No bridge session token. Click "File with LIRS" in LagosFile to connect.',
+            });
           });
           return;
         }
@@ -112,7 +168,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             return r.json();
           })
           .then((data) => sendResponse({ ok: true, data }))
-          .catch((err) => sendResponse({ ok: false, status: err.status || 0, error: String(err) }));
+          .catch((err) => {
+            const status = err && err.status ? err.status : 0;
+            // Clear cached filings whenever the bridge rejects auth or is offline (vault locked).
+            if (status === 403 || status === 0) {
+              clearCachedFilings(() => {
+                sendResponse({ ok: false, status, error: String(err) });
+              });
+            } else {
+              sendResponse({ ok: false, status, error: String(err) });
+            }
+          });
       });
       return true;
 

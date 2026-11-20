@@ -343,7 +343,48 @@ describe('LagosFile extension autofill-core', () => {
 
     const chromeManifest = JSON.parse(readFileSync(resolve(EXT_ROOT, 'chrome', 'manifest.json'), 'utf8'));
     const firefoxManifest = JSON.parse(readFileSync(resolve(EXT_ROOT, 'firefox', 'manifest.json'), 'utf8'));
-    expect(chromeManifest.version).toBe('1.3.0');
-    expect(firefoxManifest.version).toBe('1.3.0');
+    expect(chromeManifest.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(firefoxManifest.version).toBe(chromeManifest.version);
+
+    // Both manifests must capture #lagosfile=<token> at document_start to survive login redirects.
+    const hasDocStart = (m) =>
+      m.content_scripts.some(
+        (cs) => cs.run_at === 'document_start' && Array.isArray(cs.js) && cs.js.includes('token-capture.js')
+      );
+    expect(hasDocStart(chromeManifest)).toBe(true);
+    expect(hasDocStart(firefoxManifest)).toBe(true);
+
+    const chromeTokenCap = readFileSync(resolve(EXT_ROOT, 'chrome', 'token-capture.js'), 'utf8');
+    const firefoxTokenCap = readFileSync(resolve(EXT_ROOT, 'firefox', 'token-capture.js'), 'utf8');
+    expect(firefoxTokenCap).toBe(chromeTokenCap);
+
+    // Neither extension may persist PII or tokens to storage.local (only cleanup .remove is allowed).
+    const chromeBg = readFileSync(resolve(EXT_ROOT, 'chrome', 'background.js'), 'utf8');
+    const firefoxBg = readFileSync(resolve(EXT_ROOT, 'firefox', 'background.js'), 'utf8');
+    expect(chromeBg).not.toMatch(/storage\.local\.(set|get)/);
+    expect(firefoxBg).not.toMatch(/storage\.local\.(set|get)/);
+
+    // Popup must not fall back to GET_FILINGS_DATA when bridge fails, and must surface 403 distinctly.
+    const chromePopupJs = readFileSync(resolve(EXT_ROOT, 'chrome', 'popup.js'), 'utf8');
+    const firefoxPopupJs = readFileSync(resolve(EXT_ROOT, 'firefox', 'popup.js'), 'utf8');
+    expect(firefoxPopupJs).toBe(chromePopupJs);
+    expect(chromePopupJs).not.toContain("'GET_FILINGS_DATA'");
+    expect(chromePopupJs).toContain('status === 403');
+    expect(chromeContent).toContain('status === 403');
+  });
+
+  it('activateTab prioritizes real tab elements over earlier generic links in DOM order', () => {
+    document.body.innerHTML = `
+      <header><a id="header-link" href="/deductions">Deductions</a></header>
+      <ul class="nav">
+        <li class="nav-item"><button id="real-tab" class="nav-link" role="tab">Deductions</button></li>
+      </ul>
+    `;
+    const clicked = [];
+    document.getElementById('header-link').addEventListener('click', () => clicked.push('header-link'));
+    document.getElementById('real-tab').addEventListener('click', () => clicked.push('real-tab'));
+
+    expect(core.activateTab('deductions', document)).toBe(true);
+    expect(clicked).toEqual(['real-tab']);
   });
 });

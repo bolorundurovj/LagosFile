@@ -66,12 +66,28 @@
     buildCopyFields();
   }
 
-  function showOffline() {
+  function showOffline(isAuthError) {
     $('state-loading').classList.add('hidden');
     $('state-pick').classList.add('hidden');
     $('state-fill').classList.add('hidden');
     $('state-offline').classList.remove('hidden');
-    $('status-text').textContent = 'Not connected';
+    const titleEl = $('offline-title');
+    const descEl = $('offline-desc');
+    if (isAuthError) {
+      if (titleEl) titleEl.textContent = 'Session Token Expired or Missing';
+      if (descEl) {
+        descEl.innerHTML =
+          'Your LagosFile bridge session token expired or was not received. Re-open the portal via <strong>File with LIRS</strong> in LagosFile, then click Try Again.';
+      }
+      $('status-text').textContent = 'Auth required (403)';
+    } else {
+      if (titleEl) titleEl.textContent = 'LagosFile Not Detected';
+      if (descEl) {
+        descEl.innerHTML =
+          'Open LagosFile, then click <strong>File with LIRS</strong> on any confirmed filing. Then click Try Again below.';
+      }
+      $('status-text').textContent = 'Not connected';
+    }
   }
 
   function syncSelectedToBackground() {
@@ -115,43 +131,14 @@
   }
 
   async function bootstrapFromCache() {
-    const cachedList = await sendMsg({ type: 'GET_FILINGS_DATA' });
+    // Always verify live bridge availability so locked/stopped LagosFile sessions
+    // never serve stale cached taxpayer PII.
+    showLoading();
     const cachedSelected = await sendMsg({ type: 'GET_FILING_DATA' });
-    const listOk = Array.isArray(cachedList) && cachedList.length > 0;
-
-    if (!listOk) {
-      showLoading();
-      await fetchFilings({ silent: false });
-      return;
+    if (cachedSelected && cachedSelected.filingId) {
+      filingData = cachedSelected;
     }
-
-    allFilings = cachedList;
-
-    const match =
-      cachedSelected &&
-      cachedSelected.filingId &&
-      allFilings.find(function (f) { return f.filingId === cachedSelected.filingId; });
-
-    if (match) {
-      filingData = match;
-      syncSelectedToBackground();
-      showFillState();
-      fetchFilings({ silent: true });
-      return;
-    }
-
-    if (allFilings.length === 1) {
-      filingData = allFilings[0];
-      syncSelectedToBackground();
-      showFillState();
-      fetchFilings({ silent: true });
-      return;
-    }
-
-    filingData = null;
-    syncSelectedToBackground();
-    showPickState();
-    fetchFilings({ silent: true });
+    await fetchFilings({ silent: false });
   }
 
   async function fetchFilings(options) {
@@ -166,7 +153,13 @@
       return;
     }
 
-    if (silent) return;
+    if (resp && resp.status === 403) {
+      allFilings = [];
+      filingData = null;
+      await sendMsg({ type: 'CLEAR_FILING_DATA' });
+      showOffline(true);
+      return;
+    }
 
     const respSingle = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
     if (respSingle && respSingle.ok && respSingle.data) {
@@ -178,21 +171,11 @@
       return;
     }
 
-    const cached = await sendMsg({ type: 'GET_FILINGS_DATA' });
-    if (Array.isArray(cached) && cached.length > 0) {
-      allFilings = cached;
-      if (allFilings.length === 1) {
-        filingData = allFilings[0];
-        syncSelectedToBackground();
-        showFillState();
-      } else {
-        filingData = null;
-        syncSelectedToBackground();
-        showPickState();
-      }
-    } else {
-      showOffline();
-    }
+    // Bridge is offline or rejected auth — never serve stale cached taxpayer PII.
+    allFilings = [];
+    filingData = null;
+    await sendMsg({ type: 'CLEAR_FILING_DATA' });
+    showOffline(Boolean(respSingle && respSingle.status === 403));
   }
 
   function renderFilingList() {

@@ -46,7 +46,16 @@
 
   const tokenCapturePromise = captureBridgeTokenFromHash();
   window.addEventListener('hashchange', function () {
-    captureBridgeTokenFromHash();
+    captureBridgeTokenFromHash().then(function (captured) {
+      if (captured) {
+        allFilings = [];
+        selectedFiling = null;
+        if (panelOpen) {
+          renderLoading();
+          loadFilings();
+        }
+      }
+    });
   });
 
   const host = document.createElement('div');
@@ -261,11 +270,15 @@
     body.innerHTML = '<div class="spinner"></div><div class="loading-text">Connecting to LagosFile…</div>';
   }
 
-  function renderOffline() {
+  function renderOffline(isAuthError) {
+    const title = isAuthError ? 'Session Token Expired or Missing' : 'LagosFile Not Detected';
+    const desc = isAuthError
+      ? 'Your LagosFile bridge session token expired or was not received. Re-open the portal via <strong>File with LIRS</strong> in LagosFile, then click Refresh.'
+      : 'Open LagosFile and click <strong>File with LIRS</strong> on a confirmed filing, then click Refresh.';
     body.innerHTML =
       '<div class="offline-icon">⚠</div>' +
-      '<div class="offline-title">LagosFile Not Detected</div>' +
-      '<div class="offline-desc">Open LagosFile and click <strong>File with LIRS</strong> on a confirmed filing, then click Refresh.</div>' +
+      '<div class="offline-title">' + title + '</div>' +
+      '<div class="offline-desc">' + desc + '</div>' +
       '<div class="btn-row">' +
         '<button class="btn btn-ghost" id="offline-refresh">↺ Refresh</button>' +
       '</div>';
@@ -372,6 +385,13 @@
       return;
     }
 
+    if (resp && resp.status === 403) {
+      allFilings = [];
+      selectedFiling = null;
+      renderOffline(true);
+      return;
+    }
+
     const singleResp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
     if (singleResp && singleResp.ok && singleResp.data) {
       allFilings = [singleResp.data];
@@ -381,7 +401,9 @@
       return;
     }
 
-    renderOffline();
+    allFilings = [];
+    selectedFiling = null;
+    renderOffline(Boolean(singleResp && singleResp.status === 403));
   }
 
   function runStep(step) {
