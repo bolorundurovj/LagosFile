@@ -146,6 +146,25 @@ pub fn decode_with_key(
     }
 }
 
+/// Renames `from` to `to`, retrying briefly on transient Windows `PermissionDenied`
+/// errors caused by antivirus/indexer scans momentarily holding a handle on newly written files.
+pub fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut last_err = None;
+    for attempt in 0..8 {
+        match std::fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 7 => {
+                last_err = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "rename failed")
+    }))
+}
+
 /// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`,
 /// invoking `before_rename` after the encrypted temp file has been written and flushed.
 /// Deletes any legacy `dir/.salt` file ONLY after the rename succeeds.
@@ -180,7 +199,7 @@ where
         return Err(e);
     }
 
-    if let Err(e) = std::fs::rename(&tmp, &target) {
+    if let Err(e) = rename_with_retry(&tmp, &target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
     }

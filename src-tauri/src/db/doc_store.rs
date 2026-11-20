@@ -208,7 +208,7 @@ pub fn write_encrypted_doc_atomic(
         f.write_all(&encrypted)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, dest)?;
+        crate::db::vault::rename_with_retry(&tmp, dest)?;
         Ok(())
     })();
 
@@ -702,7 +702,7 @@ pub fn write_archive_to_path(dest: &Path, archive_bytes: &[u8]) -> Result<(), St
         f.write_all(archive_bytes)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, dest)?;
+        crate::db::vault::rename_with_retry(&tmp, dest)?;
         Ok(())
     })();
 
