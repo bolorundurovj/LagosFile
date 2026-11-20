@@ -35,8 +35,14 @@ import { LucideAngularModule } from 'lucide-angular';
               <span>Less: Capital Allowances<lf-help text="Annual allowances on qualifying professional assets, prorated to the taxable period (NTA 2025, Fourth Schedule)."></lf-help></span>
               <span class="financial-value">({{ result()!.proratedCapitalAllowances | naira }})</span>
             </div>
+            @if ((result()!.consolidatedReliefAllowance ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Includes: Consolidated Relief Allowance (PITA)<lf-help text="Higher of ₦200,000 or 1% of gross income plus 20% of gross income after tax-exempt items (PITA / Finance Act 2020)."></lf-help></span>
+                <span class="financial-value">({{ result()!.consolidatedReliefAllowance | naira }})</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: Deductions &amp; Reliefs<lf-help text="Total of pension, NHIS, NHF, life assurance, rent relief, WHT credits and other approved deductions."></lf-help></span>
+              <span>Less: Deductions &amp; Reliefs<lf-help text="Total of pension, NHIS, NHF, life assurance, rent relief (NTA 2025) or CRA (PITA), and other approved deductions."></lf-help></span>
               <span class="financial-value">({{ result()!.totalDeductions | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--subtotal">

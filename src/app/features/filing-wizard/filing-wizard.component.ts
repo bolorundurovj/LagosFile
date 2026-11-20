@@ -1,7 +1,9 @@
-import { Component, inject, OnInit, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, inject, OnInit, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { AuthService } from '../../core/services/auth.service';
 import { FilingService } from '../../core/services/filing.service';
 import { ToastService } from '../../core/services/toast.service';
 import { CapitalAllowance, Filing, IncomeEntry, ReliefEntry } from '../../core/models';
@@ -458,8 +460,10 @@ const STEPS = [
 export class FilingWizardComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private auth = inject(AuthService);
   private filingService = inject(FilingService);
   private toast = inject(ToastService);
+  private destroyRef = inject(DestroyRef);
 
   mode = signal<WizardMode>('active');
   filingId = signal<string | undefined>(undefined);
@@ -500,6 +504,8 @@ export class FilingWizardComponent implements OnInit {
   }
 
   canDeactivate(): boolean {
+    // Never block idle lock or manual lock behind a confirmation dialog.
+    if (!this.auth.isUnlocked()) return true;
     if (this.mode() !== 'active') return true;
     const active = this.activeStepRef();
     if (!active || !active.isDirty()) return true;
@@ -507,7 +513,28 @@ export class FilingWizardComponent implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    const id = this.route.snapshot.paramMap.get('id');
+    if (this.route.paramMap) {
+      let initialized = false;
+      const initialId = this.route.snapshot?.paramMap?.get('id') ?? null;
+      this.route.paramMap
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe((pm) => {
+          const nextId = pm.get('id');
+          if (!initialized) {
+            initialized = true;
+            return;
+          }
+          void this.loadForRouteId(nextId);
+        });
+      await this.loadForRouteId(initialId);
+    } else {
+      await this.loadForRouteId(this.route.snapshot.paramMap.get('id'));
+    }
+  }
+
+  private async loadForRouteId(id: string | null): Promise<void> {
+    this.readonlyFiling.set(null);
+    this.currentStep.set(1);
     if (id) {
       this.loading.set(true);
       try {
@@ -535,6 +562,7 @@ export class FilingWizardComponent implements OnInit {
         this.loading.set(false);
       }
     } else {
+      this.filingId.set(undefined);
       this.mode.set('selecting-year');
       this.loading.set(false);
     }

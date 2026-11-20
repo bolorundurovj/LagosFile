@@ -651,6 +651,7 @@ export class SettingsComponent {
       const taxpayer = await this.auth.restoreDb(this.pendingRestorePath, this.restorePin);
       if (taxpayer) {
         this.editForm.fullName    = taxpayer.fullName;
+        this.editForm.tin         = taxpayer.tin;
         this.editForm.address     = taxpayer.address     ?? '';
         this.editForm.phone       = taxpayer.phone       ?? '';
         this.editForm.email       = taxpayer.email       ?? '';

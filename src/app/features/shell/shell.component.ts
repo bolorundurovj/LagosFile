@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, signal } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ConfigService } from '../../core/services/config.service';
@@ -19,6 +19,17 @@ import { LucideAngularModule } from 'lucide-angular';
         <span>LagosFile v{{ update.updateAvailable() }} is available.</span>
         <a [href]="update.updateUrl()" target="_blank" class="update-banner__link">View release</a>
         <button class="update-banner__dismiss" (click)="update.dismiss(update.updateAvailable()!)" title="Dismiss">&times;</button>
+      </div>
+    }
+    @if (migrationNotices().length > 0) {
+      <div class="migration-banner" role="status">
+        <lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon>
+        <div class="migration-banner__body">
+          @for (notice of migrationNotices(); track $index) {
+            <div>{{ notice }}</div>
+          }
+        </div>
+        <button type="button" class="migration-banner__dismiss" (click)="dismissMigrationNotices()" title="Dismiss notices">Dismiss</button>
       </div>
     }
     <div class="shell">
@@ -65,6 +76,29 @@ import { LucideAngularModule } from 'lucide-angular';
     .update-banner__link { color: var(--color-primary); font-weight: var(--font-weight-medium); text-decoration: underline; }
     .update-banner__dismiss { background: none; border: none; color: var(--color-on-primary-container); font-size: 1.2rem; cursor: pointer; margin-left: auto; padding: 0 var(--space-1); line-height: 1; opacity: 0.7; }
     .update-banner__dismiss:hover { opacity: 1; }
+
+    .migration-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-warning-container, #fef3c7);
+      color: var(--color-on-warning-container, #78350f);
+      font-size: var(--text-body-sm);
+      border-bottom: 1px solid rgba(120, 53, 15, 0.2);
+    }
+    .migration-banner__body { flex: 1; display: flex; flex-direction: column; gap: var(--space-1); }
+    .migration-banner__dismiss {
+      background: none;
+      border: 1px solid currentColor;
+      border-radius: var(--radius-md);
+      color: inherit;
+      font-size: var(--text-label-sm);
+      font-weight: var(--font-weight-medium);
+      cursor: pointer;
+      padding: 2px 10px;
+      flex-shrink: 0;
+    }
   `],
 })
 export class ShellComponent implements OnInit {
@@ -72,12 +106,26 @@ export class ShellComponent implements OnInit {
   private config = inject(ConfigService);
   update = inject(UpdateService);
   private reminders = inject(DeadlineReminderService);
+  migrationNotices = signal<string[]>([]);
 
   async ngOnInit(): Promise<void> {
     try {
       await this.config.loadActive();
     } catch { /* new install; seed data will be created on unlock */ }
+    try {
+      const notices = await this.config.getMigrationNotices();
+      if (Array.isArray(notices) && notices.length > 0) {
+        this.migrationNotices.set(notices);
+      }
+    } catch { /* ignore when notices unavailable */ }
     this.update.checkForUpdates();
     void this.reminders.check();
+  }
+
+  async dismissMigrationNotices(): Promise<void> {
+    this.migrationNotices.set([]);
+    try {
+      await this.config.dismissMigrationNotices();
+    } catch { /* keep UI dismissed */ }
   }
 }

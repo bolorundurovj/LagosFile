@@ -3,7 +3,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
-import { ReliefEntry, ReliefType } from '../../../../core/models';
+import { ReliefEntry, ReliefType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { ToastService } from '../../../../core/services/toast.service';
@@ -215,7 +215,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
               name="paye" min="0" placeholder="₦ 0.00" />
           </div>
         </div>
-        @if (fields.paye > 0) {
+        @if (fields.paye > 0 || standard.paye.documents.length > 0) {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach PAYE tax deduction card" (fileSelected)="onFileSelected($event, standard.paye)" />
             @for (doc of standard.paye.documents; track doc.id) {
@@ -323,6 +323,7 @@ export class StepDeductionsComponent implements OnInit {
   whtEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   saving = signal(false);
+  private filingConfig = signal<TaxConfig | null>(null);
   private removedIds: string[] = [];
   private persistedStandardIds = new Set<string>();
   private initialSnapshot = '';
@@ -349,6 +350,11 @@ export class StepDeductionsComponent implements OnInit {
       this.standard[type] = this.newRelief(type);
     }
     try {
+      try {
+        if (typeof this.configService.getForFiling === 'function') {
+          this.filingConfig.set(await this.configService.getForFiling(this.filingId()));
+        }
+      } catch { /* fall back to activeConfig */ }
       const existing = await this.filingService.listReliefEntries(this.filingId());
       for (const r of existing) {
         if (r.reliefType in STANDARD_FIELDS) {
@@ -380,7 +386,7 @@ export class StepDeductionsComponent implements OnInit {
     };
   }
 
-  private caps = computed(() => this.configService.activeConfig()?.reliefCaps);
+  private caps = computed(() => (this.filingConfig() ?? this.configService.activeConfig())?.reliefCaps);
 
   rentReliefRate = computed(() => this.caps()?.rentReliefRate ?? 0.20);
   rentReliefCap = computed(() => this.caps()?.rentReliefCap ?? 500_000);
@@ -453,8 +459,12 @@ export class StepDeductionsComponent implements OnInit {
       }
 
       const toSave: ReliefEntry[] = entries.map(entry => {
+        const claimed = Number(entry.claimedAmount ?? 0) || 0;
+        entry.claimedAmount = claimed;
         if (entry.reliefType === 'wht' || entry.reliefType === 'other_approved') {
-          entry.approvedAmount = entry.claimedAmount;
+          entry.approvedAmount = claimed;
+        } else {
+          entry.approvedAmount = Number(entry.approvedAmount ?? claimed) || 0;
         }
         return { ...entry, filingId: fid };
       });
@@ -472,7 +482,10 @@ export class StepDeductionsComponent implements OnInit {
       for (const entry of entries) {
         failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
       }
-      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
+      if (failed.length) {
+        this.toast.error('Could not attach ' + failed.join('; '));
+        return false;
+      }
       this.initialSnapshot = this.snapshot();
       return true;
     } catch (err) {

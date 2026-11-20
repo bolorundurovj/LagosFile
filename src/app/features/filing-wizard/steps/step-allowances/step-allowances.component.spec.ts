@@ -153,4 +153,41 @@ describe('StepAllowancesComponent', () => {
     expect(upserts.length).toBe(2);
     expect(deleteIds).toEqual([removedId]);
   });
+
+  it('does not misclassify a new asset with blank or 1970-01-01 acquisitionDate as carried forward and coerces null cost to 0', async () => {
+    filingServiceSpy.listAllowances.and.resolveTo([
+      {
+        id: 'ca-blank-date',
+        filingId: 'filing-1',
+        assetType: 'computer_laptop',
+        assetDescription: 'Laptop',
+        assetCost: 1_000_000,
+        acquisitionDate: '1970-01-01',
+        taxWrittenDownValue: 1_000_000,
+        annualAllowanceRate: 0.25,
+        annualAllowanceAmount: 250_000,
+        documents: [],
+      },
+    ]);
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    const entry = comp.entries()[0];
+    expect(entry.acquisitionDate).toBe('');
+    expect(comp.isFromPriorYear(entry)).toBeFalse();
+
+    // Raising cost must still update WDV because it is NOT a prior-year asset
+    entry.assetCost = 1_500_000;
+    comp.onCostChange(entry);
+    expect(entry.taxWrittenDownValue).toBe(1_500_000);
+
+    // Clearing cost to null must coerce to 0 cleanly on save
+    (entry as unknown as { assetCost: number | null }).assetCost = null;
+    await comp.save();
+    const [, upserts] = filingServiceSpy.saveAllowances.calls.mostRecent().args;
+    expect(upserts[0].assetCost).toBe(0);
+  });
 });

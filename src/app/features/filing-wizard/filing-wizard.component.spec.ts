@@ -3,6 +3,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { FilingWizardComponent } from './filing-wizard.component';
 import { StepReviewComponent } from './steps/step-review/step-review.component';
 import { FilingService } from '../../core/services/filing.service';
+import { AuthService } from '../../core/services/auth.service';
 import { FxService } from '../../core/services/fx.service';
 import { ConfigService } from '../../core/services/config.service';
 import { ToastService } from '../../core/services/toast.service';
@@ -265,6 +266,8 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
   });
 
   it('canDeactivate prompts when the active step has unsaved edits', async () => {
+    const auth = TestBed.inject(AuthService);
+    (auth as unknown as { _state: { set(v: string): void } })._state.set('unlocked');
     const fixture = TestBed.createComponent(FilingWizardComponent);
     fixture.detectChanges();
     await fixture.whenStable();
@@ -409,5 +412,16 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
       digitalAssetLossRingfenced: 0,
     });
     expect(fixture.componentInstance.validationIssues().length).toBe(1);
+  });
+
+  it('canDeactivate bypasses confirmation dialog when vault is locked', () => {
+    const auth = TestBed.inject(AuthService);
+    (auth as unknown as { _state: { set(v: string): void } })._state.set('locked');
+    const confirmSpy = spyOn(window, 'confirm').and.returnValue(false);
+
+    const fixture = TestBed.createComponent(FilingWizardComponent);
+    fixture.componentInstance.mode.set('active');
+    expect(fixture.componentInstance.canDeactivate()).toBeTrue();
+    expect(confirmSpy).not.toHaveBeenCalled();
   });
 });

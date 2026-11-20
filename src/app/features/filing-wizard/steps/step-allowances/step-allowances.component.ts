@@ -240,12 +240,17 @@ export class StepAllowancesComponent implements OnInit {
   async ngOnInit(): Promise<void> {
     try {
       const existing = await this.filingService.listAllowances(this.filingId());
+      for (const e of existing) {
+        if (!e.acquisitionDate || e.acquisitionDate === '1970-01-01') {
+          e.acquisitionDate = '';
+        }
+      }
       this.entries.set(existing);
       for (const e of existing) {
         const acqYear = e.acquisitionDate ? Number(e.acquisitionDate.slice(0, 4)) : NaN;
         if (
           (e.taxWrittenDownValue > 0 && e.taxWrittenDownValue < e.assetCost) ||
-          (Number.isFinite(acqYear) && acqYear < this.yearOfAssessment())
+          (Number.isFinite(acqYear) && acqYear > 1970 && acqYear < this.yearOfAssessment())
         ) {
           this.priorYearIds.add(e.id);
         }
@@ -291,14 +296,20 @@ export class StepAllowancesComponent implements OnInit {
   /** Straight-line on cost, limited to the remaining written-down value. */
   recalculate(entry: CapitalAllowance): void {
     const rate = this.rateFor(entry.assetType);
+    const cost = Number(entry.assetCost ?? 0) || 0;
+    const wdv = Number(entry.taxWrittenDownValue ?? 0) || 0;
+    entry.assetCost = cost;
+    entry.taxWrittenDownValue = wdv;
     entry.annualAllowanceRate = rate;
-    const opening = entry.taxWrittenDownValue > 0 ? entry.taxWrittenDownValue : entry.assetCost;
-    entry.annualAllowanceAmount = Math.max(0, Math.min(entry.assetCost * rate, opening));
+    const opening = wdv > 0 ? wdv : cost;
+    entry.annualAllowanceAmount = Math.max(0, Math.min(cost * rate, opening));
   }
 
   onCostChange(entry: CapitalAllowance): void {
+    const cost = Number(entry.assetCost ?? 0) || 0;
+    entry.assetCost = cost;
     if (!this.isFromPriorYear(entry)) {
-      entry.taxWrittenDownValue = entry.assetCost;
+      entry.taxWrittenDownValue = cost;
     }
     this.recalculate(entry);
   }
@@ -394,7 +405,10 @@ export class StepAllowancesComponent implements OnInit {
       for (const entry of this.entries()) {
         failed.push(...await flushDocuments(this.filingService, entry, 'capital_allowance'));
       }
-      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
+      if (failed.length) {
+        this.toast.error('Could not attach ' + failed.join('; '));
+        return false;
+      }
       this.initialSnapshot = this.snapshot();
       return true;
     } catch (err) {

@@ -43,8 +43,14 @@ export class FilingService {
     incomeEntries: Partial<IncomeEntry>[],
     capitalAllowances: Partial<CapitalAllowance>[],
     reliefEntries: Partial<ReliefEntry>[],
+    incomeYear?: number,
   ): Promise<ComputationResult> {
-    return this.tauri.invoke<ComputationResult>('estimate_tax', { incomeEntries, capitalAllowances, reliefEntries });
+    return this.tauri.invoke<ComputationResult>('estimate_tax', {
+      incomeEntries,
+      capitalAllowances,
+      reliefEntries,
+      ...(incomeYear != null ? { incomeYear } : {}),
+    });
   }
 
   async deleteFiling(id: string): Promise<void> {

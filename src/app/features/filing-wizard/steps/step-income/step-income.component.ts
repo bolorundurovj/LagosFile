@@ -529,6 +529,7 @@ export class StepIncomeComponent implements OnInit {
       entry.foreignAmount = undefined;
       entry.fxRateFetched = undefined;
       entry.fxRateCbnOverride = undefined;
+      entry.foreignTaxPaidNgn = undefined;
     } else {
       entry.foreignCurrency = 'USD';
       // Auto-fetch for today if date not yet filled; re-fetch if date already set
@@ -618,13 +619,22 @@ export class StepIncomeComponent implements OnInit {
       for (const entry of this.entries()) {
         if (entry.incomeType === 'benefits_in_kind') {
           entry.isForeign = false;
+          entry.foreignTaxPaidNgn = undefined;
+          entry.bikCost = Number(entry.bikCost ?? 0) || 0;
           entry.grossAmountNgn = this.estimatedBikValue(entry);
         } else if (entry.isForeign) {
           this.applyRate(entry);
+        } else {
+          entry.grossAmountNgn = Number(entry.grossAmountNgn ?? 0) || 0;
         }
         if (entry.incomeType === 'capital_gain_shares') {
-          entry.grossAmountNgn = entry.cgtGain ?? 0;
+          entry.cgtProceeds = Number(entry.cgtProceeds ?? 0) || 0;
+          entry.cgtGain = Number(entry.cgtGain ?? 0) || 0;
+          entry.grossAmountNgn = entry.cgtGain;
           entry.isCgtExempt = exempt;
+        }
+        if (entry.grossAmountNgn == null || !Number.isFinite(entry.grossAmountNgn)) {
+          entry.grossAmountNgn = 0;
         }
         toSave.push({ ...entry, filingId: fid });
       }
@@ -635,7 +645,10 @@ export class StepIncomeComponent implements OnInit {
       for (const entry of this.entries()) {
         failed.push(...await flushDocuments(this.filingService, entry, 'income_entry'));
       }
-      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
+      if (failed.length) {
+        this.toast.error('Could not attach ' + failed.join('; '));
+        return false;
+      }
       this.initialSnapshot = this.snapshot();
       return true;
     } catch (err) {

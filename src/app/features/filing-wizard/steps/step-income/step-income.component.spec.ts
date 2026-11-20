@@ -307,4 +307,79 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     expect(upserts.length).toBe(2);
     expect(deleteIds).toEqual(['inc-old']);
   });
+
+  it('coerces cleared null numeric inputs to 0, clears foreignTaxPaidNgn when untoggling foreign, and fails save if attachment upload fails', async () => {
+    filingServiceSpy.attachDocument.and.rejectWith(new Error('disk error'));
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    comp.addEntry();
+    const entry = comp.entries()[0];
+    entry.isForeign = true;
+    entry.foreignCurrency = 'EUR';
+    entry.foreignTaxPaidNgn = 50_000;
+    entry.isForeign = false;
+    comp.onForeignToggle(entry);
+    expect(entry.foreignTaxPaidNgn).toBeUndefined();
+
+    // Simulate clearing NumericFormatDirective (writes null)
+    (entry as unknown as { grossAmountNgn: number | null }).grossAmountNgn = null;
+    comp.onFileSelected({ path: 'C:/tmp/fail.pdf', name: 'fail.pdf', type: 'pdf', size: 10 }, entry);
+
+    const saved = await comp.save();
+    expect(saved).toBeFalse();
+    expect(comp.isDirty()).toBeTrue();
+    const [, upserts] = filingServiceSpy.saveIncomeEntries.calls.mostRecent().args;
+    expect(upserts[0].grossAmountNgn).toBe(0);
+  });
+
+  it('LIRSService.buildReferenceFields includes prize income, real currency code, and does not duplicate WHT/PAYE credits', () => {
+    const lirs = TestBed.inject(LIRSService);
+    const filing: Filing = {
+      id: 'f-ref-1',
+      taxpayerId: 'tp-1',
+      yearOfAssessment: 2025,
+      status: 'Confirmed',
+      createdAt: '2026-01-01T00:00:00Z',
+      taxConfigVersion: 'PITA',
+    };
+    const groups = lirs.buildReferenceFields(
+      filing,
+      [
+        {
+          id: 'i1', filingId: 'f-ref-1', incomeType: 'prize', grossAmountNgn: 500_000,
+          isForeign: false, isCgtExempt: false, documents: [],
+        },
+        {
+          id: 'i2', filingId: 'f-ref-1', incomeType: 'business', grossAmountNgn: 1_800_000,
+          isForeign: true, foreignCurrency: 'EUR', foreignAmount: 1_000, fxRateUsed: 1800,
+          isCgtExempt: false, documents: [],
+        },
+      ],
+      [],
+      [
+        { id: 'r1', filingId: 'f-ref-1', reliefType: 'wht', claimedAmount: 50_000, approvedAmount: 50_000, documents: [] },
+        { id: 'r2', filingId: 'f-ref-1', reliefType: 'paye', claimedAmount: 100_000, approvedAmount: 100_000, documents: [] },
+      ],
+      {
+        totalGrossIncome: 2_300_000, totalCapitalAllowances: 0, proratedCapitalAllowances: 0,
+        totalDeductions: 660_000, chargeableIncome: 1_640_000, bandBreakdown: [],
+        graduatedTax: 232_400, whtCredits: 50_000, payeCredits: 100_000, foreignTaxCredits: 0,
+        netTaxPayable: 82_400, minimumTax: 23_000, finalTaxPayable: 82_400,
+        cgtExemptAmount: 0, digitalAssetLossRingfenced: 0, configVersion: 'PITA',
+        rentReliefApplied: 0, consolidatedReliefAllowance: 660_000,
+      },
+    );
+    const incFields = groups.find(g => g.section === 'Income Declaration')!.fields;
+    expect(incFields.some(f => f.label === 'Prize / Winnings' && f.copyText === '500000')).toBeTrue();
+    expect(incFields.some(f => f.label === 'Foreign Currency Amount (EUR)')).toBeTrue();
+
+    const relFields = groups.find(g => g.section === 'Deductions & Reliefs')!.fields;
+    expect(relFields.filter(f => f.label.includes('WHT') || f.label.includes('Withholding')).length).toBe(1);
+    expect(relFields.filter(f => f.label.includes('PAYE')).length).toBe(1);
+    expect(relFields.some(f => f.label.includes('Consolidated Relief Allowance'))).toBeTrue();
+  });
 });

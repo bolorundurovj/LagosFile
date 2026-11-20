@@ -32,6 +32,12 @@ export class TaxCalculatorComponent {
   private filingService = inject(FilingService);
 
   readonly incomeTypes = INCOME_TYPES;
+  readonly currentYear = new Date().getFullYear();
+  readonly availableYears: number[] = Array.from(
+    { length: 8 },
+    (_, i) => this.currentYear - i,
+  );
+  selectedYear = this.currentYear - 1;
   income: IncomeLine[] = [{ incomeType: 'employment', grossAmountNgn: 0 }];
   assetCost = 0;
   reliefs = { pension: 0, nhis: 0, nhf: 0, life_assurance: 0, rent: 0, wht: 0 };
@@ -71,7 +77,7 @@ export class TaxCalculatorComponent {
       const reliefs = Object.entries(this.reliefs).map(([reliefType, amount]) => ({
         reliefType: reliefType as any, claimedAmount: amount || 0,
       }));
-      this.result.set(await this.filingService.estimateTax(income, assets, reliefs));
+      this.result.set(await this.filingService.estimateTax(income, assets, reliefs, this.selectedYear));
       this.error.set(null);
     } catch (err) {
       this.error.set(String(err));

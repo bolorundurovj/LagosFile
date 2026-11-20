@@ -326,6 +326,12 @@ interface FilingRowAction {
                 <span>Graduated Tax</span>
                 <span class="financial-value">{{ previewFiling()!.taxPayable | naira }}</span>
               </div>
+              @if ((previewFiling()!.minimumTax ?? 0) > 0) {
+                <div class="breakdown-row">
+                  <span>Minimum Tax Floor</span>
+                  <span class="financial-value">{{ previewFiling()!.minimumTax | naira }}</span>
+                </div>
+              }
               <div class="breakdown-row breakdown-row--deduct">
                 <span>Less: WHT Credits</span>
                 <span class="financial-value">{{ previewFiling()!.whtCredit | naira }}</span>
@@ -346,12 +352,6 @@ interface FilingRowAction {
                 <span>Net Tax Payable</span>
                 <span class="financial-value">{{ previewFiling()!.netTaxPayable | naira }}</span>
               </div>
-              @if ((previewFiling()!.minimumTax ?? 0) > (previewFiling()!.netTaxPayable ?? 0)) {
-                <div class="breakdown-row breakdown-row--deduct">
-                  <span>Minimum Tax (1% of Gross)</span>
-                  <span class="financial-value">{{ previewFiling()!.minimumTax | naira }}</span>
-                </div>
-              }
             </div>
             <div class="preview-total">
               <span>Final Tax Payable</span>
@@ -954,6 +954,8 @@ export class FilingHistoryComponent implements OnInit {
       if (res.fallbackActive) {
         this.toast.warning(res.message);
         this.openReferencePanelForFiling(f);
+      } else if (res.warnings && res.warnings.length > 0) {
+        this.toast.warning(`${res.message} (${res.warnings.join('; ')})`);
       } else {
         this.toast.success(res.message);
       }

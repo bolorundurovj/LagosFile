@@ -15,6 +15,18 @@ export class ConfigService {
     return config;
   }
 
+  async getForFiling(filingId: string): Promise<TaxConfig> {
+    return this.tauri.invoke<TaxConfig>('get_config_for_filing', { filingId });
+  }
+
+  async getMigrationNotices(): Promise<string[]> {
+    return this.tauri.invoke<string[]>('get_migration_notices');
+  }
+
+  async dismissMigrationNotices(): Promise<void> {
+    return this.tauri.invoke<void>('dismiss_migration_notices');
+  }
+
   async listVersions(): Promise<TaxConfig[]> {
     return this.tauri.invoke<TaxConfig[]>('list_configs');
   }

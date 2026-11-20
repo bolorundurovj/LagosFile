@@ -162,6 +162,7 @@ export interface TaxConfig {
   reliefCaps: {
     rentReliefCap: number;
     rentReliefRate: number;
+    craEnabled?: boolean;
     pensionCap?: number | null;
     nhisCap?: number | null;
     nhfCap?: number | null;
@@ -203,6 +204,7 @@ export interface ComputationResult {
   digitalAssetLossRingfenced: number;
   configVersion: string;
   rentReliefApplied: number;
+  consolidatedReliefAllowance?: number;
 }
 
 export interface FxResult {
@@ -243,6 +245,7 @@ export interface LIRSAutomationResult {
   message: string;
   pendingFilingPath?: string;
   filingId: string;
+  warnings?: string[];
 }
 
 export interface LIRSFieldItem {

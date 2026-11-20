@@ -141,4 +141,25 @@ describe('FilingHistoryComponent', () => {
     expect(comp.getPrimaryActions(sampleFiling).map(a => a.id)).toContain('fileWithLirs');
     expect(comp.getMenuActions(sampleFiling).map(a => a.id)).toContain('amend');
   });
+
+  it('shows a warning toast instead of success when LIRS bridge returns partial-failure warnings', async () => {
+    filingServiceSpy.listFilings.and.resolveTo([sampleFiling]);
+    lirsServiceSpy.fileWithLirs.and.resolveTo({
+      success: true,
+      fallbackActive: false,
+      message: 'Portal opened with 1 filing.',
+      filingId: 'f-1',
+      warnings: ['Filing 2023 could not be exported: missing taxpayer'],
+    });
+
+    const fixture = TestBed.createComponent(FilingHistoryComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    await fixture.componentInstance.fileWithLirs(sampleFiling);
+    expect(toastSpy.warning).toHaveBeenCalledWith(
+      jasmine.stringContaining('Filing 2023 could not be exported'),
+    );
+    expect(toastSpy.success).not.toHaveBeenCalled();
+  });
 });
