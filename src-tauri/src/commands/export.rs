@@ -102,10 +102,20 @@ fn date_prefix(ts: Option<&str>) -> String {
 }
 
 fn csv_escape(field: &str) -> String {
-    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
-        format!("\"{}\"", field.replace('"', "\"\""))
+    // Neutralize CSV formula injection (Excel/LibreOffice) on non-numeric strings.
+    let neutralized = match field.chars().next() {
+        Some('=' | '+' | '@' | '\t' | '\r') => format!("'{field}"),
+        Some('-') if field.parse::<f64>().is_err() => format!("'{field}"),
+        _ => field.to_string(),
+    };
+    if neutralized.contains(',')
+        || neutralized.contains('"')
+        || neutralized.contains('\n')
+        || neutralized.contains('\r')
+    {
+        format!("\"{}\"", neutralized.replace('"', "\"\""))
     } else {
-        field.to_string()
+        neutralized
     }
 }
 
@@ -242,7 +252,7 @@ fn append_pdf_attachments(main_path: &str, att_paths: &[String]) -> Result<(), S
         // Renumber attachment object IDs so they don't collide with main
         let start = main.max_id + 1;
         att.renumber_objects_with(start);
-        main.max_id = att.max_id;
+        main.max_id = main.max_id.max(att.max_id);
 
         // Locate main doc's Pages root — extract ID before any mutable borrow
         let pages_root_id: lopdf::ObjectId = {
@@ -273,9 +283,53 @@ fn append_pdf_attachments(main_path: &str, att_paths: &[String]) -> Result<(), S
         };
         let page_count = att_page_ids.len() as i64;
 
-        // Re-parent each attachment page to main's Pages root
+        // Materialize inheritable attributes (/MediaBox, /CropBox, /Resources, /Rotate) from
+        // ancestor /Pages nodes onto each page before re-parenting it to main's Pages root.
         for &pid in &att_page_ids {
+            let inherited: Vec<(&[u8], lopdf::Object)> = {
+                let mut found: Vec<(&[u8], lopdf::Object)> = Vec::new();
+                for key in [
+                    b"MediaBox".as_slice(),
+                    b"CropBox".as_slice(),
+                    b"Resources".as_slice(),
+                    b"Rotate".as_slice(),
+                ] {
+                    let has_own = matches!(
+                        att.objects.get(&pid),
+                        Some(lopdf::Object::Dictionary(d)) if d.has(key)
+                    );
+                    if has_own {
+                        continue;
+                    }
+                    let mut cur = pid;
+                    let mut depth = 0usize;
+                    while depth < 16 {
+                        depth += 1;
+                        let parent_id = match att.objects.get(&cur) {
+                            Some(lopdf::Object::Dictionary(d)) => {
+                                d.get(b"Parent").ok().and_then(|o| o.as_reference().ok())
+                            }
+                            _ => None,
+                        };
+                        let Some(next_id) = parent_id else {
+                            break;
+                        };
+                        if let Some(lopdf::Object::Dictionary(pd)) = att.objects.get(&next_id) {
+                            if let Ok(val) = pd.get(key) {
+                                found.push((key, val.clone()));
+                                break;
+                            }
+                        }
+                        cur = next_id;
+                    }
+                }
+                found
+            };
+
             if let Some(lopdf::Object::Dictionary(ref mut d)) = att.objects.get_mut(&pid) {
+                for (key, val) in inherited {
+                    d.set(key, val);
+                }
                 d.set("Parent", pages_root_id);
             }
         }
@@ -411,6 +465,89 @@ fn add_attachments_appendix(
     Ok(())
 }
 
+/// Parses raw JPEG markers to verify whether `bytes` is safe to embed directly as a
+/// PDF `/DCTDecode` stream (`/DeviceGray` or `/DeviceRGB`). Rejects 4-channel CMYK/YCCK
+/// JPEGs (even when `image::JpegDecoder::color_type()` reports `Rgb8`), Adobe APP14 CMYK/YCCK,
+/// non-identity EXIF orientations, and corrupt/truncated JPEGs.
+fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
+    }
+
+    let mut pos = 2usize;
+    let mut sof_info: Option<(u32, u32, u8)> = None;
+    while pos + 1 < bytes.len() {
+        while pos < bytes.len() && bytes[pos] == 0xFF {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let marker = bytes[pos];
+        pos += 1;
+
+        // Standalone markers (SOI, EOI, RST0..7, TEM)
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+        if (0xD0..=0xD8).contains(&marker) || marker == 0x01 {
+            continue;
+        }
+        if pos + 2 > bytes.len() {
+            return None;
+        }
+        let seg_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+        if seg_len < 2 || pos + seg_len > bytes.len() {
+            return None;
+        }
+        let seg = &bytes[pos + 2..pos + seg_len];
+        pos += seg_len;
+
+        // Adobe APP14 marker: transform == 2 indicates YCCK (4-channel CMYK)
+        if marker == 0xEE && seg.len() >= 12 && &seg[..5] == b"Adobe" && seg[11] == 2 {
+            return None;
+        }
+
+        // SOF markers (baseline/extended/progressive/lossless) carry true channel count
+        if matches!(
+            marker,
+            0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF
+        ) && seg.len() >= 6
+        {
+            let h = u16::from_be_bytes([seg[1], seg[2]]) as u32;
+            let w = u16::from_be_bytes([seg[3], seg[4]]) as u32;
+            let components = seg[5];
+            sof_info = Some((w, h, components));
+        }
+    }
+
+    let (w, h, components) = sof_info?;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let color_space = match components {
+        1 => ColorSpace::Greyscale,
+        3 => ColorSpace::Rgb,
+        _ => return None, // Reject 4-component CMYK/YCCK or unusual channel counts
+    };
+
+    // Check EXIF orientation via image's JpegDecoder; reject rotated images so fallback applies orientation.
+    use ::image::ImageDecoder;
+    let mut decoder =
+        ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(::image::metadata::Orientation::NoTransforms);
+    if orientation != ::image::metadata::Orientation::NoTransforms {
+        return None;
+    }
+
+    // Validate the full entropy stream decodes cleanly (reject truncated/corrupt JPEGs).
+    ::image::load_from_memory(bytes).ok()?;
+
+    Some((w, h, color_space))
+}
+
 fn embed_image_page(
     doc: &PdfDocumentReference,
     image_bytes: &[u8],
@@ -422,21 +559,7 @@ fn embed_image_page(
         ::image::guess_format(image_bytes),
         Ok(::image::ImageFormat::Jpeg)
     ) {
-        // Fast path: embed original JPEG bytes directly as a PDF DCTDecode stream
-        // without inflating to raw RGB pixels.
-        let dct_meta = ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(image_bytes))
-            .ok()
-            .and_then(|decoder| {
-                let (w, h) = decoder.dimensions();
-                let cs = match decoder.color_type() {
-                    ::image::ColorType::L8 => Some(ColorSpace::Greyscale),
-                    ::image::ColorType::Rgb8 => Some(ColorSpace::Rgb),
-                    _ => None,
-                }?;
-                Some((w, h, cs))
-            });
-
-        if let Some((w_px, h_px, color_space)) = dct_meta {
+        if let Some((w_px, h_px, color_space)) = inspect_safe_dct_jpeg(image_bytes) {
             let xobj = ImageXObject {
                 width: Px(w_px as usize),
                 height: Px(h_px as usize),
@@ -449,8 +572,13 @@ fn embed_image_page(
             };
             (w_px, h_px, xobj)
         } else {
-            let img = ::image::load_from_memory(image_bytes)
+            let orient = ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(image_bytes))
+                .ok()
+                .and_then(|mut d| d.orientation().ok())
+                .unwrap_or(::image::metadata::Orientation::NoTransforms);
+            let mut img = ::image::load_from_memory(image_bytes)
                 .map_err(|e| format!("Cannot decode '{}': {}", file_name, e))?;
+            img.apply_orientation(orient);
             let (w_px, h_px) = img.dimensions();
             let rgb = img.to_rgb8();
             let xobj = ImageXObject {
@@ -770,7 +898,7 @@ fn render_filing_pdf(
         cover.use_text("TAX PAYABLE", 7.0, Mm(130.0), bottom_y + Mm(10.0), &font);
         cover.use_text(
             format!(
-                "\u{20A6} {}",
+                "NGN {}",
                 format_with_commas(summary.final_tax_payable.unwrap_or(0.0))
             ),
             18.0,
@@ -1179,7 +1307,8 @@ pub fn export_filing_csv_with_conn(
     let mut ie_stmt = conn
         .prepare(
             "SELECT income_type,description,gross_amount_ngn,is_foreign,foreign_currency,
-                    foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost
+                    foreign_amount,income_date,fx_rate_used,fx_rate_source,bik_category,bik_cost,
+                    foreign_tax_paid_ngn,cgt_proceeds,cgt_gain
              FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -1200,11 +1329,29 @@ pub fn export_filing_csv_with_conn(
             let fx_source: String = row.get::<_, Option<String>>(8)?.unwrap_or_default();
             let bik_cat: Option<String> = row.get(9)?;
             let bik_cost: Option<f64> = row.get(10)?;
-            let extra = match (bik_cat, bik_cost) {
-                (Some(cat), Some(cost)) => format!("bik_category={cat};bik_cost={cost:.2}"),
-                (Some(cat), None) => format!("bik_category={cat}"),
-                _ => String::new(),
-            };
+            let foreign_tax_paid: Option<f64> = row.get(11)?;
+            let cgt_proceeds: Option<f64> = row.get(12)?;
+            let cgt_gain: Option<f64> = row.get(13)?;
+
+            let mut extra_parts: Vec<String> = Vec::new();
+            if let Some(cat) = bik_cat {
+                extra_parts.push(format!("bik_category={cat}"));
+            }
+            if let Some(cost) = bik_cost {
+                extra_parts.push(format!("bik_cost={cost:.2}"));
+            }
+            if let Some(ft) = foreign_tax_paid {
+                if ft > 0.0 {
+                    extra_parts.push(format!("foreign_tax_paid_ngn={ft:.2}"));
+                }
+            }
+            if let Some(proc_val) = cgt_proceeds {
+                extra_parts.push(format!("cgt_proceeds={proc_val:.2}"));
+            }
+            if let Some(gain_val) = cgt_gain {
+                extra_parts.push(format!("cgt_gain={gain_val:.2}"));
+            }
+            let extra = extra_parts.join(";");
             Ok(csv_row(&[
                 "income",
                 &income_type,
@@ -1935,6 +2082,90 @@ mod tests {
             false
         });
         assert!(has_dct, "JPEG attachment must be embedded with DCTDecode filter");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_csv_formula_neutralization_and_dct_cmyk_and_inherited_mediabox_guards() {
+        // 1. CSV formula neutralization preserves real negative numbers while neutralizing formulas.
+        assert_eq!(csv_escape("=SUM(A1:A2)"), "'=SUM(A1:A2)");
+        assert_eq!(csv_escape("+cmd|'/C calc'!A0"), "'+cmd|'/C calc'!A0");
+        assert_eq!(csv_escape("@SUM(1,1)"), "\"'@SUM(1,1)\"");
+        assert_eq!(csv_escape("-2+3"), "'-2+3");
+        assert_eq!(csv_escape("-1234.50"), "-1234.50");
+
+        // 2. inspect_safe_dct_jpeg rejects 4-channel CMYK SOF0 marker and truncated JPEG.
+        let fake_cmyk_jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, // SOI
+            0xFF, 0xC0, 0x00, 0x14, // SOF0 len=20
+            0x08, // 8-bit
+            0x00, 0x10, // height=16
+            0x00, 0x10, // width=16
+            0x04, // 4 components (CMYK!)
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0,
+            0xFF, 0xD9,
+        ];
+        assert!(
+            inspect_safe_dct_jpeg(&fake_cmyk_jpeg).is_none(),
+            "4-channel CMYK JPEG must never take raw DCTDecode /DeviceRGB fast path"
+        );
+        let truncated_jpeg: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+            0xFF, 0xDA, // SOS with missing entropy data
+        ];
+        assert!(
+            inspect_safe_dct_jpeg(&truncated_jpeg).is_none(),
+            "truncated JPEG must be rejected by DCT validator"
+        );
+
+        // 3. append_pdf_attachments preserves inherited /MediaBox from ancestor /Pages node.
+        let dir = std::env::temp_dir().join(format!("lagosfile-pdf-inh-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let main_pdf = dir.join("main.pdf");
+        let att_pdf = dir.join("inherited.pdf");
+        write_pdf(&main_pdf, 1);
+
+        // Build an attachment PDF where /MediaBox is ONLY on the parent /Pages node, not on the /Page leaf.
+        use lopdf::dictionary;
+        let mut att_doc = lopdf::Document::with_version("1.4");
+        let pages_id = att_doc.new_object_id();
+        let page_id = att_doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+        });
+        att_doc.objects.insert(
+            pages_id,
+            lopdf::Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+                "MediaBox" => vec![0.into(), 0.into(), 400.into(), 600.into()],
+            }),
+        );
+        let catalog_id = att_doc.add_object(dictionary! {
+            "Type" => "Catalog",
+            "Pages" => pages_id,
+        });
+        att_doc.trailer.set("Root", catalog_id);
+        att_doc.save(&att_pdf).unwrap();
+
+        append_pdf_attachments(
+            main_pdf.to_str().unwrap(),
+            &[att_pdf.to_str().unwrap().to_string()],
+        )
+        .unwrap();
+
+        let merged = lopdf::Document::load(&main_pdf).unwrap();
+        let pages = merged.get_pages();
+        assert_eq!(pages.len(), 2);
+        let merged_p2 = pages.get(&2).unwrap();
+        let p2_dict = merged.get_dictionary(*merged_p2).unwrap();
+        assert!(
+            p2_dict.has(b"MediaBox"),
+            "merged page must preserve inherited /MediaBox from attachment's /Pages node"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

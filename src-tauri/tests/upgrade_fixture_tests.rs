@@ -283,6 +283,16 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
             );
 
             // Recompute all 3 filings with their pinned configs
+            let draft_comp = lagosfile_lib::commands::filing::compute_filing_with_conn(
+                &conn,
+                "22222222-2222-4222-8222-222222222201",
+            )
+            .unwrap();
+            assert!(
+                draft_comp.total_gross_income > 0.0,
+                "Draft filing must recompute cleanly after upgrade"
+            );
+
             let conf_comp = lagosfile_lib::commands::filing::compute_filing_with_conn(
                 &conn,
                 "22222222-2222-4222-8222-222222222202",
@@ -302,6 +312,7 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
                 "22222222-2222-4222-8222-222222222202",
             )
             .unwrap();
+            assert_eq!(payload_before.computation.total_gross_income, 5_000_000.0);
             assert_eq!(payload_before.computation.final_tax_payable, 628_000.0);
 
             // Change the active config to drastically different rates (50% flat)
@@ -339,9 +350,39 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
                 "22222222-2222-4222-8222-222222222202",
             )
             .unwrap();
+            assert_eq!(payload_after.computation.total_gross_income, payload_before.computation.total_gross_income);
+            assert_eq!(payload_after.computation.chargeable_income, payload_before.computation.chargeable_income);
+            assert_eq!(payload_after.computation.graduated_tax, payload_before.computation.graduated_tax);
             assert_eq!(payload_after.computation.final_tax_payable, 628_000.0);
         }
     }
+
+    // Verify PDF export succeeds on Confirmed and Submitted filings with migrated encrypted attachments
+    let conf_pdf = tmp.join("confirmed_export.pdf");
+    lagosfile_lib::commands::export::export_filing_pdf_in_dir(
+        &tmp,
+        "22222222-2222-4222-8222-222222222202",
+        conf_pdf.to_str().unwrap(),
+        true,
+        None,
+        &state,
+    )
+    .expect("PDF export of legacy Confirmed filing must succeed");
+    assert!(conf_pdf.is_file() && std::fs::metadata(&conf_pdf).unwrap().len() > 1000);
+    let conf_doc = lopdf::Document::load(&conf_pdf).expect("exported Confirmed PDF must be valid");
+    assert!(conf_doc.get_pages().len() >= 2);
+
+    let sub_pdf = tmp.join("submitted_export.pdf");
+    lagosfile_lib::commands::export::export_filing_pdf_in_dir(
+        &tmp,
+        "22222222-2222-4222-8222-222222222203",
+        sub_pdf.to_str().unwrap(),
+        true,
+        None,
+        &state,
+    )
+    .expect("PDF export of legacy Submitted filing must succeed");
+    assert!(sub_pdf.is_file() && std::fs::metadata(&sub_pdf).unwrap().len() > 1000);
 
     // Verify S6 one-time migration encrypted all 3 legacy plaintext attachments and they still decrypt
     {

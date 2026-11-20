@@ -621,3 +621,107 @@ fn test_s23_landlord_tenant_foreign_currencies_bik_paye_ftc_and_batch_partial_fa
         batch.failures[0].error
     );
 }
+
+#[test]
+fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() {
+    use lagosfile_lib::commands::filing::{
+        confirm_filing_with_conn, create_draft_filing_with_conn, upsert_income_entry_with_conn,
+    };
+    use lagosfile_lib::db::AppDb;
+    use lagosfile_lib::AppState;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    // 1. Duplicate Host or Origin headers must be rejected with 403.
+    let dup_host_req = "GET /health HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nHost: evil.example\r\nX-LagosFile-Token: tok\r\n\r\n";
+    let (resp, auth) = lirs::handle_bridge_request(dup_host_req, 19876, "tok", "[]", "{}");
+    assert!(!auth);
+    assert!(resp.starts_with("HTTP/1.1 403 Forbidden"));
+
+    let dup_origin_req = "GET /health HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nOrigin: https://etax.lirs.net\r\nOrigin: https://evil.example\r\nX-LagosFile-Token: tok\r\n\r\n";
+    let (resp2, auth2) = lirs::handle_bridge_request(dup_origin_req, 19876, "tok", "[]", "{}");
+    assert!(!auth2);
+    assert!(resp2.starts_with("HTTP/1.1 403 Forbidden"));
+
+    // 2. Real TCP bridge handles fragmented HTTP request across multiple writes (verifies blocking stream + loop).
+    let state = AppState::default();
+    let (port, token) =
+        lirs::start_bridge_on_port(&state, 0, r#"[{"id":"f1"}]"#.into(), r#"{"id":"f1"}"#.into())
+            .unwrap();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .write_all(format!("GET /filings HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n").as_bytes())
+        .unwrap();
+    stream.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    stream
+        .write_all(format!("X-LagosFile-Token: {token}\r\n\r\n").as_bytes())
+        .unwrap();
+    stream.flush().unwrap();
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 OK"), "got reply: {reply}");
+    assert!(reply.contains(r#"[{"id":"f1"}]"#));
+    lirs::stop_bridge(&state);
+
+    // 3. CGT-exempt share gains are excluded from income.capitalGain, digital losses clamp to 0,
+    //    and Confirmed filings use stored figures in LIRS payload.
+    let db = AppDb::open_in_memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let tp_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Tolu', '12345678-0001', '2026-01-01T00:00:00Z')",
+        rusqlite::params![tp_id],
+    )
+    .unwrap();
+    let draft = create_draft_filing_with_conn(&conn, 2025).unwrap();
+    let fid = draft.id.to_string();
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "filingId": fid,
+            "incomeType": "employment",
+            "grossAmountNgn": 5_000_000.0
+        }),
+    )
+    .unwrap();
+    // Exempt share disposal (proceeds 50M < 150M, gain 5M < 10M)
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "filingId": fid,
+            "incomeType": "capital_gain_shares",
+            "grossAmountNgn": 5_000_000.0,
+            "cgtProceeds": 50_000_000.0,
+            "cgtGain": 5_000_000.0
+        }),
+    )
+    .unwrap();
+    // Ringfenced digital loss (-1M)
+    upsert_income_entry_with_conn(
+        &conn,
+        &json!({
+            "id": uuid::Uuid::new_v4().to_string(),
+            "filingId": fid,
+            "incomeType": "digital_asset",
+            "grossAmountNgn": -1_000_000.0
+        }),
+    )
+    .unwrap();
+
+    confirm_filing_with_conn(&conn, &fid).unwrap();
+    // Simulate a historical stored final_tax_payable that differs from today's engine
+    conn.execute(
+        "UPDATE filing SET final_tax_payable = 123456.78, tax_payable = 123456.78 WHERE id = ?1",
+        rusqlite::params![fid],
+    )
+    .unwrap();
+
+    let payload = lirs::build_pending_filing(&conn, &fid).unwrap();
+    assert_eq!(payload.income.capital_gain, 0.0, "exempt share gain must not be sent as taxable capitalGain");
+    assert_eq!(payload.income.digital_asset, 0.0, "negative digital loss must clamp to 0");
+    assert_eq!(payload.computation.final_tax_payable, 123456.78, "Confirmed filing must send stored figure to LIRS");
+}

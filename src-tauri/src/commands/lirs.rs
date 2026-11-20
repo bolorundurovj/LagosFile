@@ -227,6 +227,9 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     }
     let mut foreign_by_currency: BTreeMap<String, ForeignAcc> = BTreeMap::new();
 
+    let share_disposals_exempt =
+        crate::services::computation::cgt_shares_exempt(&income_entries, &config.cgt_thresholds);
+
     for entry in &income_entries {
         match entry.income_type.as_str() {
             "employment" => employment += entry.gross_amount_ngn,
@@ -251,7 +254,9 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             "dividend" => dividend += entry.gross_amount_ngn,
             "interest" => interest += entry.gross_amount_ngn,
             "capital_gain_shares" => {
-                capital_gain += entry.cgt_gain.unwrap_or(entry.gross_amount_ngn)
+                if !share_disposals_exempt {
+                    capital_gain += entry.cgt_gain.unwrap_or(entry.gross_amount_ngn).max(0.0);
+                }
             }
             "digital_asset" => digital_asset += entry.gross_amount_ngn,
             "royalty" => royalty += entry.gross_amount_ngn,
@@ -291,6 +296,9 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             }
         }
     }
+
+    // Clamp net digital-asset losses to 0 (losses are ringfenced and not negative taxable income).
+    digital_asset = digital_asset.max(0.0);
 
     let foreign_incomes: Vec<PendingFilingForeignCurrencySummary> = foreign_by_currency
         .into_iter()
@@ -438,6 +446,49 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let income_year = filing.year_of_assessment;
     let lirs_yoa = income_year + 1;
 
+    // Filed returns (Confirmed / Submitted) are immutable: use their stored figures
+    // so engine updates never alter what is sent to LIRS for an already-filed return.
+    let use_stored = filing.status != "Draft" && filing.final_tax_payable.is_some();
+    let payload_computation = if use_stored {
+        PendingFilingComputation {
+            total_gross_income: filing
+                .total_income_ngn
+                .unwrap_or(computation.total_gross_income),
+            total_capital_allowances: computation.prorated_capital_allowances,
+            chargeable_income: filing
+                .chargeable_income
+                .unwrap_or(computation.chargeable_income),
+            graduated_tax: filing.tax_payable.unwrap_or(computation.graduated_tax),
+            wht_credits: filing.wht_credit.unwrap_or(computation.wht_credits),
+            paye_credits: filing.paye_credit.unwrap_or(computation.paye_credits),
+            foreign_tax_credits: filing
+                .foreign_tax_credit
+                .unwrap_or(computation.foreign_tax_credits),
+            net_tax_payable: filing
+                .net_tax_payable
+                .unwrap_or(computation.net_tax_payable),
+            minimum_tax: filing.minimum_tax.unwrap_or(computation.minimum_tax),
+            final_tax_payable: filing
+                .final_tax_payable
+                .unwrap_or(computation.final_tax_payable),
+            config_version: filing.tax_config_version.clone(),
+        }
+    } else {
+        PendingFilingComputation {
+            total_gross_income: computation.total_gross_income,
+            total_capital_allowances: computation.prorated_capital_allowances,
+            chargeable_income: computation.chargeable_income,
+            graduated_tax: computation.graduated_tax,
+            wht_credits: computation.wht_credits,
+            paye_credits: computation.paye_credits,
+            foreign_tax_credits: computation.foreign_tax_credits,
+            net_tax_payable: computation.net_tax_payable,
+            minimum_tax: computation.minimum_tax,
+            final_tax_payable: computation.final_tax_payable,
+            config_version: computation.config_version.clone(),
+        }
+    };
+
     Ok(PendingFiling {
         filing_id: filing.id.to_string(),
         taxpayer: PendingFilingTaxpayer {
@@ -478,19 +529,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             rent_relief_applied: computation.rent_relief_applied,
             other_approved,
         },
-        computation: PendingFilingComputation {
-            total_gross_income: computation.total_gross_income,
-            total_capital_allowances: computation.prorated_capital_allowances,
-            chargeable_income: computation.chargeable_income,
-            graduated_tax: computation.graduated_tax,
-            wht_credits: computation.wht_credits,
-            paye_credits: computation.paye_credits,
-            foreign_tax_credits: computation.foreign_tax_credits,
-            net_tax_payable: computation.net_tax_payable,
-            minimum_tax: computation.minimum_tax,
-            final_tax_payable: computation.final_tax_payable,
-            config_version: computation.config_version.clone(),
-        },
+        computation: payload_computation,
         generated_at: Utc::now().to_rfc3339(),
     })
 }
@@ -586,10 +625,19 @@ pub fn handle_bridge_request(
             let name_trimmed = name.trim();
             let val_trimmed = value.trim();
             if name_trimmed.eq_ignore_ascii_case("host") {
+                if host.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
                 host = Some(val_trimmed);
             } else if name_trimmed.eq_ignore_ascii_case("origin") {
+                if origin.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
                 origin = Some(val_trimmed);
             } else if name_trimmed.eq_ignore_ascii_case("x-lagosfile-token") {
+                if token.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
                 token = Some(val_trimmed);
             }
         }
@@ -693,14 +741,34 @@ pub fn start_bridge_on_port(
 
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
+                    // Accepted sockets inherit non-blocking mode on Windows/macOS; switch back
+                    // to blocking mode so read/write timeouts work reliably without spurious WouldBlock.
+                    let _ = stream.set_nonblocking(false);
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                    let mut buf = [0u8; 4096];
-                    let n = stream.read(&mut buf).unwrap_or(0);
-                    if n == 0 {
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+
+                    const MAX_HEADER_BYTES: usize = 16 * 1024;
+                    let mut req_bytes: Vec<u8> = Vec::with_capacity(1024);
+                    let mut chunk = [0u8; 1024];
+                    loop {
+                        match stream.read(&mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                req_bytes.extend_from_slice(&chunk[..n]);
+                                if req_bytes.windows(4).any(|w| w == b"\r\n\r\n")
+                                    || req_bytes.len() >= MAX_HEADER_BYTES
+                                {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    if req_bytes.is_empty() {
                         continue;
                     }
 
-                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let request = String::from_utf8_lossy(&req_bytes);
                     let (response, authenticated) = handle_bridge_request(
                         &request,
                         bound_port,
@@ -723,6 +791,8 @@ pub fn start_bridge_on_port(
                 }
             }
         }
+        // Always clear pending_filing.json when the bridge stops or times out.
+        let _ = std::fs::remove_file(lirs_data_dir().join("pending_filing.json"));
     });
 
     *state.bridge.lock().unwrap() = Some(BridgeHandle {

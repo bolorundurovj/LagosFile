@@ -282,14 +282,47 @@ fn lagosfile_matches_lirs(world: &mut LirsParityWorld) {
 
 #[tokio::main]
 async fn main() {
+    use cucumber::writer::Stats as _;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
     let feature_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("features")
         .join("lirs_parity.feature");
 
-    LirsParityWorld::cucumber()
-        .filter_run_and_exit(feature_path, |_feature, _rule, scenario| {
-            !scenario.tags.iter().any(|tag| tag == "pending")
+    let skipped_unrecorded = Arc::new(AtomicUsize::new(0));
+    let skipped_counter = Arc::clone(&skipped_unrecorded);
+
+    let writer = LirsParityWorld::cucumber()
+        .filter_run(feature_path, move |_feature, _rule, scenario| {
+            if scenario.tags.iter().any(|tag| tag == "pending") {
+                return false;
+            }
+            // Skip unrecorded rows instead of falsely reporting them as PASSED;
+            // once any LIRS figure is filled in, the scenario runs and asserts within ₦1.
+            let is_unrecorded = scenario.steps.iter().any(|step| {
+                step.value
+                    == r#"LIRS showed total income "", chargeable income "", gross tax "" and tax payable """#
+            });
+            if is_unrecorded {
+                skipped_counter.fetch_add(1, Ordering::Relaxed);
+                return false;
+            }
+            true
         })
         .await;
+
+    let skipped = skipped_unrecorded.load(Ordering::Relaxed);
+    if skipped > 0 {
+        println!(
+            "[lirs_parity] SKIPPED {skipped} unrecorded scenario(s) — record live LIRS portal figures in tests/features/lirs_parity.feature to activate parity assertions."
+        );
+    }
+
+    if writer.execution_has_failed() {
+        std::process::exit(1);
+    }
 }
