@@ -13,28 +13,30 @@ import { LucideAngularModule } from 'lucide-angular';
   standalone: true,
   imports: [RouterOutlet, SidebarComponent, TopbarComponent, LucideAngularModule],
   template: `
-    @if (update.updateAvailable()) {
-      <div class="update-banner">
-        <lucide-icon name="info" [size]="16" [strokeWidth]="2"></lucide-icon>
-        <span>LagosFile v{{ update.updateAvailable() }} is available.</span>
-        <a [href]="update.updateUrl()" target="_blank" class="update-banner__link">View release</a>
-        <button class="update-banner__dismiss" (click)="update.dismiss(update.updateAvailable()!)" title="Dismiss">&times;</button>
-      </div>
-    }
-    @if (migrationNotices().length > 0) {
-      <div class="migration-banner" role="status">
-        <lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon>
-        <div class="migration-banner__body">
-          @for (notice of migrationNotices(); track $index) {
-            <div>{{ notice }}</div>
-          }
-        </div>
-        <button type="button" class="migration-banner__dismiss" (click)="dismissMigrationNotices()" title="Dismiss notices">Dismiss</button>
-      </div>
-    }
     <div class="shell">
       <lf-sidebar [taxpayer]="auth.taxpayer()" />
       <div class="shell__main">
+        <div class="shell__notices">
+          @if (update.updateAvailable()) {
+            <div class="update-banner">
+              <lucide-icon name="info" [size]="16" [strokeWidth]="2"></lucide-icon>
+              <span>LagosFile v{{ update.updateAvailable() }} is available.</span>
+              <a [href]="update.updateUrl()" target="_blank" class="update-banner__link">View release</a>
+              <button class="update-banner__dismiss" (click)="update.dismiss(update.updateAvailable()!)" title="Dismiss">&times;</button>
+            </div>
+          }
+          @if (migrationNotices().length > 0) {
+            <div class="migration-banner" role="status">
+              <lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon>
+              <div class="migration-banner__body">
+                @for (notice of migrationNotices(); track $index) {
+                  <div>{{ notice }}</div>
+                }
+              </div>
+              <button type="button" class="migration-banner__dismiss" (click)="dismissMigrationNotices()" title="Dismiss notices">Dismiss</button>
+            </div>
+          }
+        </div>
         <lf-topbar [taxpayer]="auth.taxpayer()" />
         <main class="shell__content">
           <router-outlet />
@@ -43,15 +45,22 @@ import { LucideAngularModule } from 'lucide-angular';
     </div>
   `,
   styles: [`
+    :host { display: block; height: 100%; }
+
     .shell {
       display: flex;
-      height: 100vh;
-      width: 100vw;
+      height: 100%;
       overflow: hidden;
       background: var(--color-background);
     }
 
+    .shell__notices {
+      max-height: 35%;
+      overflow-y: auto;
+    }
+
     .shell__main {
+      min-width: 0;
       flex: 1;
       display: flex;
       flex-direction: column;
@@ -59,6 +68,7 @@ import { LucideAngularModule } from 'lucide-angular';
     }
 
     .shell__content {
+      min-height: 0;
       flex: 1;
       overflow-y: auto;
       padding: var(--space-8);

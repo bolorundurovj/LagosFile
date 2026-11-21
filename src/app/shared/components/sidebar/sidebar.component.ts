@@ -67,9 +67,11 @@ const NAV_ITEMS: NavItem[] = [
     </nav>
   `,
   styles: [`
+    :host { display: block; flex: none; }
+
     .sidebar {
       width: var(--sidebar-width);
-      height: 100vh;
+      height: 100%;
       background: var(--color-sidebar-bg);
       display: flex;
       flex-direction: column;

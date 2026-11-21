@@ -316,9 +316,8 @@ const STEPS = [
     /* ── Wizard ── */
     .wizard {
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: 280px minmax(0, 1fr);
       gap: var(--space-8);
-      height: calc(100vh - var(--topbar-height) - var(--space-16));
       max-width: var(--content-max-width);
       margin: 0 auto;
     }
@@ -342,7 +341,7 @@ const STEPS = [
     }
 
     .wizard__body {
-      overflow-y: auto;
+      min-width: 0;
       padding-bottom: var(--space-8);
     }
 
