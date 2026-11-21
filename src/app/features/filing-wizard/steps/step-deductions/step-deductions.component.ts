@@ -453,6 +453,10 @@ export class StepDeductionsComponent implements OnInit {
       const entries: ReliefEntry[] = [...this.whtEntries(), ...this.otherEntries()];
       for (const [type, key] of Object.entries(STANDARD_FIELDS) as [StandardRelief, FieldKey][]) {
         const entry = this.standard[type];
+        // On PITA (CRA) drafts, rent relief is hidden and disallowed; zero out any legacy rent row.
+        if (type === 'rent' && this.craEnabled()) {
+          this.fields.annualRent = 0;
+        }
         const amount = this.fields[key] || 0;
         entry.claimedAmount = entry.approvedAmount = amount;
         const hasDocs = (entry.documents?.length ?? 0) > 0;

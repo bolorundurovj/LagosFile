@@ -357,7 +357,7 @@ export class StepAllowancesComponent implements OnInit {
         existingKeys.add(key);
         const id = crypto.randomUUID();
         this.priorYearIds.add(id);
-        newEntries.push({
+        const newEntry: CapitalAllowance = {
           id,
           filingId: this.filingId(),
           assetType: (p.assetType ?? 'other') as AssetType,
@@ -368,7 +368,9 @@ export class StepAllowancesComponent implements OnInit {
           annualAllowanceRate: p.annualAllowanceRate ?? 0,
           annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
           documents: [],
-        });
+        };
+        this.recalculate(newEntry);
+        newEntries.push(newEntry);
       }
       this.priorYearLoaded.set(true);
       if (newEntries.length === 0) {

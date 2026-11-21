@@ -6,7 +6,7 @@ import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
 import { LIRSService } from '../../../../core/services/lirs.service';
 import { TauriService } from '../../../../core/services/tauri.service';
-import { Filing, IncomeEntry, TaxConfig } from '../../../../core/models';
+import { Filing, FxResult, IncomeEntry, TaxConfig } from '../../../../core/models';
 import {
   LUCIDE_ICONS,
   LucideIconProvider,
@@ -418,5 +418,91 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     entry.cgtProceeds = 25_000_000;
     entry.cgtGain = 1_000_000;
     expect(comp.cgtSummary().exempt).toBeFalse();
+  });
+
+  it('discards out-of-order FX responses, blocks saving after a failed replacement lookup unless CBN override is set, and clears stale override/share-gain foreign fields', async () => {
+    let resolveUsd!: (v: FxResult) => void;
+    let resolveEur!: (v: FxResult) => void;
+    let rejectGbp!: (err: unknown) => void;
+
+    fxServiceSpy.resolveRate.and.callFake((currency: string) => {
+      if (currency === 'USD') {
+        return new Promise(res => { resolveUsd = res; });
+      }
+      if (currency === 'EUR') {
+        return new Promise(res => { resolveEur = res; });
+      }
+      return new Promise((_, rej) => { rejectGbp = rej; });
+    });
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    comp.addEntry();
+    const entry = comp.entries()[0];
+    entry.isForeign = true;
+    entry.foreignAmount = 1000;
+    entry.foreignCurrency = 'USD';
+    entry.incomeDate = '2026-03-01';
+    const usdPromise = comp.fetchRate(entry);
+
+    // Switch to EUR before USD finishes, then resolve EUR first and USD second (reverse order).
+    entry.foreignCurrency = 'EUR';
+    const eurPromise = comp.fetchRate(entry);
+
+    resolveEur({ rate: 1800, source: 'fawazahmed0', rateDate: '2026-03-01', isCached: false });
+    await eurPromise;
+    resolveUsd({ rate: 1500, source: 'fawazahmed0', rateDate: '2026-03-01', isCached: false });
+    await usdPromise;
+
+    // Must keep EUR's 1800 rate, never overwritten by late USD 1500 response!
+    expect(entry.fxRateFetched).toBe(1800);
+    expect(entry.fxRateUsed).toBe(1800);
+    expect(entry.grossAmountNgn).toBe(1_800_000);
+
+    // Now switch to GBP and have the GBP lookup fail: previous EUR rate must be cleared and save blocked!
+    entry.foreignCurrency = 'GBP';
+    const gbpPromise = comp.fetchRate(entry);
+    rejectGbp(new Error('network offline'));
+    await gbpPromise;
+
+    expect(entry.fxRateFetched).toBeUndefined();
+    expect(entry.fxRateUsed).toBeUndefined();
+    expect(entry.grossAmountNgn).toBe(0);
+    const savedWithoutRate = await comp.save();
+    expect(savedWithoutRate).toBeFalse();
+    expect(filingServiceSpy.saveIncomeEntries).not.toHaveBeenCalled();
+
+    // Entering an explicit CBN override makes it saveable; clearing it resets all conversion fields.
+    entry.fxRateCbnOverride = 2050;
+    comp.applyRate(entry);
+    expect(entry.fxRateUsed).toBe(2050);
+    expect(entry.fxRateSource).toBe('cbn_override');
+    expect(entry.grossAmountNgn).toBe(2_050_000);
+
+    entry.fxRateCbnOverride = undefined;
+    comp.applyRate(entry);
+    expect(entry.fxRateUsed).toBeUndefined();
+    expect(entry.fxRateSource).toBeUndefined();
+    expect(entry.grossAmountNgn).toBe(0);
+
+    // Re-apply CBN override -> now save succeeds, and legacy foreign fields on capital_gain_shares are stripped.
+    entry.fxRateCbnOverride = 2050;
+    comp.addEntry();
+    const shares = comp.entries()[1];
+    shares.incomeType = 'capital_gain_shares';
+    shares.isForeign = true;
+    shares.foreignTaxPaidNgn = 50_000;
+    shares.cgtProceeds = 5_000_000;
+    shares.cgtGain = 1_000_000;
+
+    const savedWithOverride = await comp.save();
+    expect(savedWithOverride).toBeTrue();
+    const [, upserts] = filingServiceSpy.saveIncomeEntries.calls.mostRecent().args;
+    expect(upserts[0].grossAmountNgn).toBe(2_050_000);
+    expect(upserts[1].isForeign).toBeFalse();
+    expect(upserts[1].foreignTaxPaidNgn).toBeUndefined();
   });
 });

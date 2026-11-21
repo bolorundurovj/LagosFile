@@ -32,6 +32,10 @@ export class ConfigService {
     return this.tauri.invoke<void>('dismiss_migration_notices');
   }
 
+  clearMigrationNotices(): void {
+    this._migrationNotices.set([]);
+  }
+
   async listVersions(): Promise<TaxConfig[]> {
     return this.tauri.invoke<TaxConfig[]>('list_configs');
   }

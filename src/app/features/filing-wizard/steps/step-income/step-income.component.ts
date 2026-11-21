@@ -4,7 +4,7 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { BikCategory, IncomeEntry, IncomeType, TaxConfig } from '../../../../core/models';
+import { BikCategory, FxRateSource, IncomeEntry, IncomeType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
@@ -425,6 +425,15 @@ export class StepIncomeComponent implements OnInit {
         }
       } catch { /* fall back to activeConfig */ }
       const existing = await this.filingService.listIncomeEntries(this.filingId());
+      for (const e of existing) {
+        if (e.isForeign && e.fxRateFetched != null && Number.isFinite(e.fxRateFetched) && e.fxRateFetched > 0) {
+          this.fxFetchedFor[e.id] = {
+            currency: e.foreignCurrency,
+            date: e.incomeDate,
+            source: e.fxRateSource && e.fxRateSource !== 'cbn_override' ? e.fxRateSource : 'fawazahmed0',
+          };
+        }
+      }
       this.entries.set(existing);
     } catch (err) {
       this.toast.error('Could not load income entries: ' + String(err));
@@ -539,10 +548,15 @@ export class StepIncomeComponent implements OnInit {
 
   onForeignToggle(entry: IncomeEntry): void {
     if (!entry.isForeign) {
+      this.fxRequestSeq[entry.id] = (this.fxRequestSeq[entry.id] ?? 0) + 1;
+      this.fetchingRate[entry.id] = false;
+      delete this.fxFetchedFor[entry.id];
       entry.foreignCurrency = undefined;
       entry.foreignAmount = undefined;
       entry.fxRateFetched = undefined;
       entry.fxRateCbnOverride = undefined;
+      entry.fxRateUsed = undefined;
+      entry.fxRateSource = undefined;
       entry.foreignTaxPaidNgn = undefined;
     } else {
       entry.foreignCurrency = 'USD';
@@ -555,26 +569,57 @@ export class StepIncomeComponent implements OnInit {
   fetchingRate: Record<string, boolean> = {};
   /** Entry ids whose displayed rate is live (no date of receipt supplied) */
   liveRateEntries = new Set<string>();
+  /** Monotonic per-entry request sequence to discard out-of-order FX responses */
+  private fxRequestSeq: Record<string, number> = {};
+  /** Tracks which currency and receipt date `entry.fxRateFetched` belongs to */
+  private fxFetchedFor: Record<string, { currency?: string; date?: string; source?: FxRateSource }> = {};
 
   async fetchRate(entry: IncomeEntry): Promise<void> {
     if (!entry.foreignCurrency) return;
-    // Use the date of receipt if provided; fall back to today for a live indicative rate
-    const isHistorical = !!entry.incomeDate;
-    const dateStr = entry.incomeDate || new Date().toISOString().slice(0, 10);
+    const seq = (this.fxRequestSeq[entry.id] = (this.fxRequestSeq[entry.id] ?? 0) + 1);
+    const reqCurrency = entry.foreignCurrency;
+    const reqDate = entry.incomeDate;
+    const isHistorical = !!reqDate;
+    const dateStr = reqDate || new Date().toISOString().slice(0, 10);
+
+    // Clear any stale fetched rate from an earlier currency/date immediately so a failed or
+    // slow lookup can never save a mismatched rate.
+    entry.fxRateFetched = undefined;
+    delete this.fxFetchedFor[entry.id];
+    this.applyRate(entry);
+
     this.fetchingRate[entry.id] = true;
     try {
-      const result = await this.fxService.resolveRate(entry.foreignCurrency, 'NGN', dateStr);
-      if (result.rate) {
+      const result = await this.fxService.resolveRate(reqCurrency, 'NGN', dateStr);
+      // Discard out-of-order responses if currency, date, foreign flag, or a newer lookup changed.
+      if (
+        this.fxRequestSeq[entry.id] !== seq ||
+        !entry.isForeign ||
+        entry.foreignCurrency !== reqCurrency ||
+        entry.incomeDate !== reqDate
+      ) {
+        return;
+      }
+      if (result.rate != null && Number.isFinite(result.rate) && result.rate > 0) {
         entry.fxRateFetched = result.rate;
-        entry.fxRateSource = result.source;
+        this.fxFetchedFor[entry.id] = {
+          currency: reqCurrency,
+          date: reqDate,
+          source: result.source,
+        };
         if (isHistorical) this.liveRateEntries.delete(entry.id);
         else this.liveRateEntries.add(entry.id);
         this.applyRate(entry);
       }
     } catch {
-      // silently leave any previously fetched rate intact
+      // Leave fxRateFetched cleared so a failed lookup cannot save a stale rate.
+      if (this.fxRequestSeq[entry.id] === seq) {
+        this.applyRate(entry);
+      }
     } finally {
-      this.fetchingRate[entry.id] = false;
+      if (this.fxRequestSeq[entry.id] === seq) {
+        this.fetchingRate[entry.id] = false;
+      }
     }
   }
 
@@ -582,17 +627,34 @@ export class StepIncomeComponent implements OnInit {
     if (!entry.isForeign) return;
     const override = entry.fxRateCbnOverride;
     const hasOverride = override != null && Number.isFinite(override) && override > 0;
-    const rate = hasOverride ? override : entry.fxRateFetched;
+    const fetchedMeta = this.fxFetchedFor[entry.id];
+    const fetchedMatches =
+      entry.fxRateFetched != null &&
+      Number.isFinite(entry.fxRateFetched) &&
+      entry.fxRateFetched > 0 &&
+      (!fetchedMeta ||
+        (fetchedMeta.currency === entry.foreignCurrency && fetchedMeta.date === entry.incomeDate));
+    const rate = hasOverride ? override : (fetchedMatches ? entry.fxRateFetched : undefined);
     const amount = entry.foreignAmount;
-    if (rate != null && Number.isFinite(rate) && amount != null && Number.isFinite(amount)) {
-      entry.grossAmountNgn = rate * amount;
+
+    if (rate != null && Number.isFinite(rate) && rate > 0) {
       entry.fxRateUsed = rate;
       if (hasOverride) {
         entry.fxRateSource = 'cbn_override';
-      } else if (!entry.fxRateSource || entry.fxRateSource === 'cbn_override') {
-        entry.fxRateSource = entry.fxRateFetched != null ? 'fawazahmed0' : 'manual';
+      } else {
+        entry.fxRateSource =
+          fetchedMeta?.source ??
+          (entry.fxRateSource && entry.fxRateSource !== 'cbn_override' ? entry.fxRateSource : 'fawazahmed0');
       }
-    } else if (amount === 0 || amount == null) {
+      if (amount != null && Number.isFinite(amount)) {
+        entry.grossAmountNgn = rate * amount;
+      } else {
+        entry.grossAmountNgn = 0;
+      }
+    } else {
+      // No valid override and no matching fetched rate: clear stale conversion values.
+      entry.fxRateUsed = undefined;
+      entry.fxRateSource = undefined;
       entry.grossAmountNgn = 0;
     }
   }
@@ -637,19 +699,39 @@ export class StepIncomeComponent implements OnInit {
       for (const entry of this.entries()) {
         if (entry.incomeType === 'benefits_in_kind') {
           entry.isForeign = false;
+          entry.foreignCurrency = undefined;
+          entry.foreignAmount = undefined;
+          entry.fxRateFetched = undefined;
+          entry.fxRateCbnOverride = undefined;
+          entry.fxRateUsed = undefined;
+          entry.fxRateSource = undefined;
           entry.foreignTaxPaidNgn = undefined;
           entry.bikCost = Number(entry.bikCost ?? 0) || 0;
           entry.grossAmountNgn = this.estimatedBikValue(entry);
-        } else if (entry.isForeign) {
-          this.applyRate(entry);
-        } else {
-          entry.grossAmountNgn = Number(entry.grossAmountNgn ?? 0) || 0;
-        }
-        if (entry.incomeType === 'capital_gain_shares') {
+        } else if (entry.incomeType === 'capital_gain_shares') {
+          entry.isForeign = false;
+          entry.foreignCurrency = undefined;
+          entry.foreignAmount = undefined;
+          entry.fxRateFetched = undefined;
+          entry.fxRateCbnOverride = undefined;
+          entry.fxRateUsed = undefined;
+          entry.fxRateSource = undefined;
+          entry.foreignTaxPaidNgn = undefined;
           entry.cgtProceeds = Number(entry.cgtProceeds ?? 0) || 0;
           entry.cgtGain = Number(entry.cgtGain ?? 0) || 0;
           entry.grossAmountNgn = entry.cgtGain;
           entry.isCgtExempt = exempt;
+        } else if (entry.isForeign) {
+          this.applyRate(entry);
+          const foreignAmt = Number(entry.foreignAmount ?? 0) || 0;
+          if (foreignAmt > 0 && !(entry.fxRateUsed != null && Number.isFinite(entry.fxRateUsed) && entry.fxRateUsed > 0)) {
+            this.toast.error(
+              `Missing exchange rate for ${entry.foreignCurrency || 'foreign'} income. Wait for the rate lookup or enter a CBN override.`,
+            );
+            return false;
+          }
+        } else {
+          entry.grossAmountNgn = Number(entry.grossAmountNgn ?? 0) || 0;
         }
         if (entry.grossAmountNgn == null || !Number.isFinite(entry.grossAmountNgn)) {
           entry.grossAmountNgn = 0;

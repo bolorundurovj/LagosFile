@@ -1,5 +1,6 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { TauriService } from './tauri.service';
+import { ConfigService } from './config.service';
 import { AppStatus, Taxpayer } from '../models';
 
 export type AuthState = 'locked' | 'unlocked' | 'needs_profile' | 'needs_pin_setup';
@@ -17,6 +18,8 @@ export class AuthService {
   readonly hasRecovery = this._hasRecovery.asReadonly();
   readonly biometricAvailable = this._biometricAvailable.asReadonly();
   readonly biometricEnabled = this._biometricEnabled.asReadonly();
+
+  private configService = inject(ConfigService, { optional: true });
 
   constructor(private tauri: TauriService) {}
 
@@ -73,6 +76,7 @@ export class AuthService {
     await this.tauri.invoke('lock_db');
     this._taxpayer.set(null);
     this._state.set('locked');
+    this.configService?.clearMigrationNotices();
   }
 
   // Recovery

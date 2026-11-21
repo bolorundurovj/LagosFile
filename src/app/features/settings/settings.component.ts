@@ -665,7 +665,6 @@ export class SettingsComponent {
           await this.configService.getMigrationNotices();
         }
       } catch { /* non-fatal refresh after restore */ }
-      await this.configService.loadActive();
       this.showRestoreModal.set(false);
       this.pendingRestorePath = '';
       this.restorePin = '';
