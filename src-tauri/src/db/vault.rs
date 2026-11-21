@@ -1,6 +1,61 @@
 use crate::services::security;
+use sha2::{Digest, Sha256};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Computes the SHA-256 digest of raw vault bytes for cross-process optimistic concurrency control.
+pub fn compute_bytes_digest(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let result = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&result);
+    out
+}
+
+/// Reads the current on-disk `lagosfile.db.enc` and returns its SHA-256 digest, if present.
+pub fn read_vault_digest(dir: &Path) -> Option<[u8; 32]> {
+    let bytes = std::fs::read(vault_path(dir)).ok()?;
+    Some(compute_bytes_digest(&bytes))
+}
+
+struct CrossProcessLockGuard(PathBuf);
+
+impl Drop for CrossProcessLockGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn acquire_cross_process_write_lock(dir: &Path) -> Result<CrossProcessLockGuard, String> {
+    let lock_path = dir.join(".vault.write.lock");
+    for attempt in 0..20 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(_) => return Ok(CrossProcessLockGuard(lock_path)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 19 => {
+                if let Ok(meta) = std::fs::metadata(&lock_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified
+                            .elapsed()
+                            .map(|d| d > std::time::Duration::from_secs(30))
+                            .unwrap_or(false)
+                        {
+                            let _ = std::fs::remove_file(&lock_path);
+                            continue;
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25 * (attempt as u64 + 1)));
+            }
+            Err(e) => return Err(format!("Could not acquire vault write lock: {}", e)),
+        }
+    }
+    Err("Timed out waiting for concurrent LagosFile process write lock.".to_string())
+}
 
 pub const VAULT_MAGIC: &[u8; 4] = b"LGFV";
 pub const VAULT_VERSION: u8 = 1;
@@ -174,19 +229,23 @@ pub fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`,
-/// invoking `before_rename` after the encrypted temp file has been written and flushed.
+/// verifying that the on-disk vault still matches `expected_digest` (when `Some`) under a
+/// cross-process lockfile so two LagosFile instances cannot silently overwrite each other's changes.
+/// Invokes `before_rename` after the encrypted temp file has been written and flushed.
 /// Deletes any legacy `dir/.salt` file ONLY after the rename succeeds.
-pub fn write_atomic_with_hook<F>(
+pub fn write_atomic_cas_with_hook<F>(
     dir: &Path,
     plaintext: &[u8],
     key: &[u8; 32],
     salt: &[u8; SALT_LEN],
+    expected_digest: Option<[u8; 32]>,
     before_rename: F,
-) -> Result<(), String>
+) -> Result<[u8; 32], String>
 where
     F: FnOnce(&Path) -> Result<(), String>,
 {
     let encoded = encode(plaintext, key, salt)?;
+    let new_digest = compute_bytes_digest(&encoded);
     let target = vault_path(dir);
     let tmp = dir.join(format!("lagosfile.db.{}.tmp", uuid::Uuid::new_v4()));
 
@@ -207,6 +266,33 @@ where
         return Err(e);
     }
 
+    let _proc_lock = match acquire_cross_process_write_lock(dir) {
+        Ok(g) => g,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+
+    if let Some(exp) = expected_digest {
+        match read_vault_digest(dir) {
+            Some(actual) if actual == exp => {}
+            Some(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(
+                    "Vault was modified on disk by another LagosFile instance. Refusing to overwrite newer data."
+                        .to_string(),
+                );
+            }
+            None => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(
+                    "Vault file is missing on disk. Refusing to write stale session.".to_string(),
+                );
+            }
+        }
+    }
+
     if let Err(e) = rename_with_retry(&tmp, &target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -214,7 +300,23 @@ where
 
     // Remove legacy .salt only after the self-describing vault is safely on disk.
     let _ = std::fs::remove_file(legacy_salt_path(dir));
-    Ok(())
+    Ok(new_digest)
+}
+
+/// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`,
+/// invoking `before_rename` after the encrypted temp file has been written and flushed.
+/// Deletes any legacy `dir/.salt` file ONLY after the rename succeeds.
+pub fn write_atomic_with_hook<F>(
+    dir: &Path,
+    plaintext: &[u8],
+    key: &[u8; 32],
+    salt: &[u8; SALT_LEN],
+    before_rename: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    write_atomic_cas_with_hook(dir, plaintext, key, salt, None, before_rename).map(|_| ())
 }
 
 /// Atomically writes a v1 self-describing vault to `dir/lagosfile.db.enc`.

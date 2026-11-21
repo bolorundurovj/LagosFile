@@ -202,15 +202,26 @@ pub async fn attach_document(
     }
 
     if let Err(e) = persist_db(&state).await {
-        // Best-effort rollback of row & file if persist fails (e.g. concurrent lock).
+        // Best-effort rollback of row & file if persist fails.
+        // Only remove `dest` if the in-memory DELETE actually removed the row; if `lock_db`
+        // ran concurrently and already persisted the new row to disk, `state.db` is None and
+        // `dest` must stay on disk so the persisted row does not point to a missing file.
+        let mut row_deleted = false;
         if let Ok(guard) = state.db.lock() {
             if let Some(db) = guard.as_ref() {
                 if let Ok(conn) = db.conn.lock() {
-                    let _ = conn.execute("DELETE FROM document WHERE id=?1", params![id.to_string()]);
+                    if let Ok(n) = conn.execute(
+                        "DELETE FROM document WHERE id=?1",
+                        params![id.to_string()],
+                    ) {
+                        row_deleted = n > 0;
+                    }
                 }
             }
         }
-        let _ = std::fs::remove_file(&dest);
+        if row_deleted {
+            let _ = std::fs::remove_file(&dest);
+        }
         return Err(e);
     }
 

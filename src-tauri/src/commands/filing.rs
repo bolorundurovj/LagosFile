@@ -857,6 +857,32 @@ pub fn amend_filing_with_conn(
                             }
                         }
                         entry_id_map.push((old_entry_id, primary_income_id, "income_entry"));
+                    } else if let Some((first_income_id, _, _)) = copied_income.first() {
+                        // Even when a legacy foreign_tax row is ₦0, preserve any attached receipts
+                        // by mapping them to the first copied income entry.
+                        entry_id_map.push((old_entry_id, first_income_id.clone(), "income_entry"));
+                    } else {
+                        // No income entries exist on this filing; if the foreign_tax row had
+                        // attachments, preserve them on a ₦0 other_approved relief row.
+                        let has_docs: bool = tx
+                            .query_row(
+                                "SELECT COUNT(1) FROM document WHERE parent_entry_id=?1",
+                                params![&old_entry_id],
+                                |r| r.get::<_, i32>(0),
+                            )
+                            .unwrap_or(0)
+                            > 0;
+                        if has_docs {
+                            let new_entry_id = Uuid::new_v4().to_string();
+                            tx.execute(
+                                "INSERT INTO relief_entry
+                                   (id,filing_id,relief_type,claimed_amount,approved_amount,description)
+                                 VALUES (?1,?2,'other_approved',0,0,'Migrated foreign tax attachment')",
+                                params![new_entry_id, new_id_str],
+                            )
+                            .map_err(|e| e.to_string())?;
+                            entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
+                        }
                     }
                     continue;
                 }

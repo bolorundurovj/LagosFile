@@ -11,6 +11,9 @@ pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
     pub salt: Mutex<Option<[u8; 16]>>,
+    /// SHA-256 digest of the on-disk `lagosfile.db.enc` last read or written by this session.
+    /// Used to detect and reject stale writes if another LagosFile process modified the vault.
+    pub vault_digest: Mutex<Option<[u8; 32]>>,
     pub recovery_verified: Mutex<bool>,
     pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
     pub temp_preview_files: Mutex<Vec<std::path::PathBuf>>,

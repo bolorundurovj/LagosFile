@@ -358,48 +358,61 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
     }
 
     // If any Confirmed/Submitted returns were pinned to the legacy v1.0 seed or pre-CRA PITA seed,
-    // surface a one-time notice suggesting an amendment (without altering their stored figures).
-    let filed_seed_rows: Vec<String> = {
-        let mut stmt = conn.prepare(
-            "SELECT year_of_assessment, filing_reference FROM filing
-             WHERE status != 'Draft' AND tax_config_id IN (?1, ?2)",
-        )?;
-        let rows = stmt
-            .query_map(rusqlite::params![SEED_V1_CONFIG_ID, PITA_LEGACY_CONFIG_ID], |r| {
-                let yoa: i32 = r.get(0)?;
-                let fref: Option<String> = r.get(1)?;
-                Ok(match fref {
-                    Some(ref s) if !s.is_empty() => format!("{yoa} ({s})"),
-                    _ => format!("{yoa}"),
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-        rows
-    };
+    // surface distinct one-time notices suggesting an amendment (without altering their stored figures).
+    for (cfg_id, meta_key, rule_desc) in [
+        (
+            SEED_V1_CONFIG_ID,
+            "seed_v1_filed_notified",
+            "the legacy v1.0 tax rates",
+        ),
+        (
+            PITA_LEGACY_CONFIG_ID,
+            "pita_legacy_filed_notified",
+            "pre-CRA PITA tax rules",
+        ),
+    ] {
+        let filed_rows: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT year_of_assessment, filing_reference FROM filing
+                 WHERE status != 'Draft' AND tax_config_id = ?1",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![cfg_id], |r| {
+                    let yoa: i32 = r.get(0)?;
+                    let fref: Option<String> = r.get(1)?;
+                    Ok(match fref {
+                        Some(ref s) if !s.is_empty() => format!("{yoa} ({s})"),
+                        _ => format!("{yoa}"),
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            rows
+        };
 
-    if !filed_seed_rows.is_empty() {
-        const META_SEED_FILED_NOTIFIED: &str = "seed_v1_filed_notified";
-        let already: bool = conn
-            .query_row(
-                "SELECT COUNT(1) FROM app_meta WHERE key = ?1",
-                rusqlite::params![META_SEED_FILED_NOTIFIED],
-                |r| r.get::<_, i32>(0),
-            )
-            .unwrap_or(0)
-            > 0;
-        if !already {
-            add_migration_notice(
-                conn,
-                &format!(
-                    "Filed returns ({}) were originally computed with earlier tax rules. Their stored figures have been preserved; create an amendment if you want to recompute them under updated PITA/NTA 2025 rates.",
-                    filed_seed_rows.join(", ")
-                ),
-            )?;
-            conn.execute(
-                "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, '1')",
-                rusqlite::params![META_SEED_FILED_NOTIFIED],
-            )?;
+        if !filed_rows.is_empty() {
+            let already: bool = conn
+                .query_row(
+                    "SELECT COUNT(1) FROM app_meta WHERE key = ?1",
+                    rusqlite::params![meta_key],
+                    |r| r.get::<_, i32>(0),
+                )
+                .unwrap_or(0)
+                > 0;
+            if !already {
+                add_migration_notice(
+                    conn,
+                    &format!(
+                        "Filed returns ({}) were originally computed with {}. Their stored figures have been preserved; create an amendment if you want to recompute them under updated PITA/NTA 2025 rates.",
+                        filed_rows.join(", "),
+                        rule_desc
+                    ),
+                )?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO app_meta (key, value) VALUES (?1, '1')",
+                    rusqlite::params![meta_key],
+                )?;
+            }
         }
     }
 

@@ -14,9 +14,11 @@ pub const ARCHIVE_VERSION: u8 = 1;
 
 const META_DOCUMENT_KEY: &str = "document_key";
 
-/// Returns `true` if `raw` starts with the LagosFile encrypted document header (`LGFD\x01`).
+/// Returns `true` if `raw` starts with the 4-byte LagosFile encrypted document magic (`LGFD`).
+/// Checking the magic prefix alone ensures truncated or wrong-version `LGFD` files are never
+/// misclassified as plaintext and double-encrypted; `decrypt_doc` then validates version and length.
 pub fn is_encrypted_doc(raw: &[u8]) -> bool {
-    raw.len() >= DOC_HEADER_LEN + 12 && &raw[..4] == DOC_MAGIC && raw[4] == DOC_VERSION
+    raw.len() >= 4 && &raw[..4] == DOC_MAGIC
 }
 
 /// Returns the 32-byte document encryption key stored inside the encrypted database,

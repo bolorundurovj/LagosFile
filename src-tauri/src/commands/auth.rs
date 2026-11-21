@@ -179,9 +179,10 @@ fn load_taxpayer(db: &AppDb) -> Option<Taxpayer> {
 }
 
 #[tauri::command]
-pub async fn check_app_status() -> Result<AppStatus, String> {
-    db::ensure_dirs().map_err(|e| e.to_string())?;
+pub async fn check_app_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
+    let _io = state.vault_io_lock.lock().await;
     let _ = recover_interrupted_restore(&db::app_dir());
+    db::ensure_dirs().map_err(|e| e.to_string())?;
     let has_db = db::db_path().exists();
     let has_recovery = recovery_path().exists();
 
@@ -240,6 +241,13 @@ struct RestoreJournal {
     prev_docs_dir: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryOutcome {
+    None,
+    RolledBack,
+    RolledForward,
+}
+
 fn restore_journal_path(dir: &Path) -> std::path::PathBuf {
     dir.join(".restore_journal.json")
 }
@@ -264,20 +272,20 @@ fn write_restore_journal(dir: &Path, journal: &RestoreJournal) -> Result<(), Str
     Ok(())
 }
 
-/// Recovers deterministically from any process crash that interrupted a staged restore
-/// between moving `documents/` and replacing `lagosfile.db.enc`, ensuring the live database
-/// and `documents/` directory always belong to the exact same backup.
-pub fn recover_interrupted_restore(dir: &Path) -> Result<(), String> {
+/// Recovers deterministically from any process crash or post-commit error that interrupted a
+/// staged restore between moving `documents/` and replacing `lagosfile.db.enc`, ensuring the
+/// live database and `documents/` directory always belong to the exact same backup.
+pub fn recover_interrupted_restore(dir: &Path) -> Result<RecoveryOutcome, String> {
     let journal_path = restore_journal_path(dir);
     if !journal_path.exists() {
-        return Ok(());
+        return Ok(RecoveryOutcome::None);
     }
     let raw = std::fs::read(&journal_path).map_err(|e| e.to_string())?;
-    let journal: RestoreJournal = match serde_json::from_slice(&raw) {
+    let mut journal: RestoreJournal = match serde_json::from_slice(&raw) {
         Ok(j) => j,
         Err(_) => {
             let _ = std::fs::remove_file(&journal_path);
-            return Ok(());
+            return Ok(RecoveryOutcome::None);
         }
     };
 
@@ -285,7 +293,7 @@ pub fn recover_interrupted_restore(dir: &Path) -> Result<(), String> {
     let stage_dir = dir.join(&journal.stage_dir);
     let prev_docs = journal.prev_docs_dir.as_ref().map(|p| dir.join(p));
 
-    match journal.phase.as_str() {
+    let outcome = match journal.phase.as_str() {
         "pre_commit" => {
             // Live lagosfile.db.enc has NOT been replaced yet -> roll back documents/.
             if let Some(ref prev) = prev_docs {
@@ -295,28 +303,54 @@ pub fn recover_interrupted_restore(dir: &Path) -> Result<(), String> {
                     }
                     vault::rename_with_retry(prev, &live_docs).map_err(|e| e.to_string())?;
                 }
-            } else if live_docs.exists() && stage_dir.exists() && !stage_dir.join("documents").exists() {
+            } else if live_docs.exists()
+                && stage_dir.exists()
+                && !stage_dir.join("documents").exists()
+            {
                 // Fresh/empty original docs was replaced by staged docs before commit -> remove it.
                 let _ = std::fs::remove_dir_all(&live_docs);
             }
             if stage_dir.exists() {
                 let _ = std::fs::remove_dir_all(&stage_dir);
             }
+            RecoveryOutcome::RolledBack
         }
         "committing" => {
-            // Live documents/ is ALREADY the new backup -> roll forward vault replacement.
+            // Live documents/ is ALREADY the new backup -> attempt to roll forward vault replacement.
             let staged_vault = stage_dir.join("lagosfile.db.enc");
-            if staged_vault.exists() {
-                vault::rename_with_retry(&staged_vault, &vault::vault_path(dir))
-                    .map_err(|e| e.to_string())?;
-            }
-            if let Some(ref prev) = prev_docs {
-                if prev.exists() {
-                    let _ = std::fs::remove_dir_all(prev);
+            let roll_forward_ok = if staged_vault.exists() {
+                vault::rename_with_retry(&staged_vault, &vault::vault_path(dir)).is_ok()
+            } else {
+                vault::vault_path(dir).exists()
+            };
+            if roll_forward_ok {
+                if let Some(ref prev) = prev_docs {
+                    if prev.exists() {
+                        let _ = std::fs::remove_dir_all(prev);
+                    }
                 }
-            }
-            if stage_dir.exists() {
-                let _ = std::fs::remove_dir_all(&stage_dir);
+                if stage_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&stage_dir);
+                }
+                RecoveryOutcome::RolledForward
+            } else {
+                // Vault replacement could not complete -> rewind journal to pre_commit and roll back documents/.
+                journal.phase = "pre_commit".to_string();
+                let _ = write_restore_journal(dir, &journal);
+                if let Some(ref prev) = prev_docs {
+                    if prev.exists() {
+                        if live_docs.exists() {
+                            let _ = std::fs::remove_dir_all(&live_docs);
+                        }
+                        vault::rename_with_retry(prev, &live_docs).map_err(|e| e.to_string())?;
+                    }
+                } else if live_docs.exists() {
+                    let _ = std::fs::remove_dir_all(&live_docs);
+                }
+                if stage_dir.exists() {
+                    let _ = std::fs::remove_dir_all(&stage_dir);
+                }
+                RecoveryOutcome::RolledBack
             }
         }
         _ => {
@@ -329,44 +363,51 @@ pub fn recover_interrupted_restore(dir: &Path) -> Result<(), String> {
             if stage_dir.exists() {
                 let _ = std::fs::remove_dir_all(&stage_dir);
             }
+            RecoveryOutcome::RolledForward
         }
-    }
+    };
 
     let _ = std::fs::remove_file(&journal_path);
-    Ok(())
+    Ok(outcome)
 }
 
-/// Helper that publishes unlocked session state in canonical lock order (`db -> key -> salt -> recovery_verified`).
+/// Helper that publishes unlocked session state in canonical lock order
+/// (`db -> key -> salt -> vault_digest -> recovery_verified`).
 fn publish_unlocked_state(
+    dir: &Path,
     state: &AppState,
     db: AppDb,
     key: [u8; 32],
     salt: [u8; 16],
     recovery_verified: bool,
 ) {
+    let digest = vault::read_vault_digest(dir);
     let mut db_guard = state.db.lock().unwrap();
     let mut key_guard = state.key.lock().unwrap();
     let mut salt_guard = state.salt.lock().unwrap();
+    let mut digest_guard = state.vault_digest.lock().unwrap();
     let mut rv_guard = state.recovery_verified.lock().unwrap();
     *db_guard = Some(db);
     *key_guard = Some(key);
     *salt_guard = Some(salt);
+    *digest_guard = digest;
     *rv_guard = recovery_verified;
 }
 
-type VaultSnapshot = (Vec<u8>, [u8; 32], [u8; 16]);
+type VaultSnapshot = (Vec<u8>, [u8; 32], [u8; 16], Option<[u8; 32]>);
 type UnlockedVaultTuple = (AppDb, [u8; 32], [u8; 16], Option<Taxpayer>);
 
-/// Helper that snapshots `(serialized_db, key, salt)` in canonical lock order (`db -> key -> salt`).
+/// Helper that snapshots `(serialized_db, key, salt, expected_vault_digest)` in canonical lock order.
 fn snapshot_vault_state(state: &AppState) -> Result<Option<VaultSnapshot>, String> {
     let db_guard = state.db.lock().unwrap();
     let key_guard = state.key.lock().unwrap();
     let salt_guard = state.salt.lock().unwrap();
+    let digest_guard = state.vault_digest.lock().unwrap();
     if let (Some(db), Some(key), Some(salt)) =
         (db_guard.as_ref(), key_guard.as_ref(), salt_guard.as_ref())
     {
         let bytes = db.serialize().map_err(|e| e.to_string())?;
-        Ok(Some((bytes, *key, *salt)))
+        Ok(Some((bytes, *key, *salt, *digest_guard)))
     } else {
         Ok(None)
     }
@@ -467,7 +508,7 @@ pub fn unlock_with_biometric_key_in_dir(
         |_, _, _| {},
         |_, _| Ok(()),
     )?;
-    publish_unlocked_state(state, db, db_key, salt, false);
+    publish_unlocked_state(dir, state, db, db_key, salt, false);
     Ok(taxpayer)
 }
 
@@ -497,6 +538,7 @@ pub async fn unlock_with_biometric(
 
     let _io = state.vault_io_lock.lock().await;
     let dir = db::app_dir();
+    let dir_for_publish = dir.clone();
     let app_clone = app.clone();
     let (db, salt, taxpayer) = tokio::task::spawn_blocking(move || {
         decode_and_migrate_with_key(
@@ -519,7 +561,7 @@ pub async fn unlock_with_biometric(
     .await
     .map_err(|e| e.to_string())??;
 
-    publish_unlocked_state(&state, db, db_key, salt, false);
+    publish_unlocked_state(&dir_for_publish, &state, db, db_key, salt, false);
     Ok(taxpayer)
 }
 
@@ -544,7 +586,7 @@ fn setup_pin_sync(dir: &Path, pin: &str) -> Result<(AppDb, [u8; 32], [u8; 16]), 
 
 pub fn setup_pin_in_dir(dir: &Path, pin: &str, state: &AppState) -> Result<(), String> {
     let (new_db, key, salt) = setup_pin_sync(dir, pin)?;
-    publish_unlocked_state(state, new_db, key, salt, false);
+    publish_unlocked_state(dir, state, new_db, key, salt, false);
     Ok(())
 }
 
@@ -553,6 +595,7 @@ pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), St
     let _io = state.vault_io_lock.lock().await;
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let dir = db::app_dir();
+    let dir_for_publish = dir.clone();
 
     let (new_db, key, salt) = tokio::task::spawn_blocking(move || {
         let res = setup_pin_sync(&dir, &pin)?;
@@ -562,7 +605,7 @@ pub async fn setup_pin(pin: String, state: State<'_, AppState>) -> Result<(), St
     .await
     .map_err(|e| e.to_string())??;
 
-    publish_unlocked_state(&state, new_db, key, salt, false);
+    publish_unlocked_state(&dir_for_publish, &state, new_db, key, salt, false);
     Ok(())
 }
 
@@ -609,7 +652,7 @@ where
 {
     let (db, key, salt, taxpayer) =
         unlock_db_sync(dir, pin, |_, _, _| {}, before_migration_file)?;
-    publish_unlocked_state(state, db, key, salt, false);
+    publish_unlocked_state(dir, state, db, key, salt, false);
     Ok(taxpayer)
 }
 
@@ -630,6 +673,7 @@ pub async fn unlock_db(
     let _io = state.vault_io_lock.lock().await;
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let dir = db::app_dir();
+    let dir_for_publish = dir.clone();
     let app_clone = app.clone();
     let (db, key, salt, taxpayer) = tokio::task::spawn_blocking(move || {
         unlock_db_sync(
@@ -651,7 +695,7 @@ pub async fn unlock_db(
     .await
     .map_err(|e| e.to_string())??;
 
-    publish_unlocked_state(&state, db, key, salt, false);
+    publish_unlocked_state(&dir_for_publish, &state, db, key, salt, false);
     Ok(taxpayer)
 }
 
@@ -664,8 +708,17 @@ where
     F: FnOnce(&Path) -> Result<(), String>,
 {
     let snapshot = snapshot_vault_state(state)?;
-    let (bytes, key, salt) = snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
-    vault::write_atomic_with_hook(dir, &bytes, &key, &salt, before_rename)?;
+    let (bytes, key, salt, expected_digest) =
+        snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
+    let new_digest = vault::write_atomic_cas_with_hook(
+        dir,
+        &bytes,
+        &key,
+        &salt,
+        expected_digest,
+        before_rename,
+    )?;
+    *state.vault_digest.lock().unwrap() = Some(new_digest);
     Ok(())
 }
 
@@ -685,13 +738,22 @@ where
     // restores, and lock_db are strictly serialized and never overwrite newer state.
     let _io = state.vault_io_lock.lock().await;
     let snapshot = snapshot_vault_state(state)?;
-    let (bytes, key, salt) = snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
+    let (bytes, key, salt, expected_digest) =
+        snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
 
-    tokio::task::spawn_blocking(move || {
-        vault::write_atomic_with_hook(&dir, &bytes, &key, &salt, before_rename)
+    let new_digest = tokio::task::spawn_blocking(move || {
+        vault::write_atomic_cas_with_hook(
+            &dir,
+            &bytes,
+            &key,
+            &salt,
+            expected_digest,
+            before_rename,
+        )
     })
     .await
     .map_err(|e| e.to_string())??;
+    *state.vault_digest.lock().unwrap() = Some(new_digest);
     Ok(())
 }
 
@@ -722,11 +784,13 @@ where
         let mut db_guard = state.db.lock().unwrap();
         let mut key_guard = state.key.lock().unwrap();
         let mut salt_guard = state.salt.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         let prev_rv = *rv_guard;
+        let expected_digest = digest_guard.take();
         *rv_guard = false;
         match (db_guard.take(), key_guard.take(), salt_guard.take()) {
-            (Some(db), Some(key), Some(salt)) => Some((db, key, salt, prev_rv)),
+            (Some(db), Some(key), Some(salt)) => Some((db, key, salt, prev_rv, expected_digest)),
             (db_opt, _, _) => {
                 drop(db_opt);
                 None
@@ -734,13 +798,20 @@ where
         }
     };
 
-    if let Some((db, key, salt, prev_rv)) = taken {
+    if let Some((db, key, salt, prev_rv, expected_digest)) = taken {
         let bytes_res = db.serialize().map_err(|e| e.to_string());
         let write_res = match bytes_res {
             Ok(bytes) => {
                 let dir_buf = dir.to_path_buf();
                 tokio::task::spawn_blocking(move || {
-                    vault::write_atomic_with_hook(&dir_buf, &bytes, &key, &salt, before_rename)
+                    vault::write_atomic_cas_with_hook(
+                        &dir_buf,
+                        &bytes,
+                        &key,
+                        &salt,
+                        expected_digest,
+                        before_rename,
+                    )
                 })
                 .await
                 .map_err(|e| e.to_string())
@@ -749,8 +820,14 @@ where
             Err(e) => Err(e),
         };
         if let Err(e) = write_res {
-            // Restore in-memory session if final flush fails so unsaved data isn't lost.
-            publish_unlocked_state(state, db, key, salt, prev_rv);
+            if e.contains("another LagosFile instance") {
+                // Another instance modified the vault on disk; leave this stale session locked
+                // in memory and clean up artifacts without overwriting the newer vault on disk.
+                crate::cleanup_session_artifacts(dir, state);
+                return Err(e);
+            }
+            // Restore in-memory session on ordinary write error so unsaved data isn't lost.
+            publish_unlocked_state(dir, state, db, key, salt, prev_rv);
             return Err(e);
         }
     }
@@ -862,7 +939,7 @@ pub fn recover_with_answers_in_dir(
 ) -> Result<Option<Taxpayer>, String> {
     let (db, db_key, salt, taxpayer) =
         recover_with_answers_sync(dir, answers, |_, _, _| {}, |_, _| Ok(()))?;
-    publish_unlocked_state(state, db, db_key, salt, true);
+    publish_unlocked_state(dir, state, db, db_key, salt, true);
     Ok(taxpayer)
 }
 
@@ -876,6 +953,7 @@ pub async fn recover_with_answers(
 ) -> Result<Option<Taxpayer>, String> {
     let _io = state.vault_io_lock.lock().await;
     let dir = db::app_dir();
+    let dir_for_publish = dir.clone();
     let answers = vec![answer_1, answer_2, answer_3];
     let app_clone = app.clone();
 
@@ -899,7 +977,7 @@ pub async fn recover_with_answers(
     .await
     .map_err(|e| e.to_string())??;
 
-    publish_unlocked_state(&state, db, db_key, salt, true);
+    publish_unlocked_state(&dir_for_publish, &state, db, db_key, salt, true);
     Ok(taxpayer)
 }
 
@@ -913,27 +991,38 @@ pub fn reset_pin_with_deps<F>(
 where
     F: FnOnce(&Path) -> Result<(), String>,
 {
-    let bytes = {
+    let (bytes, expected_digest) = {
         let db_guard = state.db.lock().unwrap();
+        let digest_guard = state.vault_digest.lock().unwrap();
         let rv_guard = state.recovery_verified.lock().unwrap();
         if !*rv_guard {
             return Err("PIN reset is only allowed immediately after account recovery.".to_string());
         }
         let db = db_guard.as_ref().ok_or("Database not unlocked")?;
-        db.serialize().map_err(|e| e.to_string())?
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        (bytes, *digest_guard)
     };
 
     let new_salt = security::generate_salt();
     let new_key = security::derive_key(new_pin, &new_salt);
 
-    vault::write_atomic_with_hook(dir, &bytes, &new_key, &new_salt, before_rename)?;
+    let new_digest = vault::write_atomic_cas_with_hook(
+        dir,
+        &bytes,
+        &new_key,
+        &new_salt,
+        expected_digest,
+        before_rename,
+    )?;
 
     {
         let mut key_guard = state.key.lock().unwrap();
         let mut salt_guard = state.salt.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *key_guard = Some(new_key);
         *salt_guard = Some(new_salt);
+        *digest_guard = Some(new_digest);
         *rv_guard = false;
     }
 
@@ -949,26 +1038,35 @@ pub fn reset_pin_in_dir(dir: &Path, new_pin: &str, state: &AppState) -> Result<b
 #[tauri::command]
 pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<bool, String> {
     let _io = state.vault_io_lock.lock().await;
-    let bytes = {
+    let (bytes, expected_digest) = {
         let db_guard = state.db.lock().unwrap();
+        let digest_guard = state.vault_digest.lock().unwrap();
         let rv_guard = state.recovery_verified.lock().unwrap();
         if !*rv_guard {
             return Err("PIN reset is only allowed immediately after account recovery.".to_string());
         }
         let db = db_guard.as_ref().ok_or("Database not unlocked")?;
-        db.serialize().map_err(|e| e.to_string())?
+        let bytes = db.serialize().map_err(|e| e.to_string())?;
+        (bytes, *digest_guard)
     };
     let dir = db::app_dir();
     let dir_clone = dir.clone();
 
-    let (new_key, new_salt, biometric_enabled) =
+    let (new_key, new_salt, new_digest, biometric_enabled) =
         tokio::task::spawn_blocking(move || -> Result<_, String> {
             let new_salt = security::generate_salt();
             let new_key = security::derive_key(&new_pin, &new_salt);
-            vault::write_atomic(&dir_clone, &bytes, &new_key, &new_salt)?;
+            let new_digest = vault::write_atomic_cas_with_hook(
+                &dir_clone,
+                &bytes,
+                &new_key,
+                &new_salt,
+                expected_digest,
+                |_| Ok(()),
+            )?;
             let biometric_enabled = sync_biometric_keyring(&OsKeyringStore, &new_key);
             let _ = std::fs::remove_file(recovery_path_in_dir(&dir_clone));
-            Ok((new_key, new_salt, biometric_enabled))
+            Ok((new_key, new_salt, new_digest, biometric_enabled))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -976,9 +1074,11 @@ pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<bo
     {
         let mut key_guard = state.key.lock().unwrap();
         let mut salt_guard = state.salt.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *key_guard = Some(new_key);
         *salt_guard = Some(new_salt);
+        *digest_guard = Some(new_digest);
         *rv_guard = false;
     }
 
@@ -996,8 +1096,8 @@ pub fn change_pin_with_deps<F>(
 where
     F: FnOnce(&Path) -> Result<(), String>,
 {
-    // Canonical lock order: db -> key -> salt
-    let (bytes, active_key, current_salt) = snapshot_vault_state(state)?
+    // Canonical lock order: db -> key -> salt -> vault_digest
+    let (bytes, active_key, current_salt, expected_digest) = snapshot_vault_state(state)?
         .ok_or_else(|| "Database not unlocked".to_string())?;
 
     let derived = security::derive_key(current_pin, &current_salt);
@@ -1008,14 +1108,23 @@ where
     let new_salt = security::generate_salt();
     let new_key = security::derive_key(new_pin, &new_salt);
 
-    vault::write_atomic_with_hook(dir, &bytes, &new_key, &new_salt, before_rename)?;
+    let new_digest = vault::write_atomic_cas_with_hook(
+        dir,
+        &bytes,
+        &new_key,
+        &new_salt,
+        expected_digest,
+        before_rename,
+    )?;
 
     {
         let mut key_guard = state.key.lock().unwrap();
         let mut salt_guard = state.salt.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *key_guard = Some(new_key);
         *salt_guard = Some(new_salt);
+        *digest_guard = Some(new_digest);
         *rv_guard = false;
     }
 
@@ -1041,11 +1150,11 @@ pub async fn change_pin_in_dir_async(
     sync_os_keyring: bool,
 ) -> Result<bool, String> {
     let _io = state.vault_io_lock.lock().await;
-    // Canonical lock order: db -> key -> salt
-    let (bytes, active_key, current_salt) = snapshot_vault_state(state)?
+    // Canonical lock order: db -> key -> salt -> vault_digest
+    let (bytes, active_key, current_salt, expected_digest) = snapshot_vault_state(state)?
         .ok_or_else(|| "Database not unlocked".to_string())?;
 
-    let (new_key, new_salt, biometric_enabled) =
+    let (new_key, new_salt, new_digest, biometric_enabled) =
         tokio::task::spawn_blocking(move || -> Result<_, String> {
             let derived = security::derive_key(&current_pin, &current_salt);
             if derived != active_key {
@@ -1053,14 +1162,21 @@ pub async fn change_pin_in_dir_async(
             }
             let new_salt = security::generate_salt();
             let new_key = security::derive_key(&new_pin, &new_salt);
-            vault::write_atomic(&dir, &bytes, &new_key, &new_salt)?;
+            let new_digest = vault::write_atomic_cas_with_hook(
+                &dir,
+                &bytes,
+                &new_key,
+                &new_salt,
+                expected_digest,
+                |_| Ok(()),
+            )?;
             let biometric_enabled = if sync_os_keyring {
                 sync_biometric_keyring(&OsKeyringStore, &new_key)
             } else {
                 false
             };
             let _ = std::fs::remove_file(recovery_path_in_dir(&dir));
-            Ok((new_key, new_salt, biometric_enabled))
+            Ok((new_key, new_salt, new_digest, biometric_enabled))
         })
         .await
         .map_err(|e| e.to_string())??;
@@ -1068,9 +1184,11 @@ pub async fn change_pin_in_dir_async(
     {
         let mut key_guard = state.key.lock().unwrap();
         let mut salt_guard = state.salt.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *key_guard = Some(new_key);
         *salt_guard = Some(new_salt);
+        *digest_guard = Some(new_digest);
         *rv_guard = false;
     }
 
@@ -1195,15 +1313,14 @@ where
         None
     };
 
-    // Disarm automatic stage cleanup once the durable journal takes ownership of recovery.
-    stage_guard.disarm();
-
     let mut journal = RestoreJournal {
         phase: "pre_commit".to_string(),
         stage_dir: stage_name,
         prev_docs_dir: prev_docs_name.clone(),
     };
     write_restore_journal(dir, &journal)?;
+    // Disarm automatic stage cleanup only AFTER the durable journal is on disk.
+    stage_guard.disarm();
 
     let switch_res = (|| -> Result<(), String> {
         on_switch_phase("after_pre_commit_journal")?;
@@ -1225,8 +1342,10 @@ where
             .map_err(|e| e.to_string())?;
         on_switch_phase("after_replace_vault")?;
 
+        // Once the vault rename has succeeded, a failure to write the final "committed" journal
+        // is non-fatal (recover_interrupted_restore in "committing" will see staged_vault gone and clean up).
         journal.phase = "committed".to_string();
-        write_restore_journal(dir, &journal)?;
+        let _ = write_restore_journal(dir, &journal);
         Ok(())
     })();
 
@@ -1236,12 +1355,16 @@ where
             // can verify crash recovery on next startup.
             return Err(e);
         }
+        // If recovery rolled forward (the restored vault and documents are now live on disk),
+        // complete the restore in memory and return Ok so reported outcome, in-memory DB, and disk agree.
+        let outcome = recover_interrupted_restore(dir).unwrap_or(RecoveryOutcome::RolledBack);
+        if outcome != RecoveryOutcome::RolledForward {
+            return Err(e);
+        }
+    } else {
+        // Final cleanup via recover_interrupted_restore ("committed" phase).
         let _ = recover_interrupted_restore(dir);
-        return Err(e);
     }
-
-    // Final cleanup via recover_interrupted_restore ("committed" phase).
-    let _ = recover_interrupted_restore(dir);
 
     let taxpayer = load_taxpayer(&new_db);
     Ok((new_db, taxpayer))
@@ -1296,10 +1419,13 @@ where
         on_switch_phase,
     )?;
 
+    let new_digest = vault::read_vault_digest(dir);
     {
         let mut db_guard = state.db.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *db_guard = Some(new_db);
+        *digest_guard = new_digest;
         *rv_guard = false;
     }
     Ok(taxpayer)
@@ -1331,10 +1457,13 @@ where
         before_doc,
     )?;
 
+    let new_digest = vault::read_vault_digest(dir);
     {
         let mut db_guard = state.db.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *db_guard = Some(new_db);
+        *digest_guard = new_digest;
         *rv_guard = false;
     }
     Ok(taxpayer)
@@ -1365,6 +1494,7 @@ pub async fn restore_db(
         (key, salt)
     };
     let dir = db::app_dir();
+    let dir_for_digest = dir.clone();
 
     let (new_db, taxpayer) = tokio::task::spawn_blocking(move || {
         restore_db_sync(
@@ -1379,10 +1509,13 @@ pub async fn restore_db(
     .await
     .map_err(|e| e.to_string())??;
 
+    let new_digest = vault::read_vault_digest(&dir_for_digest);
     {
         let mut db_guard = state.db.lock().unwrap();
+        let mut digest_guard = state.vault_digest.lock().unwrap();
         let mut rv_guard = state.recovery_verified.lock().unwrap();
         *db_guard = Some(new_db);
+        *digest_guard = new_digest;
         *rv_guard = false;
     }
     Ok(taxpayer)
@@ -1427,17 +1560,32 @@ where
 
     let reserialized = db.serialize().map_err(|e| e.to_string())?;
 
-    // Move staged documents into place before exclusively claiming lagosfile.db.enc.
+    // Move any pre-existing documents/ aside (instead of deleting it upfront) so local receipts
+    // are restored if moving staged_docs or claiming lagosfile.db.enc fails.
     let staged_docs = stage_root.join("documents");
     let live_docs = dir.join("documents");
-    if live_docs.exists() {
-        let _ = std::fs::remove_dir_all(&live_docs);
+    let prev_docs = dir.join(format!(".documents_prev_{}", uuid::Uuid::new_v4()));
+    let had_live_docs = live_docs.exists();
+    if had_live_docs {
+        vault::rename_with_retry(&live_docs, &prev_docs).map_err(|e| e.to_string())?;
     }
-    vault::rename_with_retry(&staged_docs, &live_docs).map_err(|e| e.to_string())?;
+    if let Err(e) = vault::rename_with_retry(&staged_docs, &live_docs) {
+        if had_live_docs && prev_docs.exists() {
+            let _ = vault::rename_with_retry(&prev_docs, &live_docs);
+        }
+        return Err(e.to_string());
+    }
 
     if let Err(e) = vault::write_new_exclusive(dir, &reserialized, &decoded.key, &decoded.salt) {
         let _ = std::fs::remove_dir_all(&live_docs);
+        if had_live_docs && prev_docs.exists() {
+            let _ = vault::rename_with_retry(&prev_docs, &live_docs);
+        }
         return Err(e);
+    }
+
+    if had_live_docs && prev_docs.exists() {
+        let _ = std::fs::remove_dir_all(&prev_docs);
     }
 
     let _ = std::fs::remove_file(recovery_path_in_dir(dir));
@@ -1457,7 +1605,7 @@ where
 {
     let (db, key, salt, taxpayer) =
         restore_backup_fresh_sync(dir, src_path, backup_pin, before_doc)?;
-    publish_unlocked_state(state, db, key, salt, false);
+    publish_unlocked_state(dir, state, db, key, salt, false);
     Ok(taxpayer)
 }
 
@@ -1480,6 +1628,7 @@ pub async fn restore_backup_fresh(
     let _io = state.vault_io_lock.lock().await;
     db::ensure_dirs().map_err(|e| e.to_string())?;
     let dir = db::app_dir();
+    let dir_for_publish = dir.clone();
 
     let (db, key, salt, taxpayer) = tokio::task::spawn_blocking(move || {
         let res = restore_backup_fresh_sync(&dir, Path::new(&src_path), &pin, |_, _| Ok(()))?;
@@ -1489,6 +1638,6 @@ pub async fn restore_backup_fresh(
     .await
     .map_err(|e| e.to_string())??;
 
-    publish_unlocked_state(&state, db, key, salt, false);
+    publish_unlocked_state(&dir_for_publish, &state, db, key, salt, false);
     Ok(taxpayer)
 }

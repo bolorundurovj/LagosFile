@@ -1447,5 +1447,229 @@ fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_extern
     }
     assert!(outside.exists(), "files outside documents/ must never be removed");
 
+    // 5. Truncated or wrong-version LGFD files are recognized as encrypted (never treated as plaintext).
+    assert!(doc_store::is_encrypted_doc(b"LGFD\x01"));
+    assert!(doc_store::is_encrypted_doc(b"LGFD\x99corrupt"));
+
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn test_two_instances_reject_stale_save_and_lock_without_overwriting_newer_filing() {
+    use lagosfile_lib::{
+        commands::auth::{lock_db_in_dir, persist_db_in_dir, setup_pin_in_dir, unlock_db_in_dir},
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-two-inst-{}", uuid::Uuid::new_v4()));
+    let tp_id = uuid::Uuid::new_v4().to_string();
+
+    // Initialize vault with taxpayer
+    {
+        let init_state = AppState::default();
+        setup_pin_in_dir(&dir, "1234", &init_state).unwrap();
+        {
+            let guard = init_state.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO taxpayer (id, full_name, tin, created_at)
+                 VALUES (?1, 'Shared Taxpayer', '10000001', '2026-01-01T00:00:00Z')",
+                rusqlite::params![&tp_id],
+            )
+            .unwrap();
+        }
+        persist_db_in_dir(&dir, &init_state).unwrap();
+    }
+
+    // Open the same vault from two independent instances (process A and process B).
+    let state_a = AppState::default();
+    let state_b = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &state_a).unwrap();
+    unlock_db_in_dir(&dir, "1234", &state_b).unwrap();
+
+    // Instance A saves a new filing to disk.
+    {
+        let guard = state_a.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('filing-from-a', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        )
+        .unwrap();
+    }
+    persist_db_in_dir(&dir, &state_a).expect("Instance A save must succeed");
+
+    // Instance B attempts a stale save -> must be rejected.
+    let stale_save_err = persist_db_in_dir(&dir, &state_b)
+        .expect_err("Instance B stale save must be rejected");
+    assert!(
+        stale_save_err.contains("another LagosFile instance"),
+        "unexpected error: {}",
+        stale_save_err
+    );
+
+    // Instance B locks its older session -> must reject overwriting disk and clear B's memory state.
+    let stale_lock_err = lock_db_in_dir(&dir, &state_b)
+        .await
+        .expect_err("Instance B stale lock must not overwrite Instance A's newer vault");
+    assert!(
+        stale_lock_err.contains("another LagosFile instance"),
+        "unexpected error: {}",
+        stale_lock_err
+    );
+    assert!(
+        state_b.db.lock().unwrap().is_none(),
+        "Instance B must still clear its in-memory session on lock"
+    );
+
+    // Reopen vault -> Instance A's filing must still be present on disk!
+    let reopened = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &reopened).unwrap();
+    let count: i64 = {
+        let guard = reopened.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(1) FROM filing WHERE id='filing-from-a'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(count, 1, "Instance A's saved filing must survive Instance B locking");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn test_post_commit_restore_error_rolls_forward_consistently_in_memory_and_on_disk() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{
+                backup_db_to_path_in_dir, lock_db_in_dir, persist_db_in_dir,
+                restore_db_in_dir_with_phase_hook, setup_pin_in_dir, unlock_db_in_dir,
+            },
+            document::attach_document_in_dir,
+        },
+        db::doc_store,
+        AppState,
+    };
+
+    // Build source backup ("Restored Taxpayer" + filing + receipt).
+    let src_dir =
+        std::env::temp_dir().join(format!("lagosfile-postcommit-src-{}", uuid::Uuid::new_v4()));
+    let src_state = AppState::default();
+    setup_pin_in_dir(&src_dir, "9999", &src_state).unwrap();
+    {
+        let guard = src_state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_b = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at)
+             VALUES (?1, 'Restored Taxpayer', '20000002', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_b],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f-restored', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_b],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+             VALUES ('inc-restored', 'f-restored', 'employment', 'Salary', 7500000, 0, 0)",
+            [],
+        )
+        .unwrap();
+    }
+    let src_file = src_dir.join("restored.txt");
+    std::fs::write(&src_file, b"RESTORED-RECEIPT-BYTES").unwrap();
+    let doc_b = attach_document_in_dir(
+        &src_dir,
+        "inc-restored",
+        "income_entry",
+        src_file.to_str().unwrap(),
+        "restored.txt",
+        "text/plain",
+        22,
+        &src_state,
+    )
+    .unwrap();
+    let rel_b = doc_b["filePath"].as_str().unwrap().to_string();
+    persist_db_in_dir(&src_dir, &src_state).unwrap();
+    let backup_path = src_dir.join("backup.lgfa");
+    backup_db_to_path_in_dir(&src_dir, &backup_path, &src_state).unwrap();
+
+    // Live vault starts with "Original Taxpayer".
+    let live_dir =
+        std::env::temp_dir().join(format!("lagosfile-postcommit-live-{}", uuid::Uuid::new_v4()));
+    let live_state = AppState::default();
+    setup_pin_in_dir(&live_dir, "1111", &live_state).unwrap();
+    {
+        let guard = live_state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_a = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at)
+             VALUES (?1, 'Original Taxpayer', '10000001', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_a],
+        )
+        .unwrap();
+    }
+    persist_db_in_dir(&live_dir, &live_state).unwrap();
+
+    // Inject an ordinary (non-crash) filesystem error AFTER committing journal is written,
+    // let recovery roll forward while the app stays open, then lock and reopen.
+    let restored_tp = restore_db_in_dir_with_phase_hook(
+        &live_dir,
+        &backup_path,
+        "9999",
+        &live_state,
+        |phase| {
+            if phase == "after_committing_journal" {
+                Err("transient filesystem error after committing".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .expect("post-commit ordinary error must succeed once recovery rolls forward")
+    .unwrap();
+
+    assert_eq!(restored_tp.full_name, "Restored Taxpayer");
+
+    // Lock the still-open session (which flushes in-memory state.db to disk) and reopen:
+    // the restored database, filings, and receipts must NOT be overwritten by the old database!
+    lock_db_in_dir(&live_dir, &live_state).await.unwrap();
+
+    let reopened = AppState::default();
+    let reopened_tp = unlock_db_in_dir(&live_dir, "1111", &reopened)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reopened_tp.full_name, "Restored Taxpayer");
+
+    let guard = reopened.db.lock().unwrap();
+    let db = guard.as_ref().unwrap();
+    let filing_count: i64 = {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(1) FROM filing WHERE id='f-restored'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(filing_count, 1, "restored filing must survive lock and reopen");
+    let doc_key = doc_store::get_doc_key(db).unwrap().unwrap();
+    let receipt_bytes = doc_store::read_decrypted_doc(&live_dir, &rel_b, &doc_key).unwrap();
+    assert_eq!(receipt_bytes, b"RESTORED-RECEIPT-BYTES");
+
+    let _ = std::fs::remove_dir_all(&src_dir);
+    let _ = std::fs::remove_dir_all(&live_dir);
 }
