@@ -26,34 +26,45 @@ browser.runtime.onStartup.addListener(function () {
 });
 
 browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  let responded = false;
+  function safeRespond(payload) {
+    if (responded) return;
+    responded = true;
+    try {
+      sendResponse(payload);
+    } catch (_) {
+      // Popup or tab may have closed while the async request was in flight.
+    }
+  }
+
   switch (msg.type) {
     case 'SET_BRIDGE_TOKEN':
       bridgeToken = typeof msg.token === 'string' && msg.token.length > 0 ? msg.token : null;
-      sendResponse({ ok: true });
+      safeRespond({ ok: true });
       return false;
 
     case 'SET_FILINGS_DATA':
       cachedFilings = Array.isArray(msg.data) ? msg.data : [];
-      sendResponse({ ok: true });
+      safeRespond({ ok: true });
       return false;
 
     case 'GET_FILINGS_DATA':
-      sendResponse(cachedFilings);
+      safeRespond(cachedFilings);
       return false;
 
     case 'SET_FILING_DATA':
       currentFiling = msg.data != null ? msg.data : null;
-      sendResponse({ ok: true });
+      safeRespond({ ok: true });
       return false;
 
     case 'GET_FILING_DATA':
-      sendResponse(currentFiling);
+      safeRespond(currentFiling);
       return false;
 
     case 'CLEAR_FILING_DATA':
       cachedFilings = [];
       currentFiling = null;
-      sendResponse({ ok: true });
+      safeRespond({ ok: true });
       return false;
 
     case 'FETCH_BRIDGE':
@@ -85,7 +96,7 @@ browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
             });
         })
         .then(function (res) {
-          sendResponse(res);
+          safeRespond(res);
         })
         .catch(function (err) {
           const status = err && err.status ? err.status : 0;
@@ -93,7 +104,7 @@ browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
             cachedFilings = [];
             currentFiling = null;
           }
-          sendResponse({ ok: false, status: status, error: String(err) });
+          safeRespond({ ok: false, status: status, error: String(err) });
         });
       return true;
 
@@ -112,19 +123,19 @@ browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           });
         })
         .then(function (result) {
-          sendResponse(result || { ok: false });
+          safeRespond(result || { ok: false });
         })
         .catch(function (err) {
-          sendResponse({ ok: false, reason: String(err) });
+          safeRespond({ ok: false, reason: String(err) });
         });
       return true;
 
     case 'PING':
-      sendResponse({ pong: true, v: EXT_VERSION });
+      safeRespond({ pong: true, v: EXT_VERSION });
       return false;
 
     default:
-      sendResponse({ ok: false });
+      safeRespond({ ok: false });
       return false;
   }
 });

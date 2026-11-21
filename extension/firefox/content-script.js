@@ -32,19 +32,29 @@
   }
 
   // Capture per-session bridge token from URL fragment (#lagosfile=<token>)
-  // and pass it to the background script, then strip it from the URL bar.
+  // and pass it to the background script, then strip it from the URL bar once stored.
   function captureBridgeTokenFromHash() {
     if (!core) return Promise.resolve(false);
     const token = core.extractTokenFromHash(window.location.hash);
     if (!token) return Promise.resolve(false);
-    try {
-      const cleanUrl = window.location.pathname + window.location.search;
-      window.history.replaceState(null, '', cleanUrl);
-    } catch (_) {}
-    return sendMsg({ type: 'SET_BRIDGE_TOKEN', token: token }).then(function () { return true; });
+    return sendMsg({ type: 'SET_BRIDGE_TOKEN', token: token }).then(function (resp) {
+      if (resp && resp.ok) {
+        try {
+          const cleanUrl = window.location.pathname + window.location.search;
+          window.history.replaceState(null, '', cleanUrl);
+        } catch (_) {}
+        return true;
+      }
+      return false;
+    });
   }
 
-  const tokenCapturePromise = captureBridgeTokenFromHash();
+  const tokenCapturePromise = Promise.resolve(window.__lagosFileTokenPromise || false).then(
+    function (capturedEarly) {
+      if (capturedEarly) return true;
+      return captureBridgeTokenFromHash();
+    }
+  );
   window.addEventListener('hashchange', function () {
     captureBridgeTokenFromHash().then(function (captured) {
       if (captured) {

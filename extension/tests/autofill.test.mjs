@@ -357,12 +357,16 @@ describe('LagosFile extension autofill-core', () => {
     const chromeTokenCap = readFileSync(resolve(EXT_ROOT, 'chrome', 'token-capture.js'), 'utf8');
     const firefoxTokenCap = readFileSync(resolve(EXT_ROOT, 'firefox', 'token-capture.js'), 'utf8');
     expect(firefoxTokenCap).toBe(chromeTokenCap);
+    expect(chromeTokenCap).toContain('TOKEN_REGEX');
+    expect(chromeTokenCap).toContain('__lagosFileTokenPromise');
+    expect(chromeContent).toContain('__lagosFileTokenPromise');
 
     // Neither extension may persist PII or tokens to storage.local (only cleanup .remove is allowed).
     const chromeBg = readFileSync(resolve(EXT_ROOT, 'chrome', 'background.js'), 'utf8');
     const firefoxBg = readFileSync(resolve(EXT_ROOT, 'firefox', 'background.js'), 'utf8');
     expect(chromeBg).not.toMatch(/storage\.local\.(set|get)/);
     expect(firefoxBg).not.toMatch(/storage\.local\.(set|get)/);
+    expect(firefoxBg).toContain('safeRespond');
 
     // Popup must not fall back to GET_FILINGS_DATA when bridge fails, and must surface 403 distinctly.
     const chromePopupJs = readFileSync(resolve(EXT_ROOT, 'chrome', 'popup.js'), 'utf8');
@@ -373,15 +377,19 @@ describe('LagosFile extension autofill-core', () => {
     expect(chromeContent).toContain('status === 403');
   });
 
-  it('activateTab prioritizes real tab elements over earlier generic links in DOM order', () => {
+  it('activateTab prioritizes real [role=tab] elements over generic .nav-link and earlier links in DOM order', () => {
     document.body.innerHTML = `
-      <header><a id="header-link" href="/deductions">Deductions</a></header>
-      <ul class="nav">
+      <header>
+        <a id="header-link" href="/deductions">Deductions</a>
+        <nav><a id="top-nav-link" class="nav-link" href="/deductions">Deductions</a></nav>
+      </header>
+      <ul class="nav nav-tabs">
         <li class="nav-item"><button id="real-tab" class="nav-link" role="tab">Deductions</button></li>
       </ul>
     `;
     const clicked = [];
     document.getElementById('header-link').addEventListener('click', () => clicked.push('header-link'));
+    document.getElementById('top-nav-link').addEventListener('click', () => clicked.push('top-nav-link'));
     document.getElementById('real-tab').addEventListener('click', () => clicked.push('real-tab'));
 
     expect(core.activateTab('deductions', document)).toBe(true);

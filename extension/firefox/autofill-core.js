@@ -85,6 +85,11 @@
       hint: 'Reliefs tab → Others (ADD) when no Rent Relief input exists',
     },
     {
+      path: 'deductions.consolidatedReliefAllowance',
+      label: 'Consolidated Relief Allowance (PITA)',
+      hint: 'PITA (<=2025) returns — auto-computed on LIRS Form A for pre-2026 years',
+    },
+    {
       path: 'accommodation.rentPaid',
       label: 'Annual Rent Paid',
       hint: 'Accommodation section on Form A',
@@ -342,7 +347,8 @@
     const win = d.defaultView || (typeof window !== 'undefined' ? window : null);
 
     const tiers = [
-      '[role="tab"], .nav-link, .nav-item a, .nav-item button, .mat-tab-label, .mat-mdc-tab, ul.nav li a',
+      '[role="tab"], .mat-tab-label, .mat-mdc-tab, ul.nav-tabs li a, ul.nav-tabs li button, .nav-tabs .nav-link',
+      '.nav-link, .nav-item a, .nav-item button, ul.nav li a',
       'button, a',
     ];
     for (let t = 0; t < tiers.length; t++) {
