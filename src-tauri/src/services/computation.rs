@@ -17,8 +17,8 @@ pub fn cgt_shares_exempt(income_entries: &[IncomeEntry], thresholds: &CgtThresho
         .filter(|e| e.income_type == "capital_gain_shares")
         .fold((0.0, 0.0), |(p, g), e| {
             (
-                p + e.cgt_proceeds.unwrap_or(0.0),
-                g + e.cgt_gain.unwrap_or(0.0),
+                p + e.cgt_proceeds.unwrap_or(0.0).max(0.0),
+                g + e.cgt_gain.unwrap_or(e.gross_amount_ngn).max(0.0),
             )
         });
     proceeds < thresholds.proceeds_threshold && gain <= thresholds.gain_threshold
@@ -156,16 +156,25 @@ impl ComputationEngine {
             }
         }
 
-        let rent_relief = (annual_rent * config.relief_caps.rent_relief_rate)
-            .min(config.relief_caps.rent_relief_cap)
-            .max(0.0);
+        // PITA (CRA) and NTA 2025 (Rent Relief) are mutually exclusive regimes;
+        // never allow CRA + Rent Relief double-dipping even on custom configs.
+        let rent_relief = if config.relief_caps.cra_enabled {
+            0.0
+        } else {
+            (annual_rent * config.relief_caps.rent_relief_rate)
+                .min(config.relief_caps.rent_relief_cap)
+                .max(0.0)
+        };
 
         let pension = cap(pension, config.relief_caps.pension_cap);
         let nhis = cap(nhis, config.relief_caps.nhis_cap);
         let nhf = cap(nhf, config.relief_caps.nhf_cap);
 
-        // PITA (Finance Act 2020 s.33) Consolidated Relief Allowance:
-        // max(₦200,000, 1% of gross income after tax-exempt items) + 20% of that gross income.
+        // PITA Consolidated Relief Allowance (Finance Act 2020 s.30 amending PITA s.33(2),
+        // effective 1 Jan 2021 through 2025):
+        // "gross income" for CRA = income from all sources less capital allowances and
+        // Sixth Schedule para 2 tax-exempt deductions (Pension, NHF, NHIS, Life Assurance).
+        // CRA = max(₦200,000, 1% of adjusted gross income) + 20% of adjusted gross income.
         // NTA 2025 replaces CRA with rent relief (cra_enabled = false).
         let consolidated_relief_allowance = if config.relief_caps.cra_enabled {
             let cra_base =

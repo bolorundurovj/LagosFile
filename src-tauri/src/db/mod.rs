@@ -89,7 +89,8 @@ impl AppDb {
 pub const SEED_V1_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000001";
 pub const SEED_V1_CONFIG_LABEL: &str = "Tax Config v1.0 — NTA 2025, effective 1 Jan 2026";
 pub const NTA_2025_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000002";
-pub const PITA_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000003";
+pub const PITA_LEGACY_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000003";
+pub const PITA_CONFIG_ID: &str = "a0000000-0000-0000-0000-000000000004";
 const META_MIGRATION_NOTICES: &str = "migration_notices";
 const META_NTA_MIGRATED: &str = "nta_2025_config_migrated";
 const META_FOREIGN_TAX_MIGRATED: &str = "foreign_tax_relief_migrated";
@@ -260,14 +261,8 @@ fn seed_filing_ref_counter(conn: &Connection) -> Result<()> {
 }
 
 fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
-    // Keep untouched system PITA config aligned with Finance Act 2020 CRA + 0 rent relief.
-    conn.execute(
-        "UPDATE tax_config
-         SET relief_caps_json = '{\"rentReliefCap\":0,\"rentReliefRate\":0.0,\"craEnabled\":true}'
-         WHERE id = ?1 AND modified_by = 'system'",
-        rusqlite::params![PITA_CONFIG_ID],
-    )?;
-
+    // Never mutate existing PITA_LEGACY_CONFIG_ID in place — Confirmed/Submitted returns
+    // pinned to it stay immutable, while Drafts re-pin to the new PITA_CONFIG_ID (with CRA).
     let active: Option<(String, String)> = conn
         .query_row(
             "SELECT id, modified_by FROM tax_config WHERE is_active = 1 LIMIT 1",
@@ -324,19 +319,27 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
                 )?;
             }
         }
-        _ => {}
+        _ => {
+            // Already on a modern system config (e.g. NTA_2025_CONFIG_ID): mark migrated so a
+            // subsequent user-edited config never emits a spurious legacy upgrade notice.
+            conn.execute(
+                "INSERT OR IGNORE INTO app_meta (key, value) VALUES (?1, '1')",
+                rusqlite::params![META_NTA_MIGRATED],
+            )?;
+        }
     }
 
-    // Re-pin existing Draft filings still attached to the broken legacy v1.0 seed so they
-    // compute with the corrected regime for their income year (PITA+CRA <= 2025, NTA 2025 >= 2026).
-    // Confirmed and Submitted filings remain untouched per the immutability rule.
+    // Re-pin existing Draft filings still attached to the broken legacy v1.0 seed or pre-CRA
+    // PITA config so they compute with the corrected regime for their income year (PITA+CRA <= 2025,
+    // NTA 2025 >= 2026). Confirmed and Submitted filings remain untouched per the immutability rule.
     let draft_seed_rows: Vec<(String, i32)> = {
         let mut stmt = conn.prepare(
             "SELECT id, year_of_assessment FROM filing
-             WHERE status = 'Draft' AND (tax_config_id = ?1 OR tax_config_id IS NULL)",
+             WHERE status = 'Draft'
+               AND (tax_config_id IN (?1, ?2) OR tax_config_id IS NULL)",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![SEED_V1_CONFIG_ID], |r| {
+            .query_map(rusqlite::params![SEED_V1_CONFIG_ID, PITA_LEGACY_CONFIG_ID], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?))
             })?
             .filter_map(|r| r.ok())
@@ -354,15 +357,15 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
         }
     }
 
-    // If any Confirmed/Submitted returns were pinned to the legacy v1.0 seed, surface a one-time
-    // notice suggesting an amendment (without altering their stored figures).
+    // If any Confirmed/Submitted returns were pinned to the legacy v1.0 seed or pre-CRA PITA seed,
+    // surface a one-time notice suggesting an amendment (without altering their stored figures).
     let filed_seed_rows: Vec<String> = {
         let mut stmt = conn.prepare(
             "SELECT year_of_assessment, filing_reference FROM filing
-             WHERE status != 'Draft' AND tax_config_id = ?1",
+             WHERE status != 'Draft' AND tax_config_id IN (?1, ?2)",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![SEED_V1_CONFIG_ID], |r| {
+            .query_map(rusqlite::params![SEED_V1_CONFIG_ID, PITA_LEGACY_CONFIG_ID], |r| {
                 let yoa: i32 = r.get(0)?;
                 let fref: Option<String> = r.get(1)?;
                 Ok(match fref {
@@ -389,7 +392,7 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
             add_migration_notice(
                 conn,
                 &format!(
-                    "Filed returns ({}) were originally computed with the legacy v1.0 tax rates. Their stored figures have been preserved; create an amendment if you want to recompute them under updated PITA/NTA 2025 rates.",
+                    "Filed returns ({}) were originally computed with earlier tax rules. Their stored figures have been preserved; create an amendment if you want to recompute them under updated PITA/NTA 2025 rates.",
                     filed_seed_rows.join(", ")
                 ),
             )?;
@@ -494,17 +497,19 @@ fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
 
                     let total_weight: f64 = targets.iter().map(|(_, g)| *g).sum();
                     let primary_entry_id = targets[0].0.clone();
+                    let tx = conn.unchecked_transaction()?;
                     let mut remaining = amount;
                     for (idx, (entry_id, weight)) in targets.iter().enumerate() {
                         let share = if idx + 1 == targets.len() || total_weight <= 0.0 {
-                            remaining
+                            remaining.max(0.0)
                         } else {
-                            let s = (amount * (*weight / total_weight) * 100.0).round() / 100.0;
-                            remaining -= s;
+                            let s = ((amount * (*weight / total_weight) * 100.0).round() / 100.0)
+                                .min(remaining.max(0.0));
+                            remaining = (remaining - s).max(0.0);
                             s
                         };
                         if share > 0.0 {
-                            conn.execute(
+                            tx.execute(
                                 "UPDATE income_entry
                                  SET foreign_tax_paid_ngn = COALESCE(foreign_tax_paid_ngn, 0.0) + ?1
                                  WHERE id = ?2",
@@ -512,16 +517,17 @@ fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
                             )?;
                         }
                     }
-                    conn.execute(
+                    tx.execute(
                         "UPDATE document
                          SET parent_entry_id = ?1, parent_entry_type = 'income_entry'
-                         WHERE parent_entry_id = ?2 AND parent_entry_type = 'relief_entry'",
+                         WHERE parent_entry_id = ?2 AND parent_entry_type IN ('relief_entry', 'relief')",
                         rusqlite::params![primary_entry_id, relief_id],
                     )?;
-                    conn.execute(
+                    tx.execute(
                         "DELETE FROM relief_entry WHERE id = ?1",
                         rusqlite::params![relief_id],
                     )?;
+                    tx.commit()?;
                 }
             } else {
                 let doc_count: i32 = conn

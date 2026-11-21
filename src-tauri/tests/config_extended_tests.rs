@@ -489,4 +489,20 @@ fn test_save_config_validates_relief_caps_cgt_thresholds_and_allowance_rates() {
         notices.is_empty(),
         "fresh install saving custom config must not emit legacy upgrade notice, got: {notices:?}"
     );
+
+    // Non-numeric minimumTaxRate must be rejected instead of silently coerced to 0.0
+    let err_bad_min = ConfigService::save(
+        &db,
+        json!({
+            "versionLabel": "bad-min-tax-string",
+            "governedBy": "NTA 2025",
+            "bands": valid_bands(),
+            "reliefCaps": {},
+            "cgtThresholds": {},
+            "allowanceRates": {},
+            "minimumTaxRate": "invalid"
+        }),
+    )
+    .unwrap_err();
+    assert!(err_bad_min.to_string().contains("Minimum tax rate"));
 }

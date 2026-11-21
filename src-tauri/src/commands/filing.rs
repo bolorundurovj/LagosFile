@@ -637,7 +637,8 @@ pub fn duplicate_filing_with_conn(
     let now = Utc::now().to_rfc3339();
     let target_cfg =
         ConfigService::get_for_income_year(conn, target_yoa).map_err(|e| e.to_string())?;
-    conn.execute(
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
         "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
          VALUES (?1,?2,?3,?4,'Draft',?5,?6,?7)",
         params![
@@ -651,7 +652,8 @@ pub fn duplicate_filing_with_conn(
         ],
     )
     .map_err(|e| e.to_string())?;
-    copy_entries_to_next_year(conn, id, &new_id.to_string()).map_err(|e| e.to_string())?;
+    copy_entries_to_next_year(&tx, id, &new_id.to_string()).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     get_filing_with_conn(conn, &new_id.to_string())
 }
 
@@ -698,30 +700,60 @@ pub fn amend_filing_with_conn(
     let new_id_str = new_id.to_string();
     let now = Utc::now().to_rfc3339();
 
+    // If the parent return was pinned to an obsolete seed (legacy v1.0 or pre-CRA PITA),
+    // upgrade the new Draft amendment to the current regime for its income year so amending
+    // actually recomputes under updated PITA+CRA / NTA 2025 rules.
+    let is_obsolete_seed = match config_id.as_deref() {
+        None => true,
+        Some(cid) => {
+            cid == crate::db::SEED_V1_CONFIG_ID || cid == crate::db::PITA_LEGACY_CONFIG_ID
+        }
+    };
+    let (target_config_ver, target_config_id) = if is_obsolete_seed {
+        match ConfigService::get_for_income_year(conn, yoa) {
+            Ok(cfg) => (cfg.version_label, Some(cfg.id.to_string())),
+            Err(_) => (config_ver, config_id),
+        }
+    } else {
+        (config_ver, config_id)
+    };
+
     let mut copied_files: Vec<std::path::PathBuf> = Vec::new();
     let res: Result<(), String> = (|| {
         let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
         tx.execute(
             "INSERT INTO filing (id,taxpayer_id,parent_filing_id,year_of_assessment,status,created_at,tax_config_version,tax_config_id)
              VALUES (?1,?2,?3,?4,'Draft',?5,?6,?7)",
-            params![new_id_str, taxpayer_id, id, yoa, now, config_ver, config_id],
+            params![
+                new_id_str,
+                taxpayer_id,
+                id,
+                yoa,
+                now,
+                target_config_ver,
+                target_config_id,
+            ],
         )
         .map_err(|e| e.to_string())?;
 
         // Track (old_entry_id, new_entry_id, parent_entry_type) so we can copy attachments
         let mut entry_id_map: Vec<(String, String, &'static str)> = Vec::new();
+        // Track copied income entries (new_id, gross_amount_ngn, is_foreign) for legacy foreign_tax migration
+        let mut copied_income: Vec<(String, f64, bool)> = Vec::new();
 
         // 1. Copy income entries as-is
         {
             let mut stmt = tx
-                .prepare("SELECT id FROM income_entry WHERE filing_id=?1")
+                .prepare("SELECT id, gross_amount_ngn, is_foreign FROM income_entry WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
-            let old_ids: Vec<String> = stmt
-                .query_map(params![id], |r| r.get(0))
+            let old_rows: Vec<(String, f64, bool)> = stmt
+                .query_map(params![id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, i32>(2)? != 0))
+                })
                 .map_err(|e| e.to_string())?
                 .filter_map(|r| r.ok())
                 .collect();
-            for old_entry_id in old_ids {
+            for (old_entry_id, gross, is_foreign) in old_rows {
                 let new_entry_id = Uuid::new_v4().to_string();
                 tx.execute(
                     "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
@@ -736,6 +768,7 @@ pub fn amend_filing_with_conn(
                     params![new_entry_id, new_id_str, old_entry_id],
                 )
                 .map_err(|e| e.to_string())?;
+                copied_income.push((new_entry_id.clone(), gross, is_foreign));
                 entry_id_map.push((old_entry_id, new_entry_id, "income_entry"));
             }
         }
@@ -766,17 +799,67 @@ pub fn amend_filing_with_conn(
             }
         }
 
-        // 3. Copy relief entries as-is (including WHT, PAYE, rent, pension, etc. for same year)
+        // 3. Copy relief entries (migrating legacy `foreign_tax` relief rows onto copied income
+        // entries instead of creating hidden/ignored `foreign_tax` rows on the amended Draft).
         {
             let mut stmt = tx
-                .prepare("SELECT id FROM relief_entry WHERE filing_id=?1")
+                .prepare("SELECT id, relief_type, claimed_amount, approved_amount FROM relief_entry WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
-            let old_ids: Vec<String> = stmt
-                .query_map(params![id], |r| r.get(0))
+            let old_reliefs: Vec<(String, String, f64, f64)> = stmt
+                .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
                 .map_err(|e| e.to_string())?
                 .filter_map(|r| r.ok())
                 .collect();
-            for old_entry_id in old_ids {
+            for (old_entry_id, rtype, claimed, approved) in old_reliefs {
+                if rtype == "foreign_tax" {
+                    let amount = if approved > 0.0 { approved } else { claimed };
+                    if amount > 0.0 && !copied_income.is_empty() {
+                        let foreign_pos: Vec<(String, f64)> = copied_income
+                            .iter()
+                            .filter(|(_, g, is_f)| *is_f && *g > 0.0)
+                            .map(|(eid, g, _)| (eid.clone(), *g))
+                            .collect();
+                        let targets: Vec<(String, f64)> = if !foreign_pos.is_empty() {
+                            foreign_pos
+                        } else {
+                            let any_pos: Vec<(String, f64)> = copied_income
+                                .iter()
+                                .filter(|(_, g, _)| *g > 0.0)
+                                .map(|(eid, g, _)| (eid.clone(), *g))
+                                .collect();
+                            if !any_pos.is_empty() {
+                                any_pos
+                            } else {
+                                vec![(copied_income[0].0.clone(), 1.0)]
+                            }
+                        };
+                        let total_weight: f64 = targets.iter().map(|(_, g)| *g).sum();
+                        let primary_income_id = targets[0].0.clone();
+                        let mut remaining = amount;
+                        for (idx, (entry_id, weight)) in targets.iter().enumerate() {
+                            let share = if idx + 1 == targets.len() || total_weight <= 0.0 {
+                                remaining.max(0.0)
+                            } else {
+                                let s = ((amount * (*weight / total_weight) * 100.0).round()
+                                    / 100.0)
+                                    .min(remaining.max(0.0));
+                                remaining = (remaining - s).max(0.0);
+                                s
+                            };
+                            if share > 0.0 {
+                                tx.execute(
+                                    "UPDATE income_entry
+                                     SET foreign_tax_paid_ngn = COALESCE(foreign_tax_paid_ngn, 0.0) + ?1
+                                     WHERE id = ?2",
+                                    params![share, entry_id],
+                                )
+                                .map_err(|e| e.to_string())?;
+                            }
+                        }
+                        entry_id_map.push((old_entry_id, primary_income_id, "income_entry"));
+                    }
+                    continue;
+                }
                 let new_entry_id = Uuid::new_v4().to_string();
                 tx.execute(
                     "INSERT INTO relief_entry
@@ -968,10 +1051,13 @@ pub fn upsert_income_entry_with_conn(
     conn: &rusqlite::Connection,
     entry: &serde_json::Value,
 ) -> Result<String, String> {
+    validate_income_entry(entry)?;
     let id = entry["id"]
         .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
     require_draft_for_entry_id(conn, "income_entry", &id, Some(filing_id))?;
@@ -1143,10 +1229,13 @@ pub fn upsert_allowance_with_conn(
     conn: &rusqlite::Connection,
     entry: &serde_json::Value,
 ) -> Result<String, String> {
+    validate_allowance_entry(entry)?;
     let id = entry["id"]
         .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
     require_draft_for_entry_id(conn, "capital_allowance", &id, Some(filing_id))?;
@@ -1316,10 +1405,13 @@ pub fn upsert_relief_entry_with_conn(
     conn: &rusqlite::Connection,
     entry: &serde_json::Value,
 ) -> Result<String, String> {
+    validate_relief_entry(entry)?;
     let id = entry["id"]
         .as_str()
-        .unwrap_or(&Uuid::new_v4().to_string())
-        .to_string();
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let filing_id = entry["filingId"].as_str().unwrap_or("");
     require_draft_filing(conn, filing_id)?;
     require_draft_for_entry_id(conn, "relief_entry", &id, Some(filing_id))?;

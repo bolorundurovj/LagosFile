@@ -1090,3 +1090,172 @@ fn test_migrations_backfill_unique_label_repin_seed_drafts_and_distribute_foreig
     assert_ngn_eq(ft1, 600_000.0, "proportional foreign tax on 6M entry");
     assert_ngn_eq(ft2, 400_000.0, "proportional foreign tax on 4M entry");
 }
+
+#[test]
+fn test_pita_cra_with_statutory_deductions_no_rent_double_dip_and_cgt_fallback() {
+    use lagosfile_lib::db::AppDb;
+    use lagosfile_lib::services::config::ConfigService;
+
+    let db = AppDb::open_in_memory().unwrap();
+    let conn = db.conn.lock().unwrap();
+    let mut pita = ConfigService::get_for_income_year(&conn, 2025).unwrap();
+    assert!(pita.relief_caps.cra_enabled);
+
+    // Finance Act 2020 s.30 (amending PITA s.33(2) & Sixth Schedule para 2):
+    // ₦5,000,000 salary + ₦400,000 pension -> adjusted gross = ₦4,600,000
+    // CRA = max(₦200k, 1% of ₦4.6M) + 20% of ₦4.6M = ₦200k + ₦920k = ₦1,120,000
+    // Chargeable = ₦4,600,000 - ₦1,120,000 = ₦3,480,000
+    // PITA tax = 300k*7% + 300k*11% + 500k*15% + 500k*19% + 1.6m*21% + 280k*24% = ₦627,200
+    let entries = vec![employment_entry(5_000_000.0)];
+    let reliefs = vec![relief("pension", 400_000.0), relief("rent", 2_000_000.0)];
+
+    // Even if a custom PITA config misconfigures non-zero rentReliefRate/Cap alongside craEnabled=true,
+    // rent relief MUST remain ₦0 (no CRA + Rent Relief double-dipping).
+    pita.relief_caps.rent_relief_rate = 0.20;
+    pita.relief_caps.rent_relief_cap = 500_000.0;
+
+    let res = ComputationEngine::compute(&entries, &[], &reliefs, &pita).unwrap();
+    assert_ngn_eq(res.consolidated_relief_allowance, 1_120_000.0, "PITA CRA with ₦400k pension");
+    assert_ngn_eq(res.rent_relief_applied, 0.0, "rent relief disabled when CRA enabled");
+    assert_ngn_eq(res.chargeable_income, 3_480_000.0, "PITA chargeable income");
+    assert_ngn_eq(res.final_tax_payable, 627_200.0, "PITA tax with pension + CRA");
+
+    // cgt_shares_exempt must fall back to gross_amount_ngn when cgt_gain is None
+    // (a ₦15M gain with cgt_gain=None exceeds the ₦10M threshold and must NOT be exempt).
+    let nta = ConfigService::get_for_income_year(&conn, 2026).unwrap();
+    let shares = IncomeEntry {
+        income_type: "capital_gain_shares".to_string(),
+        gross_amount_ngn: 15_000_000.0,
+        cgt_proceeds: Some(50_000_000.0),
+        cgt_gain: None,
+        ..Default::default()
+    };
+    let res_shares = ComputationEngine::compute(&[shares], &[], &[], &nta).unwrap();
+    assert_ngn_eq(res_shares.cgt_exempt_amount, 0.0, "₦15M share gain with cgt_gain=None must not be exempt");
+    assert_ngn_eq(res_shares.total_gross_income, 15_000_000.0, "taxable share gain included in gross");
+}
+
+#[test]
+fn test_amend_upgrades_obsolete_seed_and_migrates_foreign_tax_while_preserving_pita_legacy() {
+    use lagosfile_lib::commands::filing::{amend_filing_with_conn, upsert_income_entry_with_conn};
+    use lagosfile_lib::db::{
+        AppDb, NTA_2025_CONFIG_ID, PITA_CONFIG_ID, PITA_LEGACY_CONFIG_ID, SEED_V1_CONFIG_ID,
+    };
+    use lagosfile_lib::services::config::ConfigService;
+
+    let db = AppDb::open_in_memory().unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        // Insert an older pre-CRA PITA_LEGACY_CONFIG_ID row and a legacy SEED_V1_CONFIG_ID row.
+        conn.execute(
+            "INSERT OR IGNORE INTO tax_config (id,version_label,governed_by,bands_json,relief_caps_json,cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,is_active,last_modified,modified_by)
+             VALUES (?1,'Tax Config — PITA Legacy','PITA','[{\"lower\":0,\"upper\":null,\"rate\":0.07}]','{\"rentReliefCap\":500000,\"rentReliefRate\":0.20,\"craEnabled\":false}','{\"proceedsThreshold\":150000000,\"gainThreshold\":10000000}','{}',0.01,0,'2025-01-01T00:00:00Z','system')",
+            rusqlite::params![PITA_LEGACY_CONFIG_ID],
+        ).unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO tax_config (id,version_label,governed_by,bands_json,relief_caps_json,cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,is_active,last_modified,modified_by)
+             VALUES (?1,'Tax Config v1.0','NTA 2025','[{\"lower\":0,\"upper\":null,\"rate\":0.25}]','{\"rentReliefCap\":500000,\"rentReliefRate\":0.20,\"craEnabled\":false}','{\"proceedsThreshold\":150000000,\"gainThreshold\":10000000}','{}',0.01,0,'2025-01-01T00:00:00Z','system')",
+            rusqlite::params![SEED_V1_CONFIG_ID],
+        ).unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Amend User', '40000004', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        ).unwrap();
+        // Confirmed 2025 return pinned to PITA_LEGACY_CONFIG_ID
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, tax_config_id, created_at)
+             VALUES ('f-pita-old', ?1, 2025, 'Confirmed', 'Tax Config — PITA Legacy', ?2, '2025-02-01T00:00:00Z')",
+            rusqlite::params![&tp_id, PITA_LEGACY_CONFIG_ID],
+        ).unwrap();
+        // Confirmed 2026 return pinned to SEED_V1_CONFIG_ID with legacy foreign_tax relief
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, tax_config_id, created_at)
+             VALUES ('f-seed-old', ?1, 2026, 'Confirmed', 'Tax Config v1.0', ?2, '2026-02-01T00:00:00Z')",
+            rusqlite::params![&tp_id, SEED_V1_CONFIG_ID],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+             VALUES ('inc-foreign', 'f-seed-old', 'business', 'US Client', 5000000, 1, 0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO relief_entry (id, filing_id, relief_type, claimed_amount, approved_amount)
+             VALUES ('rel-ft-old', 'f-seed-old', 'foreign_tax', 350000, 350000)",
+            [],
+        ).unwrap();
+    }
+
+    // Re-run migrate() via serialize/load_from_bytes -> PITA_LEGACY_CONFIG_ID must stay immutable!
+    let bytes = db.serialize().unwrap();
+    let db2 = AppDb::open_in_memory().unwrap();
+    db2.load_from_bytes(&bytes).unwrap();
+    let conn = db2.conn.lock().unwrap();
+
+    let legacy_pita = ConfigService::get_by_id(&conn, PITA_LEGACY_CONFIG_ID).unwrap();
+    assert!(
+        !legacy_pita.relief_caps.cra_enabled,
+        "PITA_LEGACY_CONFIG_ID must not be mutated in place"
+    );
+
+    let tmp_dir = std::env::temp_dir().join(format!("lagosfile-amend-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    // Amending Confirmed 2025 (PITA_LEGACY) -> new Draft upgrades to PITA_CONFIG_ID (with CRA).
+    let amended_pita = amend_filing_with_conn(&conn, &tmp_dir, "f-pita-old").unwrap();
+    assert_eq!(
+        amended_pita.tax_config_id.map(|u| u.to_string()).as_deref(),
+        Some(PITA_CONFIG_ID)
+    );
+
+    // Amending Confirmed 2026 (SEED_V1 + foreign_tax relief) -> new Draft upgrades to NTA_2025_CONFIG_ID
+    // and migrates foreign_tax relief onto the copied income entry with zero hidden foreign_tax relief rows!
+    let amended_nta = amend_filing_with_conn(&conn, &tmp_dir, "f-seed-old").unwrap();
+    assert_eq!(
+        amended_nta.tax_config_id.map(|u| u.to_string()).as_deref(),
+        Some(NTA_2025_CONFIG_ID)
+    );
+    let ft_relief_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM relief_entry WHERE filing_id=?1 AND relief_type='foreign_tax'",
+            rusqlite::params![amended_nta.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(ft_relief_count, 0, "amended draft must not contain hidden foreign_tax relief rows");
+    let copied_ft: f64 = conn
+        .query_row(
+            "SELECT foreign_tax_paid_ngn FROM income_entry WHERE filing_id=?1",
+            rusqlite::params![amended_nta.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_ngn_eq(copied_ft, 350_000.0, "migrated foreign_tax_paid_ngn on amended draft");
+
+    // Single-entry upsert rejects negative salary and replaces empty id with a generated UUID.
+    let neg_err = upsert_income_entry_with_conn(
+        &conn,
+        &serde_json::json!({
+            "id": "",
+            "filingId": amended_nta.id.to_string(),
+            "incomeType": "employment",
+            "grossAmountNgn": -100.0
+        }),
+    )
+    .unwrap_err();
+    assert!(neg_err.contains("cannot be negative"));
+
+    let generated_id = upsert_income_entry_with_conn(
+        &conn,
+        &serde_json::json!({
+            "id": "",
+            "filingId": amended_nta.id.to_string(),
+            "incomeType": "employment",
+            "grossAmountNgn": 100000.0
+        }),
+    )
+    .unwrap();
+    assert!(!generated_id.is_empty() && uuid::Uuid::parse_str(&generated_id).is_ok());
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

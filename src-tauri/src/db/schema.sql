@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS relief_entry (
     approved_amount REAL NOT NULL DEFAULT 0,
     wht_ref         TEXT,
     wht_income_type TEXT,
-    wht_date        TEXT
+    wht_date        TEXT,
+    description     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS document (
@@ -166,8 +167,8 @@ INSERT OR IGNORE INTO tax_config (
     cgt_thresholds_json, allowance_rates_json, minimum_tax_rate,
     is_active, last_modified, modified_by
 ) VALUES (
-    'a0000000-0000-0000-0000-000000000003',
-    'Tax Config — PITA (Income Years <= 2025)',
+    'a0000000-0000-0000-0000-000000000004',
+    'Tax Config v2.1 — PITA + CRA (Income Years <= 2025)',
     'PITA',
     '[
       {"lower":0,"upper":300000,"rate":0.07},

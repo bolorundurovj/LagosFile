@@ -244,7 +244,13 @@ impl ConfigService {
             }
         }
 
-        let min_tax = config["minimumTaxRate"].as_f64().unwrap_or(0.0);
+        let min_tax = match config.get("minimumTaxRate") {
+            None | Some(serde_json::Value::Null) => 0.0,
+            Some(v) => v.as_f64().ok_or_else(|| {
+                "Minimum tax rate must be a number between 0 and 1.".to_string()
+            })
+            .map_err(anyhow::Error::msg)?,
+        };
         if !min_tax.is_finite() || !(0.0..=1.0).contains(&min_tax) {
             return Err(anyhow::anyhow!(
                 "Minimum tax rate ({}) must be between 0 and 1.",
