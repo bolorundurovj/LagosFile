@@ -371,6 +371,8 @@ pub struct PendingFilingDeductions {
     pub life_assurance: f64,
     #[serde(rename = "rentReliefApplied")]
     pub rent_relief_applied: f64,
+    #[serde(default, rename = "consolidatedReliefAllowance")]
+    pub consolidated_relief_allowance: f64,
     #[serde(default, rename = "otherApproved")]
     pub other_approved: f64,
 }

@@ -92,9 +92,9 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
     let filing = conn
         .query_row(
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
-                    filing_reference,created_at,confirmed_at,total_income_ngn,
-                    chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                    minimum_tax,final_tax_payable,tax_config_version,tax_config_id
+                    filing_reference,created_at,confirmed_at,submitted_at,total_income_ngn,
+                    chargeable_income,tax_payable,wht_credit,paye_credit,foreign_tax_credit,
+                    net_tax_payable,minimum_tax,final_tax_payable,tax_config_version,tax_config_id
              FROM filing WHERE id=?1",
             params![id],
             |row| {
@@ -118,19 +118,22 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|d| d.with_timezone(&Utc)),
-                    submitted_at: None,
-                    total_income_ngn: row.get(8)?,
-                    chargeable_income: row.get(9)?,
-                    tax_payable: row.get(10)?,
-                    wht_credit: row.get(11)?,
-                    paye_credit: None,
-                    foreign_tax_credit: None,
-                    net_tax_payable: row.get(12)?,
-                    minimum_tax: row.get(13)?,
-                    final_tax_payable: row.get(14)?,
-                    tax_config_version: row.get(15)?,
+                    submitted_at: row
+                        .get::<_, Option<String>>(8)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|d| d.with_timezone(&Utc)),
+                    total_income_ngn: row.get(9)?,
+                    chargeable_income: row.get(10)?,
+                    tax_payable: row.get(11)?,
+                    wht_credit: row.get(12)?,
+                    paye_credit: row.get(13)?,
+                    foreign_tax_credit: row.get(14)?,
+                    net_tax_payable: row.get(15)?,
+                    minimum_tax: row.get(16)?,
+                    final_tax_payable: row.get(17)?,
+                    tax_config_version: row.get(18)?,
                     tax_config_id: row
-                        .get::<_, Option<String>>(16)?
+                        .get::<_, Option<String>>(19)?
                         .and_then(|s| Uuid::parse_str(&s).ok()),
                     payment_date: None,
                     payment_reference: None,
@@ -527,6 +530,7 @@ pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pen
             nhis,
             life_assurance,
             rent_relief_applied: computation.rent_relief_applied,
+            consolidated_relief_allowance: computation.consolidated_relief_allowance,
             other_approved,
         },
         computation: payload_computation,
@@ -659,8 +663,13 @@ pub fn handle_bridge_request(
         None => None,
     };
 
+    let mut req_parts = first_line.split_whitespace();
+    let method = req_parts.next().unwrap_or("");
+    let raw_target = req_parts.next().unwrap_or("");
+    let path = raw_target.split('?').next().unwrap_or(raw_target);
+
     // Preflight OPTIONS does not carry the custom token and must NOT reset the idle timer.
-    if first_line.starts_with("OPTIONS") {
+    if method == "OPTIONS" {
         return (build_http_response(200, "text/plain", "", cors_origin), false);
     }
 
@@ -675,26 +684,23 @@ pub fn handle_bridge_request(
         return (build_http_response(403, "text/plain", "", cors_origin), false);
     }
 
-    let (response, reset_idle) = if first_line.starts_with("GET /filings") {
-        (
+    let (response, reset_idle) = match (method, path) {
+        ("GET", "/filings") => (
             build_http_response(200, "application/json", filings_array_json, cors_origin),
             true,
-        )
-    } else if first_line.starts_with("GET /filing") {
-        (
+        ),
+        ("GET", "/filing") => (
             build_http_response(200, "application/json", primary_json, cors_origin),
             true,
-        )
-    } else if first_line.starts_with("GET /health") {
-        (
+        ),
+        ("GET", "/health") => (
             build_http_response(200, "application/json", r#"{"status":"ok"}"#, cors_origin),
             true,
-        )
-    } else {
-        (
+        ),
+        _ => (
             build_http_response(404, "text/plain", "not found", cors_origin),
             false,
-        )
+        ),
     };
 
     (response, reset_idle)
@@ -748,16 +754,26 @@ pub fn start_bridge_on_port(
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
 
                     const MAX_HEADER_BYTES: usize = 16 * 1024;
+                    const MAX_REQUEST_READ_MS: u64 = 1500;
+                    let req_started = Instant::now();
                     let mut req_bytes: Vec<u8> = Vec::with_capacity(1024);
                     let mut chunk = [0u8; 1024];
+                    let mut has_header_end = false;
                     loop {
+                        if stop_flag.load(Ordering::SeqCst)
+                            || req_started.elapsed() > Duration::from_millis(MAX_REQUEST_READ_MS)
+                        {
+                            break;
+                        }
                         match stream.read(&mut chunk) {
                             Ok(0) => break,
                             Ok(n) => {
                                 req_bytes.extend_from_slice(&chunk[..n]);
-                                if req_bytes.windows(4).any(|w| w == b"\r\n\r\n")
-                                    || req_bytes.len() >= MAX_HEADER_BYTES
-                                {
+                                if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                                    has_header_end = true;
+                                    break;
+                                }
+                                if req_bytes.len() >= MAX_HEADER_BYTES {
                                     break;
                                 }
                             }
@@ -765,6 +781,12 @@ pub fn start_bridge_on_port(
                         }
                     }
                     if req_bytes.is_empty() {
+                        continue;
+                    }
+                    if !has_header_end {
+                        let bad = build_http_response(400, "text/plain", "bad request", None);
+                        let _ = stream.write_all(bad.as_bytes());
+                        let _ = stream.flush();
                         continue;
                     }
 
@@ -917,6 +939,10 @@ pub async fn open_lirs_portal(
         (primary, all_filings, filing_ref, failures)
     };
 
+    // Stop any previous bridge BEFORE writing the new pending_filing.json so the dying bridge
+    // thread cannot delete the newly written file during restart.
+    stop_bridge(&state);
+
     let data_dir = lirs_data_dir();
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("pending_filing.json");
@@ -933,6 +959,7 @@ pub async fn open_lirs_portal(
         token
     );
     if let Err(e) = open::that(&portal_url) {
+        stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
         log_automation_failure(&id, &reason);
         return Err(reason);
@@ -984,6 +1011,7 @@ pub async fn open_lirs_portal_all(
         token
     );
     if let Err(e) = open::that(&portal_url) {
+        stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
         log_automation_failure("batch", &reason);
         return Err(reason);

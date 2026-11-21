@@ -713,9 +713,12 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
     .unwrap();
 
     confirm_filing_with_conn(&conn, &fid).unwrap();
-    // Simulate a historical stored final_tax_payable that differs from today's engine
+    // Simulate historical stored values (including paye_credit & foreign_tax_credit)
     conn.execute(
-        "UPDATE filing SET final_tax_payable = 123456.78, tax_payable = 123456.78 WHERE id = ?1",
+        "UPDATE filing
+         SET final_tax_payable = 123456.78, tax_payable = 123456.78,
+             paye_credit = 55555.0, foreign_tax_credit = 22222.0
+         WHERE id = ?1",
         rusqlite::params![fid],
     )
     .unwrap();
@@ -724,4 +727,17 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
     assert_eq!(payload.income.capital_gain, 0.0, "exempt share gain must not be sent as taxable capitalGain");
     assert_eq!(payload.income.digital_asset, 0.0, "negative digital loss must clamp to 0");
     assert_eq!(payload.computation.final_tax_payable, 123456.78, "Confirmed filing must send stored figure to LIRS");
+    assert_eq!(payload.computation.paye_credits, 55555.0, "Confirmed filing must preserve stored paye_credit");
+    assert_eq!(payload.computation.foreign_tax_credits, 22222.0, "Confirmed filing must preserve stored foreign_tax_credit");
+    assert_eq!(payload.deductions.consolidated_relief_allowance, 1_200_000.0, "2025 PITA payload must include CRA");
+
+    // Strict route matching: /filing-extra must return 404, not match /filing
+    let (resp_404, _) = lirs::handle_bridge_request(
+        "GET /filing-extra HTTP/1.1\r\nHost: 127.0.0.1:19876\r\nX-LagosFile-Token: secret\r\n\r\n",
+        19876,
+        "secret",
+        "[]",
+        "{}",
+    );
+    assert!(resp_404.starts_with("HTTP/1.1 404"), "unexpected response: {resp_404}");
 }

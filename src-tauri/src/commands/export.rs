@@ -23,46 +23,93 @@ struct FilingSummary {
     minimum_tax: Option<f64>,
     final_tax_payable: Option<f64>,
     tax_config_version: String,
+    governed_by: String,
+    consolidated_relief_allowance: f64,
     full_name: String,
     tin: String,
     confirmed_at: Option<String>,
     submitted_at: Option<String>,
 }
 
+impl FilingSummary {
+    fn is_pita(&self) -> bool {
+        self.governed_by.eq_ignore_ascii_case("PITA")
+    }
+
+    fn short_act_label(&self) -> String {
+        if self.is_pita() {
+            "PITA".to_string()
+        } else if self.governed_by.trim().is_empty() {
+            "NTA 2025".to_string()
+        } else {
+            self.governed_by.to_uppercase()
+        }
+    }
+
+    fn full_act_label(&self) -> String {
+        if self.is_pita() {
+            "Personal Income Tax Act (PITA)".to_string()
+        } else {
+            "Nigeria Tax Act (NTA) 2025".to_string()
+        }
+    }
+}
+
 fn load_summary(conn: &rusqlite::Connection, filing_id: &str) -> Result<FilingSummary, String> {
-    conn.query_row(
-        "SELECT f.filing_reference, f.year_of_assessment,
-                f.total_income_ngn, f.chargeable_income, f.tax_payable,
-                f.wht_credit, f.net_tax_payable, f.minimum_tax, f.final_tax_payable,
-                f.tax_config_version, f.confirmed_at,
-                t.full_name, t.tin, f.submitted_at,
-                f.paye_credit, f.foreign_tax_credit, f.status
-         FROM filing f JOIN taxpayer t ON t.id = f.taxpayer_id
-         WHERE f.id = ?1",
-        params![filing_id],
-        |row| {
-            Ok(FilingSummary {
-                filing_reference: row.get(0)?,
-                status: row.get(16)?,
-                year_of_assessment: row.get(1)?,
-                total_income_ngn: row.get(2)?,
-                chargeable_income: row.get(3)?,
-                tax_payable: row.get(4)?,
-                wht_credit: row.get(5)?,
-                paye_credit: row.get(14)?,
-                foreign_tax_credit: row.get(15)?,
-                net_tax_payable: row.get(6)?,
-                minimum_tax: row.get(7)?,
-                final_tax_payable: row.get(8)?,
-                tax_config_version: row.get(9)?,
-                confirmed_at: row.get(10)?,
-                full_name: row.get(11)?,
-                tin: row.get(12)?,
-                submitted_at: row.get(13)?,
-            })
-        },
-    )
-    .map_err(|e| e.to_string())
+    let mut summary = conn
+        .query_row(
+            "SELECT f.filing_reference, f.year_of_assessment,
+                    f.total_income_ngn, f.chargeable_income, f.tax_payable,
+                    f.wht_credit, f.net_tax_payable, f.minimum_tax, f.final_tax_payable,
+                    f.tax_config_version, f.confirmed_at,
+                    t.full_name, t.tin, f.submitted_at,
+                    f.paye_credit, f.foreign_tax_credit, f.status
+             FROM filing f JOIN taxpayer t ON t.id = f.taxpayer_id
+             WHERE f.id = ?1",
+            params![filing_id],
+            |row| {
+                Ok(FilingSummary {
+                    filing_reference: row.get(0)?,
+                    status: row.get(16)?,
+                    year_of_assessment: row.get(1)?,
+                    total_income_ngn: row.get(2)?,
+                    chargeable_income: row.get(3)?,
+                    tax_payable: row.get(4)?,
+                    wht_credit: row.get(5)?,
+                    paye_credit: row.get(14)?,
+                    foreign_tax_credit: row.get(15)?,
+                    net_tax_payable: row.get(6)?,
+                    minimum_tax: row.get(7)?,
+                    final_tax_payable: row.get(8)?,
+                    tax_config_version: row.get(9)?,
+                    governed_by: String::new(),
+                    consolidated_relief_allowance: 0.0,
+                    full_name: row.get(11)?,
+                    tin: row.get(12)?,
+                    confirmed_at: row.get(10)?,
+                    submitted_at: row.get(13)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(cfg) = crate::services::config::ConfigService::get_for_filing(conn, filing_id) {
+        summary.governed_by = cfg.governed_by.clone();
+        if cfg.relief_caps.cra_enabled {
+            if let Ok(comp) = crate::commands::filing::compute_filing_with_conn(conn, filing_id) {
+                summary.consolidated_relief_allowance = comp.consolidated_relief_allowance;
+            }
+        }
+    }
+    if summary.governed_by.is_empty() {
+        summary.governed_by = if summary.year_of_assessment <= 2025 {
+            "PITA".to_string()
+        } else {
+            "NTA 2025".to_string()
+        };
+    }
+
+    Ok(summary)
 }
 
 pub fn format_with_commas(n: f64) -> String {
@@ -467,8 +514,9 @@ fn add_attachments_appendix(
 
 /// Parses raw JPEG markers to verify whether `bytes` is safe to embed directly as a
 /// PDF `/DCTDecode` stream (`/DeviceGray` or `/DeviceRGB`). Rejects 4-channel CMYK/YCCK
-/// JPEGs (even when `image::JpegDecoder::color_type()` reports `Rgb8`), Adobe APP14 CMYK/YCCK,
-/// non-identity EXIF orientations, and corrupt/truncated JPEGs.
+/// JPEGs, non-8-bit/lossless/arithmetic SOF markers, Adobe APP14 non-YCbCr transforms
+/// (`transform == 0` raw RGB or `transform == 2` YCCK), non-identity or unreadable EXIF
+/// orientations, misaligned markers, and corrupt/truncated JPEGs.
 fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return None;
@@ -477,19 +525,24 @@ fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
     let mut pos = 2usize;
     let mut sof_info: Option<(u32, u32, u8)> = None;
     while pos + 1 < bytes.len() {
+        // Every JPEG segment must start with a 0xFF marker prefix.
+        if bytes[pos] != 0xFF {
+            return None;
+        }
         while pos < bytes.len() && bytes[pos] == 0xFF {
             pos += 1;
         }
         if pos >= bytes.len() {
-            break;
+            return None;
         }
         let marker = bytes[pos];
         pos += 1;
 
-        // Standalone markers (SOI, EOI, RST0..7, TEM)
+        // End of Image / Start of Scan terminates header parsing.
         if marker == 0xD9 || marker == 0xDA {
             break;
         }
+        // Standalone markers (RST0..7, SOI, TEM) have no length field.
         if (0xD0..=0xD8).contains(&marker) || marker == 0x01 {
             continue;
         }
@@ -503,17 +556,25 @@ fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
         let seg = &bytes[pos + 2..pos + seg_len];
         pos += seg_len;
 
-        // Adobe APP14 marker: transform == 2 indicates YCCK (4-channel CMYK)
-        if marker == 0xEE && seg.len() >= 12 && &seg[..5] == b"Adobe" && seg[11] == 2 {
+        // Adobe APP14 marker: only transform == 1 (YCbCr) is safe for PDF /DeviceRGB DCTDecode
+        // (transform == 0 is raw RGB/CMYK, transform == 2 is YCCK).
+        if marker == 0xEE && seg.len() >= 12 && &seg[..5] == b"Adobe" && seg[11] != 1 {
             return None;
         }
 
-        // SOF markers (baseline/extended/progressive/lossless) carry true channel count
+        // Reject lossless, differential, and arithmetic-coded SOF markers (not supported by PDF /DCTDecode).
         if matches!(
             marker,
-            0xC0 | 0xC1 | 0xC2 | 0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF
-        ) && seg.len() >= 6
-        {
+            0xC3 | 0xC5 | 0xC6 | 0xC7 | 0xC9 | 0xCA | 0xCB | 0xCD | 0xCE | 0xCF
+        ) {
+            return None;
+        }
+
+        // Baseline/Extended/Progressive Huffman SOF markers (0xC0..=0xC2): require 8-bit precision.
+        if matches!(marker, 0xC0..=0xC2) {
+            if seg.len() < 6 || seg[0] != 8 {
+                return None;
+            }
             let h = u16::from_be_bytes([seg[1], seg[2]]) as u32;
             let w = u16::from_be_bytes([seg[3], seg[4]]) as u32;
             let components = seg[5];
@@ -531,13 +592,11 @@ fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
         _ => return None, // Reject 4-component CMYK/YCCK or unusual channel counts
     };
 
-    // Check EXIF orientation via image's JpegDecoder; reject rotated images so fallback applies orientation.
+    // Check EXIF orientation via image's JpegDecoder; reject rotated OR unreadable EXIF so fallback normalizes.
     use ::image::ImageDecoder;
     let mut decoder =
         ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
-    let orientation = decoder
-        .orientation()
-        .unwrap_or(::image::metadata::Orientation::NoTransforms);
+    let orientation = decoder.orientation().ok()?;
     if orientation != ::image::metadata::Orientation::NoTransforms {
         return None;
     }
@@ -798,7 +857,7 @@ fn render_filing_pdf(
             &font_bold,
         );
         cover.use_text(
-            "DIRECT ASSESSMENT  \u{00B7}  NTA 2025",
+            format!("DIRECT ASSESSMENT  \u{00B7}  {}", summary.short_act_label()),
             7.0,
             cover_text_x,
             logo_y + Mm(2.0),
@@ -931,13 +990,19 @@ fn render_filing_pdf(
         &font_bold,
     );
     layer.use_text(
-        "DIRECT ASSESSMENT  \u{00B7}  NTA 2025",
+        format!("DIRECT ASSESSMENT  \u{00B7}  {}", summary.short_act_label()),
         7.0,
         logo_text_x(left),
         y + Mm(2.0),
         &font,
     );
-    layer.use_text("NIGERIA TAX ACT 2025", 7.0, Mm(148.0), y + Mm(7.5), &font);
+    layer.use_text(
+        summary.full_act_label().to_uppercase(),
+        7.0,
+        Mm(132.0),
+        y + Mm(7.5),
+        &font,
+    );
 
     y -= Mm(2.5);
     layer.add_shape(Line {
@@ -963,7 +1028,7 @@ fn render_filing_pdf(
     });
     y -= gap;
 
-    let details: &[(&str, String)] = &[
+    let mut details: Vec<(&str, String)> = vec![
         ("Taxpayer", summary.full_name.clone()),
         ("TIN", summary.tin.clone()),
         ("Income Year", summary.year_of_assessment.to_string()),
@@ -982,9 +1047,15 @@ fn render_filing_pdf(
             "Confirmed At",
             date_prefix(summary.confirmed_at.as_deref()),
         ),
-        ("Tax Config", summary.tax_config_version.clone()),
     ];
-    for (label, value) in details {
+    if summary.submitted_at.as_deref().is_some_and(|s| !s.is_empty()) {
+        details.push((
+            "Submitted At",
+            date_prefix(summary.submitted_at.as_deref()),
+        ));
+    }
+    details.push(("Tax Config", summary.tax_config_version.clone()));
+    for (label, value) in &details {
         layer.use_text(*label, 8.0, left, y, &font_bold);
         layer.use_text(value.as_str(), 10.0, Mm(70.0), y, &font);
         y -= line_h;
@@ -1005,9 +1076,15 @@ fn render_filing_pdf(
 
     let mut rows: Vec<(&str, String)> = vec![
         ("Total Gross Income", naira(summary.total_income_ngn)),
-        ("Chargeable Income", naira(summary.chargeable_income)),
-        ("Gross Tax (Graduated Bands)", naira(summary.tax_payable)),
     ];
+    if summary.consolidated_relief_allowance > 0.0 {
+        rows.push((
+            "Less: Consolidated Relief Allowance (CRA)",
+            naira(Some(-summary.consolidated_relief_allowance)),
+        ));
+    }
+    rows.push(("Chargeable Income", naira(summary.chargeable_income)));
+    rows.push(("Gross Tax (Graduated Bands)", naira(summary.tax_payable)));
     if summary.minimum_tax.unwrap_or(0.0) > 0.0 {
         rows.push(("Minimum Tax Floor", naira(summary.minimum_tax)));
     }
@@ -1246,6 +1323,12 @@ pub fn export_filing_csv_with_conn(
         ),
         ("status", summary.status.clone(), String::new()),
         (
+            "submitted_at",
+            summary.submitted_at.clone().unwrap_or_default(),
+            String::new(),
+        ),
+        ("legislation", summary.full_act_label(), String::new()),
+        (
             "income_year",
             summary.year_of_assessment.to_string(),
             String::new(),
@@ -1259,6 +1342,11 @@ pub fn export_filing_csv_with_conn(
             "total_gross_income",
             String::new(),
             fmt_opt_num(summary.total_income_ngn),
+        ),
+        (
+            "consolidated_relief_allowance",
+            String::new(),
+            format!("{:.2}", summary.consolidated_relief_allowance),
         ),
         (
             "chargeable_income",
@@ -1554,21 +1642,22 @@ pub fn export_filing_json_with_conn(
         "export": {
             "generator":   concat!("LagosFile v", env!("CARGO_PKG_VERSION")),
             "generatedAt": chrono::Utc::now().to_rfc3339(),
-            "legislation": "Nigeria Tax Act (NTA) 2025",
+            "legislation": summary.full_act_label(),
         },
         "taxpayer": {
             "fullName": summary.full_name,
             "tin":      summary.tin,
         },
         "filing": {
-            "incomeYear":       summary.year_of_assessment,
-            "yearOfAssessment": summary.year_of_assessment + 1,
-            "status":           summary.status,
-            "filingReference":  summary.filing_reference,
-            "confirmedAt":      summary.confirmed_at,
-            "submittedAt":      summary.submitted_at,
-            "taxConfigVersion": summary.tax_config_version,
-            "totalIncomeNgn":   summary.total_income_ngn,
+            "incomeYear":                  summary.year_of_assessment,
+            "yearOfAssessment":            summary.year_of_assessment + 1,
+            "status":                      summary.status,
+            "filingReference":             summary.filing_reference,
+            "confirmedAt":                 summary.confirmed_at,
+            "submittedAt":                 summary.submitted_at,
+            "taxConfigVersion":            summary.tax_config_version,
+            "totalIncomeNgn":              summary.total_income_ngn,
+            "consolidatedReliefAllowance": summary.consolidated_relief_allowance,
             "chargeableIncome": summary.chargeable_income,
             "taxPayable":       summary.tax_payable,
             "whtCredit":        summary.wht_credit,
@@ -1674,6 +1763,7 @@ pub async fn print_file(path: String, state: State<'_, AppState>) -> Result<(), 
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             std::process::Command::new("lpr")
+                .arg("--")
                 .arg(&target)
                 .spawn()
                 .map_err(|e| e.to_string())?;
@@ -2166,6 +2256,97 @@ mod tests {
             p2_dict.has(b"MediaBox"),
             "merged page must preserve inherited /MediaBox from attachment's /Pages node"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_pita_exports_include_cra_submitted_at_dynamic_act_and_strict_dct_guards() {
+        // 1. inspect_safe_dct_jpeg rejects 12-bit precision, lossless SOF3 (0xC3), and Adobe APP14 transform=0.
+        let sof_12bit: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x0C, 0x00, 0x10, 0x00, 0x10, 0x03,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
+        ];
+        assert!(inspect_safe_dct_jpeg(&sof_12bit).is_none());
+
+        let sof_lossless: Vec<u8> = vec![
+            0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
+        ];
+        assert!(inspect_safe_dct_jpeg(&sof_lossless).is_none());
+
+        let app14_rgb: Vec<u8> = vec![
+            0xFF, 0xD8,
+            0xFF, 0xEE, 0x00, 0x0E, b'A', b'd', b'o', b'b', b'e', 0, 100, 0, 0, 0, 0, 0, // transform=0
+            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+            0xFF, 0xD9,
+        ];
+        assert!(inspect_safe_dct_jpeg(&app14_rgb).is_none());
+
+        // 2. PITA (2025) Submitted return exports CRA, submitted_at, and dynamic PITA legislation in PDF/CSV/JSON.
+        let db = crate::db::AppDb::open_in_memory().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'PITA Export User', '55500011', '2026-01-01T00:00:00Z')",
+            params![&tp_id],
+        ).unwrap();
+        let filing = crate::commands::filing::create_draft_filing_with_conn(&conn, 2025).unwrap();
+        let fid = filing.id.to_string();
+        crate::commands::filing::upsert_income_entry_with_conn(
+            &conn,
+            &serde_json::json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "filingId": fid,
+                "incomeType": "employment",
+                "description": "Salary",
+                "grossAmountNgn": 5_000_000.0
+            }),
+        ).unwrap();
+        crate::commands::filing::confirm_filing_with_conn(&conn, &fid).unwrap();
+        conn.execute(
+            "UPDATE filing SET status = 'Submitted', submitted_at = '2026-03-15T10:00:00Z' WHERE id = ?1",
+            params![&fid],
+        ).unwrap();
+
+        let dir = std::env::temp_dir().join(format!("lagosfile-pita-exp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let csv_path = dir.join("pita.csv");
+        let json_path = dir.join("pita.json");
+        let pdf_path = dir.join("pita.pdf");
+
+        export_filing_csv_with_conn(&conn, &fid, csv_path.to_str().unwrap()).unwrap();
+        export_filing_json_with_conn(&conn, &fid, json_path.to_str().unwrap()).unwrap();
+        render_filing_pdf(
+            &dir,
+            load_summary(&conn, &fid).unwrap(),
+            vec![],
+            [0u8; 32],
+            pdf_path.to_str().unwrap(),
+            false,
+            None,
+        )
+        .unwrap();
+
+        let csv_text = std::fs::read_to_string(&csv_path).unwrap();
+        assert!(csv_text.contains("consolidated_relief_allowance,,1200000.00"), "CSV must include CRA: {csv_text}");
+        assert!(csv_text.contains("submitted_at,2026-03-15T10:00:00Z"), "CSV must include submitted_at");
+        assert!(csv_text.contains("Personal Income Tax Act (PITA)"), "CSV must use dynamic PITA legislation");
+
+        let json_val: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json_val["export"]["legislation"], "Personal Income Tax Act (PITA)");
+        assert_eq!(json_val["filing"]["consolidatedReliefAllowance"], 1_200_000.0);
+        assert_eq!(json_val["filing"]["submittedAt"], "2026-03-15T10:00:00Z");
+
+        let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
+        assert!(pdf_doc.get_pages().len() >= 2);
+        let p1_text = pdf_doc.extract_text(&[1]).unwrap_or_default();
+        let p2_text = pdf_doc.extract_text(&[2]).unwrap_or_default();
+        assert!(p1_text.contains("PITA") && !p1_text.contains("NTA 2025"), "PDF cover should say PITA: {p1_text}");
+        assert!(p2_text.contains("Consolidated Relief Allowance"), "PDF statement should include CRA: {p2_text}");
+        assert!(p2_text.contains("Submitted At"), "PDF statement should include Submitted At: {p2_text}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
