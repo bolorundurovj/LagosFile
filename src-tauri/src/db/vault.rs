@@ -157,12 +157,13 @@ fn is_transient_rename_err(e: &std::io::Error) -> bool {
 /// errors caused by antivirus/indexer scans momentarily holding a handle on newly written files.
 pub fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut last_err = None;
-    for attempt in 0..8 {
+    for attempt in 0..16 {
         match std::fs::rename(from, to) {
             Ok(()) => return Ok(()),
-            Err(e) if is_transient_rename_err(&e) && attempt < 7 => {
+            Err(e) if is_transient_rename_err(&e) && attempt < 15 => {
                 last_err = Some(e);
-                std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
+                let delay_ms = (25 * (attempt as u64 + 1)).min(200);
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
             Err(e) => return Err(e),
         }
