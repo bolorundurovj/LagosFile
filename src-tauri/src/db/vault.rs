@@ -146,14 +146,21 @@ pub fn decode_with_key(
     }
 }
 
-/// Renames `from` to `to`, retrying briefly on transient Windows `PermissionDenied`
+/// Returns true when an I/O error on rename is a transient Windows lock error
+/// (`ERROR_ACCESS_DENIED` = 5, `ERROR_SHARING_VIOLATION` = 32, `ERROR_LOCK_VIOLATION` = 33).
+fn is_transient_rename_err(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::PermissionDenied
+        || matches!(e.raw_os_error(), Some(5 | 32 | 33))
+}
+
+/// Renames `from` to `to`, retrying briefly on transient Windows permission/sharing/lock
 /// errors caused by antivirus/indexer scans momentarily holding a handle on newly written files.
 pub fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
     let mut last_err = None;
     for attempt in 0..8 {
         match std::fs::rename(from, to) {
             Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 7 => {
+            Err(e) if is_transient_rename_err(&e) && attempt < 7 => {
                 last_err = Some(e);
                 std::thread::sleep(std::time::Duration::from_millis(20 * (attempt as u64 + 1)));
             }
@@ -256,13 +263,44 @@ where
     }
 
     let claim_res = std::fs::hard_link(&tmp, &target);
-    let _ = std::fs::remove_file(&tmp);
-
-    if let Err(e) = claim_res {
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
+    match claim_res {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(&tmp);
             return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
         }
-        return Err(e.to_string());
+        Err(e)
+            if e.kind() == std::io::ErrorKind::Unsupported
+                || matches!(e.raw_os_error(), Some(1 | 50)) =>
+        {
+            // Fallback for filesystems without hard links (e.g. FAT32/exFAT):
+            // open exclusively with create_new(true) and write the encoded bytes.
+            let _ = std::fs::remove_file(&tmp);
+            let mut file = match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+            {
+                Ok(f) => f,
+                Err(oe) if oe.kind() == std::io::ErrorKind::AlreadyExists => {
+                    return Err(
+                        "A vault already exists. Please unlock with your PIN instead.".to_string(),
+                    );
+                }
+                Err(oe) => return Err(oe.to_string()),
+            };
+            if let Err(we) = file.write_all(&encoded).and_then(|_| file.sync_all()) {
+                drop(file);
+                let _ = std::fs::remove_file(&target);
+                return Err(we.to_string());
+            }
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
     }
 
     let _ = std::fs::remove_file(legacy_salt_path(dir));
@@ -295,7 +333,7 @@ pub fn write_to_path(
         f.write_all(&encoded)?;
         f.sync_all()?;
         drop(f);
-        std::fs::rename(&tmp, dest)?;
+        rename_with_retry(&tmp, dest)?;
         Ok(())
     })();
 

@@ -181,6 +181,7 @@ fn load_taxpayer(db: &AppDb) -> Option<Taxpayer> {
 #[tauri::command]
 pub async fn check_app_status() -> Result<AppStatus, String> {
     db::ensure_dirs().map_err(|e| e.to_string())?;
+    let _ = recover_interrupted_restore(&db::app_dir());
     let has_db = db::db_path().exists();
     let has_recovery = recovery_path().exists();
 
@@ -203,12 +204,136 @@ pub async fn is_biometric_available() -> Result<bool, String> {
     Ok(check_biometric_available_internal().await)
 }
 
-struct StageDirGuard(std::path::PathBuf);
+struct StageDirGuard {
+    path: std::path::PathBuf,
+    disarmed: bool,
+}
+
+impl StageDirGuard {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self {
+            path,
+            disarmed: false,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.disarmed = true;
+    }
+}
 
 impl Drop for StageDirGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        if !self.disarmed {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct RestoreJournal {
+    /// `"pre_commit"` -> vault not yet swapped; rollback restores `prev_docs_dir`.
+    /// `"committing"` -> `documents/` is already the new backup; roll-forward moves staged vault into place.
+    /// `"committed"` -> both `documents/` and vault are the new backup; cleanup leftovers only.
+    phase: String,
+    stage_dir: String,
+    prev_docs_dir: Option<String>,
+}
+
+fn restore_journal_path(dir: &Path) -> std::path::PathBuf {
+    dir.join(".restore_journal.json")
+}
+
+fn write_restore_journal(dir: &Path, journal: &RestoreJournal) -> Result<(), String> {
+    use std::io::Write;
+    let path = restore_journal_path(dir);
+    let tmp = dir.join(format!(".restore_journal.{}.tmp", uuid::Uuid::new_v4()));
+    let json = serde_json::to_vec(journal).map_err(|e| e.to_string())?;
+    let res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&json)?;
+        f.sync_all()?;
+        drop(f);
+        vault::rename_with_retry(&tmp, &path)?;
+        Ok(())
+    })();
+    if let Err(e) = res {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// Recovers deterministically from any process crash that interrupted a staged restore
+/// between moving `documents/` and replacing `lagosfile.db.enc`, ensuring the live database
+/// and `documents/` directory always belong to the exact same backup.
+pub fn recover_interrupted_restore(dir: &Path) -> Result<(), String> {
+    let journal_path = restore_journal_path(dir);
+    if !journal_path.exists() {
+        return Ok(());
+    }
+    let raw = std::fs::read(&journal_path).map_err(|e| e.to_string())?;
+    let journal: RestoreJournal = match serde_json::from_slice(&raw) {
+        Ok(j) => j,
+        Err(_) => {
+            let _ = std::fs::remove_file(&journal_path);
+            return Ok(());
+        }
+    };
+
+    let live_docs = dir.join("documents");
+    let stage_dir = dir.join(&journal.stage_dir);
+    let prev_docs = journal.prev_docs_dir.as_ref().map(|p| dir.join(p));
+
+    match journal.phase.as_str() {
+        "pre_commit" => {
+            // Live lagosfile.db.enc has NOT been replaced yet -> roll back documents/.
+            if let Some(ref prev) = prev_docs {
+                if prev.exists() {
+                    if live_docs.exists() {
+                        let _ = std::fs::remove_dir_all(&live_docs);
+                    }
+                    vault::rename_with_retry(prev, &live_docs).map_err(|e| e.to_string())?;
+                }
+            } else if live_docs.exists() && stage_dir.exists() && !stage_dir.join("documents").exists() {
+                // Fresh/empty original docs was replaced by staged docs before commit -> remove it.
+                let _ = std::fs::remove_dir_all(&live_docs);
+            }
+            if stage_dir.exists() {
+                let _ = std::fs::remove_dir_all(&stage_dir);
+            }
+        }
+        "committing" => {
+            // Live documents/ is ALREADY the new backup -> roll forward vault replacement.
+            let staged_vault = stage_dir.join("lagosfile.db.enc");
+            if staged_vault.exists() {
+                vault::rename_with_retry(&staged_vault, &vault::vault_path(dir))
+                    .map_err(|e| e.to_string())?;
+            }
+            if let Some(ref prev) = prev_docs {
+                if prev.exists() {
+                    let _ = std::fs::remove_dir_all(prev);
+                }
+            }
+            if stage_dir.exists() {
+                let _ = std::fs::remove_dir_all(&stage_dir);
+            }
+        }
+        _ => {
+            // "committed": both vault and documents are already in place -> clean up leftovers.
+            if let Some(ref prev) = prev_docs {
+                if prev.exists() {
+                    let _ = std::fs::remove_dir_all(prev);
+                }
+            }
+            if stage_dir.exists() {
+                let _ = std::fs::remove_dir_all(&stage_dir);
+            }
+        }
+    }
+
+    let _ = std::fs::remove_file(&journal_path);
+    Ok(())
 }
 
 /// Helper that publishes unlocked session state in canonical lock order (`db -> key -> salt -> recovery_verified`).
@@ -279,7 +404,8 @@ pub async fn enable_biometric(
 }
 
 #[tauri::command]
-pub async fn disable_biometric() -> Result<(), String> {
+pub async fn disable_biometric(state: State<'_, AppState>) -> Result<(), String> {
+    let _io = state.vault_io_lock.lock().await;
     tokio::task::spawn_blocking(|| {
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
         let _ = entry.delete_password();
@@ -300,6 +426,7 @@ where
     P: FnMut(usize, usize, &str),
     B: FnMut(usize, &str) -> Result<(), String>,
 {
+    recover_interrupted_restore(dir)?;
     let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
     let legacy_salt_file = vault::legacy_salt_path(dir);
     let decoded =
@@ -398,6 +525,7 @@ pub async fn unlock_with_biometric(
 
 fn setup_pin_sync(dir: &Path, pin: &str) -> Result<(AppDb, [u8; 32], [u8; 16]), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    recover_interrupted_restore(dir)?;
     std::fs::create_dir_all(dir.join("documents")).map_err(|e| e.to_string())?;
 
     if vault::vault_path(dir).exists() {
@@ -448,6 +576,7 @@ where
     P: FnMut(usize, usize, &str),
     B: FnMut(usize, &str) -> Result<(), String>,
 {
+    recover_interrupted_restore(dir)?;
     let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
     let legacy_salt_file = vault::legacy_salt_path(dir);
     let decoded = vault::decode_with_pin(&raw, pin, None, Some(&legacy_salt_file))?;
@@ -535,9 +664,8 @@ where
     F: FnOnce(&Path) -> Result<(), String>,
 {
     let snapshot = snapshot_vault_state(state)?;
-    if let Some((bytes, key, salt)) = snapshot {
-        vault::write_atomic_with_hook(dir, &bytes, &key, &salt, before_rename)?;
-    }
+    let (bytes, key, salt) = snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
+    vault::write_atomic_with_hook(dir, &bytes, &key, &salt, before_rename)?;
     Ok(())
 }
 
@@ -557,14 +685,13 @@ where
     // restores, and lock_db are strictly serialized and never overwrite newer state.
     let _io = state.vault_io_lock.lock().await;
     let snapshot = snapshot_vault_state(state)?;
+    let (bytes, key, salt) = snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
 
-    if let Some((bytes, key, salt)) = snapshot {
-        tokio::task::spawn_blocking(move || {
-            vault::write_atomic_with_hook(&dir, &bytes, &key, &salt, before_rename)
-        })
-        .await
-        .map_err(|e| e.to_string())??;
-    }
+    tokio::task::spawn_blocking(move || {
+        vault::write_atomic_with_hook(&dir, &bytes, &key, &salt, before_rename)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(())
 }
 
@@ -579,25 +706,61 @@ pub async fn persist_db(state: &AppState) -> Result<(), String> {
     persist_db_in_dir_async(db::app_dir(), state).await
 }
 
-pub async fn lock_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+pub async fn lock_db_in_dir_with_hook<F>(
+    dir: &Path,
+    state: &AppState,
+    before_rename: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String> + Send + 'static,
+{
     let _io = state.vault_io_lock.lock().await;
-    let snapshot = snapshot_vault_state(state)?;
-    if let Some((bytes, key, salt)) = snapshot {
-        let dir_buf = dir.to_path_buf();
-        tokio::task::spawn_blocking(move || vault::write_atomic(&dir_buf, &bytes, &key, &salt))
-            .await
-            .map_err(|e| e.to_string())??;
+
+    // Atomically take unlocked state BEFORE dropping mutexes and awaiting disk I/O so no
+    // concurrent mutation can commit into memory while the final lock snapshot is writing.
+    let taken = {
+        let mut db_guard = state.db.lock().unwrap();
+        let mut key_guard = state.key.lock().unwrap();
+        let mut salt_guard = state.salt.lock().unwrap();
+        let mut rv_guard = state.recovery_verified.lock().unwrap();
+        let prev_rv = *rv_guard;
+        *rv_guard = false;
+        match (db_guard.take(), key_guard.take(), salt_guard.take()) {
+            (Some(db), Some(key), Some(salt)) => Some((db, key, salt, prev_rv)),
+            (db_opt, _, _) => {
+                drop(db_opt);
+                None
+            }
+        }
+    };
+
+    if let Some((db, key, salt, prev_rv)) = taken {
+        let bytes_res = db.serialize().map_err(|e| e.to_string());
+        let write_res = match bytes_res {
+            Ok(bytes) => {
+                let dir_buf = dir.to_path_buf();
+                tokio::task::spawn_blocking(move || {
+                    vault::write_atomic_with_hook(&dir_buf, &bytes, &key, &salt, before_rename)
+                })
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r)
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(e) = write_res {
+            // Restore in-memory session if final flush fails so unsaved data isn't lost.
+            publish_unlocked_state(state, db, key, salt, prev_rv);
+            return Err(e);
+        }
     }
+
     crate::cleanup_session_artifacts(dir, state);
-    let mut db_guard = state.db.lock().unwrap();
-    let mut key_guard = state.key.lock().unwrap();
-    let mut salt_guard = state.salt.lock().unwrap();
-    let mut rv_guard = state.recovery_verified.lock().unwrap();
-    *db_guard = None;
-    *key_guard = None;
-    *salt_guard = None;
-    *rv_guard = false;
     Ok(())
+}
+
+pub async fn lock_db_in_dir(dir: &Path, state: &AppState) -> Result<(), String> {
+    lock_db_in_dir_with_hook(dir, state, |_| Ok(())).await
 }
 
 #[tauri::command]
@@ -977,20 +1140,28 @@ pub async fn backup_db(dest_path: String, state: State<'_, AppState>) -> Result<
 }
 
 /// Core staged restore for Settings flow:
-/// Decodes & validates the backup, unpacks & migrates documents inside a staging directory first,
-/// and only swaps live `documents/` and `lagosfile.db.enc` once everything is validated and synced.
-/// On any error, rolls back `documents/` so the original vault and attachments remain intact.
-fn restore_db_sync<F>(
+/// 1. Recovers any previously interrupted restore.
+/// 2. Decodes & validates the backup, stages & verifies every referenced attachment inside
+///    a staging directory (preserving matching local receipts for database-only backups without
+///    mutating live files), and writes + fsyncs the staged vault.
+/// 3. Executes a 2-phase journaled switch (`pre_commit` -> move docs -> `committing` -> move vault
+///    -> `committed` -> cleanup) so a crash at any rename boundary recovers deterministically on
+///    next startup with matching DB and documents.
+fn restore_db_sync_with_hooks<F, P>(
     dir: &Path,
     src_path: &Path,
     backup_pin: &str,
     current_key: &[u8; 32],
     current_salt: &[u8; 16],
     before_doc: F,
+    mut on_switch_phase: P,
 ) -> Result<(AppDb, Option<Taxpayer>), String>
 where
     F: FnMut(usize, &str) -> Result<(), String>,
+    P: FnMut(&str) -> Result<(), String>,
 {
+    recover_interrupted_restore(dir)?;
+
     let raw = std::fs::read(src_path).map_err(|e| e.to_string())?;
     let archive = doc_store::decode_backup_archive(&raw)?;
     let decoded = vault::decode_with_pin(archive.vault_bytes, backup_pin, Some(current_salt), None)
@@ -1003,53 +1174,135 @@ where
         .load_from_bytes(&decoded.plaintext)
         .map_err(|e| format!("Backup database is corrupt: {}", e))?;
 
-    // Stage and validate all documents before touching live vault or live documents/.
-    let stage_root = dir.join(format!(".restore_stage_{}", uuid::Uuid::new_v4()));
-    let _stage_guard = StageDirGuard(stage_root.clone());
-    let staged_docs = stage_root.join("documents");
-    std::fs::create_dir_all(&staged_docs).map_err(|e| e.to_string())?;
-    doc_store::unpack_backup_documents_with_hook(&stage_root, &archive.documents, before_doc)?;
-
-    // Encrypt any plaintext documents inside the staged backup before serializing new_db.
-    doc_store::migrate_plaintext_documents_for_db_with_hook(
-        &stage_root,
-        &new_db,
-        None,
-        |_, _, _| {},
-        |_, _| Ok(()),
-    )?;
+    // Stage and verify all documents (including decryption checks & DB-only local preservation)
+    // before touching live vault or live documents/.
+    let stage_name = format!(".restore_stage_{}", uuid::Uuid::new_v4());
+    let stage_root = dir.join(&stage_name);
+    let mut stage_guard = StageDirGuard::new(stage_root.clone());
+    doc_store::prepare_staged_restore_documents(dir, &stage_root, &new_db, &archive, before_doc)?;
 
     let reserialized = new_db.serialize().map_err(|e| e.to_string())?;
+    // Write and fsync the new encrypted vault inside stage_root before starting the switch.
+    vault::write_atomic(&stage_root, &reserialized, current_key, current_salt)?;
 
-    // Swap live documents/ with staged documents/, rolling back if vault write fails.
     let live_docs = dir.join("documents");
-    let prev_docs = dir.join(format!(".documents_prev_{}", uuid::Uuid::new_v4()));
+    let staged_docs = stage_root.join("documents");
+    let staged_vault = stage_root.join("lagosfile.db.enc");
     let had_live_docs = live_docs.exists();
-    if had_live_docs {
-        std::fs::rename(&live_docs, &prev_docs).map_err(|e| e.to_string())?;
-    }
+    let prev_docs_name = if had_live_docs {
+        Some(format!(".documents_prev_{}", uuid::Uuid::new_v4()))
+    } else {
+        None
+    };
 
-    let swap_res = (|| -> Result<(), String> {
-        std::fs::rename(&staged_docs, &live_docs).map_err(|e| e.to_string())?;
-        vault::write_atomic(dir, &reserialized, current_key, current_salt)?;
+    // Disarm automatic stage cleanup once the durable journal takes ownership of recovery.
+    stage_guard.disarm();
+
+    let mut journal = RestoreJournal {
+        phase: "pre_commit".to_string(),
+        stage_dir: stage_name,
+        prev_docs_dir: prev_docs_name.clone(),
+    };
+    write_restore_journal(dir, &journal)?;
+
+    let switch_res = (|| -> Result<(), String> {
+        on_switch_phase("after_pre_commit_journal")?;
+
+        if let Some(ref prev_name) = prev_docs_name {
+            vault::rename_with_retry(&live_docs, &dir.join(prev_name))
+                .map_err(|e| e.to_string())?;
+        }
+        on_switch_phase("after_move_old_docs")?;
+
+        vault::rename_with_retry(&staged_docs, &live_docs).map_err(|e| e.to_string())?;
+        on_switch_phase("after_move_new_docs")?;
+
+        journal.phase = "committing".to_string();
+        write_restore_journal(dir, &journal)?;
+        on_switch_phase("after_committing_journal")?;
+
+        vault::rename_with_retry(&staged_vault, &vault::vault_path(dir))
+            .map_err(|e| e.to_string())?;
+        on_switch_phase("after_replace_vault")?;
+
+        journal.phase = "committed".to_string();
+        write_restore_journal(dir, &journal)?;
         Ok(())
     })();
 
-    if let Err(e) = swap_res {
-        let _ = std::fs::remove_dir_all(&live_docs);
-        if had_live_docs && prev_docs.exists() {
-            let _ = std::fs::rename(&prev_docs, &live_docs);
+    if let Err(e) = switch_res {
+        if e.starts_with("SIMULATED_CRASH:") {
+            // Leave on-disk state exactly as it would be after an abrupt process exit so tests
+            // can verify crash recovery on next startup.
+            return Err(e);
         }
+        let _ = recover_interrupted_restore(dir);
         return Err(e);
     }
 
-    // Prior vault's documents are cleanly swept after the new vault is durably in place.
-    if had_live_docs {
-        let _ = std::fs::remove_dir_all(&prev_docs);
-    }
+    // Final cleanup via recover_interrupted_restore ("committed" phase).
+    let _ = recover_interrupted_restore(dir);
 
     let taxpayer = load_taxpayer(&new_db);
     Ok((new_db, taxpayer))
+}
+
+fn restore_db_sync<F>(
+    dir: &Path,
+    src_path: &Path,
+    backup_pin: &str,
+    current_key: &[u8; 32],
+    current_salt: &[u8; 16],
+    before_doc: F,
+) -> Result<(AppDb, Option<Taxpayer>), String>
+where
+    F: FnMut(usize, &str) -> Result<(), String>,
+{
+    restore_db_sync_with_hooks(
+        dir,
+        src_path,
+        backup_pin,
+        current_key,
+        current_salt,
+        before_doc,
+        |_| Ok(()),
+    )
+}
+
+pub fn restore_db_in_dir_with_phase_hook<P>(
+    dir: &Path,
+    src_path: &Path,
+    backup_pin: &str,
+    state: &AppState,
+    on_switch_phase: P,
+) -> Result<Option<Taxpayer>, String>
+where
+    P: FnMut(&str) -> Result<(), String>,
+{
+    let (current_key, current_salt) = {
+        let key_guard = state.key.lock().unwrap();
+        let salt_guard = state.salt.lock().unwrap();
+        let key = *key_guard.as_ref().ok_or("Database not unlocked")?;
+        let salt = *salt_guard.as_ref().ok_or("Database not unlocked")?;
+        (key, salt)
+    };
+    let (new_db, taxpayer) = restore_db_sync_with_hooks(
+        dir,
+        src_path,
+        backup_pin,
+        &current_key,
+        &current_salt,
+        |_, _| Ok(()),
+        on_switch_phase,
+    )?;
+
+    {
+        let mut db_guard = state.db.lock().unwrap();
+        let mut rv_guard = state.recovery_verified.lock().unwrap();
+        *db_guard = Some(new_db);
+        *rv_guard = false;
+    }
+    Ok(taxpayer)
 }
 
 pub fn restore_db_in_dir_with_hook<F>(
@@ -1145,6 +1398,7 @@ where
     F: FnMut(usize, &str) -> Result<(), String>,
 {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    recover_interrupted_restore(dir)?;
 
     if vault::vault_path(dir).exists() {
         return Err("A vault already exists. Please unlock with your PIN instead.".to_string());
@@ -1165,34 +1419,25 @@ where
     db.load_from_bytes(&decoded.plaintext)
         .map_err(|e| format!("Backup database is corrupt: {}", e))?;
 
-    // Stage all documents and run plaintext migration BEFORE creating lagosfile.db.enc,
-    // so a mid-unpack failure never leaves a vault file blocking retry.
+    // Stage and validate all documents BEFORE creating lagosfile.db.enc,
+    // so a mid-unpack or attachment verification failure never leaves a vault file blocking retry.
     let stage_root = dir.join(format!(".restore_stage_{}", uuid::Uuid::new_v4()));
-    let _stage_guard = StageDirGuard(stage_root.clone());
-    let staged_docs = stage_root.join("documents");
-    std::fs::create_dir_all(&staged_docs).map_err(|e| e.to_string())?;
-    doc_store::unpack_backup_documents_with_hook(&stage_root, &archive.documents, before_doc)?;
-
-    doc_store::migrate_plaintext_documents_for_db_with_hook(
-        &stage_root,
-        &db,
-        None,
-        |_, _, _| {},
-        |_, _| Ok(()),
-    )?;
+    let _stage_guard = StageDirGuard::new(stage_root.clone());
+    doc_store::prepare_staged_restore_documents(dir, &stage_root, &db, &archive, before_doc)?;
 
     let reserialized = db.serialize().map_err(|e| e.to_string())?;
 
-    // Claim lagosfile.db.enc exclusively, then move staged documents into place.
-    vault::write_new_exclusive(dir, &reserialized, &decoded.key, &decoded.salt)?;
-
+    // Move staged documents into place before exclusively claiming lagosfile.db.enc.
+    let staged_docs = stage_root.join("documents");
     let live_docs = dir.join("documents");
     if live_docs.exists() {
         let _ = std::fs::remove_dir_all(&live_docs);
     }
-    if let Err(e) = std::fs::rename(&staged_docs, &live_docs) {
-        let _ = std::fs::remove_file(vault::vault_path(dir));
-        return Err(e.to_string());
+    vault::rename_with_retry(&staged_docs, &live_docs).map_err(|e| e.to_string())?;
+
+    if let Err(e) = vault::write_new_exclusive(dir, &reserialized, &decoded.key, &decoded.salt) {
+        let _ = std::fs::remove_dir_all(&live_docs);
+        return Err(e);
     }
 
     let _ = std::fs::remove_file(recovery_path_in_dir(dir));

@@ -143,6 +143,7 @@ pub async fn attach_document(
     let (safe_display_name, rel_path, dest) =
         validate_and_build_doc_dest(&dir, &parent_entry_id, &file_name)?;
     let source_path = file_path.clone();
+    let dest_for_worker = dest.clone();
     let actual_size = tokio::task::spawn_blocking(move || -> Result<i64, String> {
         let src = Path::new(&source_path);
         if !src.exists() {
@@ -154,7 +155,7 @@ pub async fn attach_document(
         }
         let plaintext = std::fs::read(src).map_err(|e| e.to_string())?;
         let size = plaintext.len() as i64;
-        doc_store::write_encrypted_doc_atomic(&dest, &plaintext, &doc_key)?;
+        doc_store::write_encrypted_doc_atomic(&dest_for_worker, &plaintext, &doc_key)?;
         Ok(size)
     })
     .await
@@ -162,10 +163,20 @@ pub async fn attach_document(
 
     let id = Uuid::new_v4();
     let now = Utc::now();
-    {
+    let insert_res: Result<(), String> = (|| {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
+        // Re-verify Draft status and matching document key after spawn_blocking to close TOCTOU window.
+        let current_key = doc_store::get_doc_key(db)?;
+        if current_key != Some(doc_key) {
+            return Err("Vault changed while encrypting attachment; please retry.".to_string());
+        }
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        crate::commands::filing::require_draft_for_parent_entry(
+            &conn,
+            &parent_entry_id,
+            &parent_entry_type,
+        )?;
         conn.execute(
             "INSERT INTO document
              (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
@@ -182,8 +193,26 @@ pub async fn attach_document(
             ],
         )
         .map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+
+    if let Err(e) = insert_res {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
     }
-    persist_db(&state).await?;
+
+    if let Err(e) = persist_db(&state).await {
+        // Best-effort rollback of row & file if persist fails (e.g. concurrent lock).
+        if let Ok(guard) = state.db.lock() {
+            if let Some(db) = guard.as_ref() {
+                if let Ok(conn) = db.conn.lock() {
+                    let _ = conn.execute("DELETE FROM document WHERE id=?1", params![id.to_string()]);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
 
     Ok(serde_json::json!({
         "id": id.to_string(),

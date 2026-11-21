@@ -461,65 +461,67 @@ pub async fn record_payment(
     get_filing(id, state).await
 }
 
+fn delete_filing_db_only(id: &str, state: &AppState) -> Result<Vec<String>, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    let status: String = tx
+        .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| format!("Filing '{}' not found.", id))?;
+    if status != "Draft" {
+        return Err(format!(
+            "Only Draft filings can be deleted. This filing has status '{}'.",
+            status
+        ));
+    }
+
+    let paths: Vec<String> = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT file_path FROM document WHERE parent_entry_id IN (
+                     SELECT id FROM income_entry WHERE filing_id=?1
+                     UNION ALL
+                     SELECT id FROM capital_allowance WHERE filing_id=?1
+                     UNION ALL
+                     SELECT id FROM relief_entry WHERE filing_id=?1
+                 )",
+            )
+            .map_err(|e| e.to_string())?;
+        let collected = stmt
+            .query_map(params![id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        collected
+    };
+
+    tx.execute(
+        "DELETE FROM document WHERE parent_entry_id IN (
+             SELECT id FROM income_entry WHERE filing_id=?1
+             UNION ALL
+             SELECT id FROM capital_allowance WHERE filing_id=?1
+             UNION ALL
+             SELECT id FROM relief_entry WHERE filing_id=?1
+         )",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM filing WHERE id=?1", params![id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(paths)
+}
+
 pub fn delete_filing_in_dir(
     dir: &std::path::Path,
     id: &str,
     state: &AppState,
 ) -> Result<(), String> {
-    let candidate_paths: Vec<String> = {
-        let guard = state.db.lock().map_err(|e| e.to_string())?;
-        let db = guard.as_ref().ok_or("Database not unlocked")?;
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
-
-        let status: String = tx
-            .query_row("SELECT status FROM filing WHERE id=?1", params![id], |r| {
-                r.get(0)
-            })
-            .map_err(|_| format!("Filing '{}' not found.", id))?;
-        if status != "Draft" {
-            return Err(format!(
-                "Only Draft filings can be deleted. This filing has status '{}'.",
-                status
-            ));
-        }
-
-        let paths: Vec<String> = {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT file_path FROM document WHERE parent_entry_id IN (
-                         SELECT id FROM income_entry WHERE filing_id=?1
-                         UNION ALL
-                         SELECT id FROM capital_allowance WHERE filing_id=?1
-                         UNION ALL
-                         SELECT id FROM relief_entry WHERE filing_id=?1
-                     )",
-                )
-                .map_err(|e| e.to_string())?;
-            let collected = stmt
-                .query_map(params![id], |r| r.get::<_, String>(0))
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            collected
-        };
-
-        tx.execute(
-            "DELETE FROM document WHERE parent_entry_id IN (
-                 SELECT id FROM income_entry WHERE filing_id=?1
-                 UNION ALL
-                 SELECT id FROM capital_allowance WHERE filing_id=?1
-                 UNION ALL
-                 SELECT id FROM relief_entry WHERE filing_id=?1
-             )",
-            params![id],
-        )
-        .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM filing WHERE id=?1", params![id])
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        paths
-    };
+    let candidate_paths = delete_filing_db_only(id, state)?;
     crate::commands::auth::persist_db_in_dir(dir, state)?;
 
     if !candidate_paths.is_empty() {
@@ -534,7 +536,18 @@ pub fn delete_filing_in_dir(
 
 #[tauri::command]
 pub async fn delete_filing(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    delete_filing_in_dir(&crate::db::app_dir(), &id, &state)
+    let dir = crate::db::app_dir();
+    let candidate_paths = delete_filing_db_only(&id, &state)?;
+    persist_db(&state).await?;
+
+    if !candidate_paths.is_empty() {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        if let Some(db) = guard.as_ref() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::doc_store::remove_unreferenced_doc_files(&dir, &conn, &candidate_paths);
+        }
+    }
+    Ok(())
 }
 
 /// Copies a filing's entries into a new draft for the following year: income,

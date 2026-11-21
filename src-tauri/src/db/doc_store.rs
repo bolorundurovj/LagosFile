@@ -141,6 +141,7 @@ pub fn sanitize_file_name(file_name: &str) -> String {
 /// Resolves a `document.file_path` value (either relative `documents/...` or legacy absolute path
 /// from the same or another OS) against `app_dir`. If an absolute path no longer exists
 /// (e.g. restored on another OS/machine), falls back to the `documents/...` suffix inside `app_dir`.
+/// Relative paths containing `..` traversal components are rejected to prevent escaping `app_dir`.
 pub fn resolve_doc_path(app_dir: &Path, stored_path: &str) -> PathBuf {
     let p = Path::new(stored_path);
     if p.is_absolute() && p.exists() {
@@ -148,25 +149,37 @@ pub fn resolve_doc_path(app_dir: &Path, stored_path: &str) -> PathBuf {
     }
     if looks_like_any_os_absolute(stored_path) || p.is_absolute() {
         if let Some(rel) = extract_documents_rel(stored_path) {
-            return app_dir.join(rel);
+            if let Ok(safe_rel) = validate_safe_rel_doc_path(&rel) {
+                return app_dir.join(safe_rel);
+            }
         }
         return p.to_path_buf();
     }
     if let Some(rel) = extract_documents_rel(stored_path) {
-        return app_dir.join(rel);
+        if let Ok(safe_rel) = validate_safe_rel_doc_path(&rel) {
+            return app_dir.join(safe_rel);
+        }
     }
-    app_dir.join(p)
+    // Never follow parent-dir traversal on relative paths.
+    let mut safe = PathBuf::new();
+    for comp in p.components() {
+        if let Component::Normal(seg) = comp {
+            safe.push(seg);
+        }
+    }
+    app_dir.join(safe)
 }
 
 /// Extracts a portable forward-slash `documents/...` relative path from either an absolute
-/// or relative stored path.
+/// or relative stored path, anchored at the last `/documents/` segment so ancestor folders
+/// named `documents` do not mis-slice the path.
 pub fn extract_documents_rel(stored_path: &str) -> Option<String> {
     let normalized = stored_path.replace('\\', "/");
+    if let Some(idx) = normalized.rfind("/documents/") {
+        return Some(normalized[idx + 1..].to_string());
+    }
     if normalized.starts_with("documents/") {
         return Some(normalized);
-    }
-    if let Some(idx) = normalized.find("/documents/") {
-        return Some(normalized[idx + 1..].to_string());
     }
     None
 }
@@ -385,32 +398,55 @@ where
 }
 
 /// Removes candidate document files on disk ONLY if no remaining `document` row
-/// still references the same `file_path` (or resolves to the same path), and
-/// prunes empty entry subdirectories under `<dir>/documents/`.
+/// resolves to the same file on disk AND the target resides strictly inside `<dir>/documents/`,
+/// then prunes empty entry subdirectories under `<dir>/documents/`.
 pub fn remove_unreferenced_doc_files(
     dir: &Path,
     conn: &rusqlite::Connection,
     candidate_paths: &[String],
 ) {
     let docs_root = dir.join("documents");
-    let mut seen = std::collections::HashSet::new();
+    let canon_docs_root = std::fs::canonicalize(&docs_root).ok();
 
+    let mut referenced = std::collections::HashSet::<PathBuf>::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT file_path FROM document") {
+        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for path_str in rows.filter_map(|r| r.ok()) {
+                let resolved = resolve_doc_path(dir, &path_str);
+                if let Ok(canon) = std::fs::canonicalize(&resolved) {
+                    referenced.insert(canon);
+                }
+                referenced.insert(resolved);
+            }
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
     for stored in candidate_paths {
         if stored.is_empty() || !seen.insert(stored.clone()) {
             continue;
         }
-        let ref_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(1) FROM document WHERE file_path = ?1",
-                params![stored],
-                |r| r.get(0),
-            )
-            .unwrap_or(1);
-        if ref_count > 0 {
+        let target = resolve_doc_path(dir, stored);
+        let canon_target = std::fs::canonicalize(&target).ok();
+
+        let is_referenced = referenced.contains(&target)
+            || canon_target
+                .as_ref()
+                .is_some_and(|c| referenced.contains(c));
+        if is_referenced {
             continue;
         }
-        let target = resolve_doc_path(dir, stored);
-        if target.exists() {
+
+        // Only ever delete files strictly contained within <dir>/documents/.
+        let contained = match (&canon_docs_root, &canon_target) {
+            (Some(root), Some(t)) => t.starts_with(root) && t != root,
+            _ => target.starts_with(&docs_root) && target != docs_root,
+        };
+        if !contained {
+            continue;
+        }
+
+        if target.is_file() {
             let _ = std::fs::remove_file(&target);
         }
         // Prune empty entry folder directly under <dir>/documents/
@@ -506,7 +542,9 @@ pub fn collect_backup_doc_refs(db: &AppDb) -> Result<BackupDocRefs, String> {
     Ok((Some(doc_key), rows))
 }
 
-/// Reads and encrypts referenced backup documents from disk.
+/// Reads, validates, and encrypts referenced backup documents from disk.
+/// Fails with an actionable error if any referenced attachment is missing or cannot decrypt
+/// under `doc_key`, rather than silently producing an incomplete or damaged backup.
 pub fn read_backup_documents_from_refs(
     dir: &Path,
     doc_key: Option<[u8; 32]>,
@@ -518,18 +556,23 @@ pub fn read_backup_documents_from_refs(
     let doc_key = doc_key.ok_or_else(|| "Missing document encryption key".to_string())?;
     let mut seen = std::collections::HashSet::new();
     let mut docs = Vec::new();
+    let mut missing = Vec::new();
+    let mut damaged = Vec::new();
 
     for (parent_entry_id, stored_path) in rows {
         let full = resolve_doc_path(dir, stored_path);
         if !full.is_file() {
+            missing.push(stored_path.clone());
             continue;
         }
         let rel = extract_documents_rel(stored_path).unwrap_or_else(|| {
             let fname = full
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("attachment");
-            format!("documents/{}/{}", parent_entry_id, fname)
+                .map(sanitize_file_name)
+                .unwrap_or_else(|| "attachment".to_string());
+            let safe_parent = sanitize_file_name(parent_entry_id);
+            format!("documents/{}/{}", safe_parent, fname)
         });
         validate_safe_rel_doc_path(&rel)?;
         if !seen.insert(rel.clone()) {
@@ -537,11 +580,29 @@ pub fn read_backup_documents_from_refs(
         }
         let raw = std::fs::read(&full).map_err(|e| e.to_string())?;
         let bytes = if is_encrypted_doc(&raw) {
+            if decrypt_doc(&raw, &doc_key).is_err() {
+                damaged.push(stored_path.clone());
+                continue;
+            }
             raw
         } else {
             encrypt_doc(&raw, &doc_key)?
         };
         docs.push((rel, bytes));
+    }
+
+    if !missing.is_empty() || !damaged.is_empty() {
+        let mut parts = Vec::new();
+        if !missing.is_empty() {
+            parts.push(format!("missing: {}", missing.join(", ")));
+        }
+        if !damaged.is_empty() {
+            parts.push(format!("unreadable/corrupt: {}", damaged.join(", ")));
+        }
+        return Err(format!(
+            "Backup aborted — referenced attachment(s) could not be verified ({}).",
+            parts.join("; ")
+        ));
     }
 
     Ok(docs)
@@ -579,6 +640,7 @@ pub fn encode_backup_archive(vault_bytes: &[u8], docs: &[(String, Vec<u8>)]) -> 
 pub struct DecodedBackupArchive<'a> {
     pub vault_bytes: &'a [u8],
     pub documents: Vec<(String, &'a [u8])>,
+    pub is_archive: bool,
 }
 
 /// Parses either an `LGFA` backup archive (vault + documents) or a standalone vault file (`LGFV` or legacy).
@@ -587,6 +649,7 @@ pub fn decode_backup_archive(raw: &[u8]) -> Result<DecodedBackupArchive<'_>, Str
         return Ok(DecodedBackupArchive {
             vault_bytes: raw,
             documents: vec![],
+            is_archive: false,
         });
     }
 
@@ -650,6 +713,7 @@ pub fn decode_backup_archive(raw: &[u8]) -> Result<DecodedBackupArchive<'_>, Str
     Ok(DecodedBackupArchive {
         vault_bytes,
         documents,
+        is_archive: true,
     })
 }
 
@@ -676,7 +740,7 @@ where
             f.write_all(data)?;
             f.sync_all()?;
             drop(f);
-            std::fs::rename(&tmp, &dest)?;
+            crate::db::vault::rename_with_retry(&tmp, &dest)?;
             Ok(())
         })();
         if let Err(e) = res {
@@ -684,6 +748,164 @@ where
             return Err(e.to_string());
         }
     }
+    Ok(())
+}
+
+/// Stages and strictly validates all documents referenced by `db` inside `stage_root`
+/// BEFORE any live vault or `documents/` directory is touched:
+/// - For `LGFA` archives, unpacks all bundled documents into `stage_root`.
+/// - For standalone (database-only) backups, preserves matching existing local receipts from
+///   `live_dir` by copying them into `stage_root` without mutating `live_dir`.
+/// - Verifies that EVERY `document` row has a file inside `stage_root` that either decrypts
+///   cleanly with `db`'s `document_key` or is plaintext (which is encrypted inside `stage_root`
+///   only — never touching live absolute paths outside `stage_root`).
+/// - Normalizes `document.file_path` in `db` to portable relative paths BEFORE sweeping any
+///   orphan files inside `stage_root/documents`.
+pub fn prepare_staged_restore_documents<F>(
+    live_dir: &Path,
+    stage_root: &Path,
+    db: &AppDb,
+    archive: &DecodedBackupArchive<'_>,
+    before_doc: F,
+) -> Result<(), String>
+where
+    F: FnMut(usize, &str) -> Result<(), String>,
+{
+    let staged_docs = stage_root.join("documents");
+    std::fs::create_dir_all(&staged_docs).map_err(|e| e.to_string())?;
+
+    if archive.is_archive {
+        unpack_backup_documents_with_hook(stage_root, &archive.documents, before_doc)?;
+    }
+
+    let rows: Vec<(String, String, String, String)> = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, parent_entry_id, file_path, file_name
+                 FROM document ORDER BY uploaded_at ASC, id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        mapped
+    };
+
+    if !rows.is_empty() {
+        let mut doc_key = get_doc_key(db)?;
+        let mut missing = Vec::new();
+        let mut damaged = Vec::new();
+        let mut path_updates: Vec<(String, String)> = Vec::new();
+
+        for (id, parent_entry_id, stored_path, file_name) in rows {
+            let rel = extract_documents_rel(&stored_path).unwrap_or_else(|| {
+                let fallback_name = Path::new(&stored_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&file_name);
+                let safe_name = sanitize_file_name(fallback_name);
+                let safe_parent = sanitize_file_name(&parent_entry_id);
+                format!("documents/{}/{}", safe_parent, safe_name)
+            });
+            let safe_rel = validate_safe_rel_doc_path(&rel)?;
+            let staged_path = stage_root.join(&safe_rel);
+
+            // For database-only backups, preserve matching local receipts from live_dir without
+            // mutating live_dir.
+            if !archive.is_archive && !staged_path.is_file() {
+                let candidate_live = resolve_doc_path(live_dir, &stored_path);
+                let source = if candidate_live.is_file() {
+                    Some(candidate_live)
+                } else {
+                    let fallback_live = live_dir.join(&safe_rel);
+                    if fallback_live.is_file() {
+                        Some(fallback_live)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(src) = source {
+                    if let Some(parent) = staged_path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    std::fs::copy(&src, &staged_path).map_err(|e| e.to_string())?;
+                }
+            }
+
+            if !staged_path.is_file() {
+                missing.push(if file_name.is_empty() {
+                    stored_path.clone()
+                } else {
+                    format!("{} ({})", file_name, rel)
+                });
+                continue;
+            }
+
+            let raw = std::fs::read(&staged_path).map_err(|e| e.to_string())?;
+            if is_encrypted_doc(&raw) {
+                match doc_key {
+                    Some(key) if decrypt_doc(&raw, &key).is_ok() => {}
+                    _ => {
+                        damaged.push(if file_name.is_empty() {
+                            rel.clone()
+                        } else {
+                            format!("{} ({})", file_name, rel)
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                let key = match doc_key {
+                    Some(k) => k,
+                    None => {
+                        let (k, _) = get_or_create_doc_key(db)?;
+                        doc_key = Some(k);
+                        k
+                    }
+                };
+                write_encrypted_doc_atomic(&staged_path, &raw, &key)?;
+            }
+
+            if rel != stored_path {
+                path_updates.push((id, rel));
+            }
+        }
+
+        if !missing.is_empty() || !damaged.is_empty() {
+            let mut details = Vec::new();
+            if !missing.is_empty() {
+                details.push(format!("missing: {}", missing.join(", ")));
+            }
+            if !damaged.is_empty() {
+                details.push(format!("unreadable/corrupt: {}", damaged.join(", ")));
+            }
+            return Err(format!(
+                "Restore aborted — referenced attachment(s) failed verification ({}).",
+                details.join("; ")
+            ));
+        }
+
+        if !path_updates.is_empty() {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            for (id, rel) in path_updates {
+                conn.execute(
+                    "UPDATE document SET file_path = ?1 WHERE id = ?2",
+                    params![rel, id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    // Sweep any orphan files inside stage_root/documents after normalizing all paths.
+    if let Ok(conn) = db.conn.lock() {
+        let _ = sweep_orphan_doc_files(stage_root, &conn);
+    }
+
     Ok(())
 }
 

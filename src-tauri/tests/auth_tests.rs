@@ -1037,3 +1037,415 @@ fn test_vault_safety_guards_missing_salt_exclusive_abort_oom_and_unlock_migratio
     let _ = std::fs::remove_dir_all(&setup_dir);
     let _ = std::fs::remove_dir_all(&mig_dir);
 }
+
+#[test]
+fn test_database_only_backup_restore_preserves_local_receipts_and_rejects_missing() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{persist_db_in_dir, restore_db_in_dir, setup_pin_in_dir, unlock_db_in_dir},
+            document::attach_document_in_dir,
+        },
+        db::{doc_store, vault},
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-dbonly-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    // Create taxpayer, draft filing, income entry, and encrypted receipt.
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Original User', '10000001', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f1', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+             VALUES ('inc-1', 'f1', 'employment', 'Salary', 5000000, 0, 0)",
+            [],
+        ).unwrap();
+    }
+    let src_receipt = dir.join("source_receipt.pdf");
+    std::fs::write(&src_receipt, b"%PDF-1.4 receipt payload").unwrap();
+    let attached = attach_document_in_dir(
+        &dir,
+        "inc-1",
+        "income_entry",
+        src_receipt.to_str().unwrap(),
+        "receipt.pdf",
+        "application/pdf",
+        24,
+        &state,
+    )
+    .unwrap();
+    let stored_rel = attached["filePath"].as_str().unwrap().to_string();
+    persist_db_in_dir(&dir, &state).unwrap();
+
+    // Save a database-only standalone LGFV backup (no LGFA documents wrapper).
+    let db_only_backup = dir.join("standalone_vault.enc");
+    std::fs::copy(vault::vault_path(&dir), &db_only_backup).unwrap();
+
+    // Mutate taxpayer name in live vault, then restore the database-only backup on the same machine.
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute("UPDATE taxpayer SET full_name = 'Modified Later'", [])
+            .unwrap();
+    }
+    persist_db_in_dir(&dir, &state).unwrap();
+
+    let restored_tp = restore_db_in_dir(&dir, &db_only_backup, "1234", &state)
+        .expect("database-only restore should succeed when matching local receipt exists")
+        .unwrap();
+    assert_eq!(restored_tp.full_name, "Original User");
+
+    // Reopen vault and decrypt the preserved receipt.
+    let reopened = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &reopened).unwrap();
+    let decrypted = {
+        let guard = reopened.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let doc_key = doc_store::get_doc_key(db).unwrap().unwrap();
+        doc_store::read_decrypted_doc(&dir, &stored_rel, &doc_key).unwrap()
+    };
+    assert_eq!(decrypted, b"%PDF-1.4 receipt payload");
+
+    // Restoring the same database-only backup into another directory that lacks the receipt must fail cleanly.
+    let other_dir = std::env::temp_dir().join(format!("lagosfile-dbonly-miss-{}", uuid::Uuid::new_v4()));
+    let other_state = AppState::default();
+    setup_pin_in_dir(&other_dir, "5678", &other_state).unwrap();
+    let err = restore_db_in_dir(&other_dir, &db_only_backup, "1234", &other_state)
+        .expect_err("database-only restore must abort when referenced receipt is missing locally");
+    assert!(err.contains("missing:"), "unexpected error: {}", err);
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other_dir);
+}
+
+#[tokio::test]
+async fn test_concurrent_edit_overlapping_lock_cannot_report_ok_and_lose_data() {
+    use lagosfile_lib::{
+        commands::auth::{
+            lock_db_in_dir_with_hook, persist_db_in_dir_async, setup_pin_in_dir, unlock_db_in_dir,
+        },
+        AppState,
+    };
+    use std::sync::Arc;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-lock-race-{}", uuid::Uuid::new_v4()));
+    let state = Arc::new(AppState::default());
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Before Lock', '10000001', '2026-01-01T00:00:00Z')",
+            rusqlite::params![uuid::Uuid::new_v4().to_string()],
+        ).unwrap();
+    }
+
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let lock_state = Arc::clone(&state);
+    let lock_dir = dir.clone();
+    let lock_handle = tokio::spawn(async move {
+        lock_db_in_dir_with_hook(&lock_dir, &lock_state, move |_| {
+            let _ = entered_tx.send(());
+            let _ = release_rx.blocking_recv();
+            Ok(())
+        })
+        .await
+    });
+
+    // Wait until lock_db_in_dir_with_hook is paused inside write_atomic.
+    entered_rx.await.unwrap();
+
+    // A concurrent edit during lock's disk write MUST see locked state (not commit in memory),
+    // and persist_db_in_dir_async MUST return Err instead of Ok(()).
+    let in_memory_locked = state.db.lock().unwrap().is_none();
+    assert!(
+        in_memory_locked,
+        "AppState.db must already be None while lock_db is writing to disk"
+    );
+
+    let persist_state = Arc::clone(&state);
+    let persist_dir = dir.clone();
+    let persist_handle = tokio::spawn(async move {
+        persist_db_in_dir_async(persist_dir, &persist_state).await
+    });
+
+    // Release lock_db so both tasks complete.
+    let _ = release_tx.send(());
+    lock_handle.await.unwrap().expect("lock_db should succeed");
+    let persist_err = persist_handle
+        .await
+        .unwrap()
+        .expect_err("persist_db after lock must fail instead of returning Ok(())");
+    assert!(persist_err.contains("not unlocked"));
+
+    // Unlocking opens the consistent pre-lock snapshot.
+    let reopened = AppState::default();
+    let tp = unlock_db_in_dir(&dir, "1234", &reopened).unwrap().unwrap();
+    assert_eq!(tp.full_name, "Before Lock");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_restore_crash_recovery_at_every_rename_boundary() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{
+                backup_db_to_path_in_dir, persist_db_in_dir, restore_db_in_dir_with_phase_hook,
+                setup_pin_in_dir, unlock_db_in_dir,
+            },
+            document::attach_document_in_dir,
+        },
+        db::doc_store,
+        AppState,
+    };
+
+    // Build source backup archive ("Backup B" + receipt B).
+    let src_dir = std::env::temp_dir().join(format!("lagosfile-crash-src-{}", uuid::Uuid::new_v4()));
+    let src_state = AppState::default();
+    setup_pin_in_dir(&src_dir, "9999", &src_state).unwrap();
+    {
+        let guard = src_state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_b = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Backup B User', '20000002', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_b],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f-b', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_b],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+             VALUES ('inc-b', 'f-b', 'employment', 'Salary B', 6000000, 0, 0)",
+            [],
+        ).unwrap();
+    }
+    let src_file_b = src_dir.join("b.txt");
+    std::fs::write(&src_file_b, b"RECEIPT-FROM-BACKUP-B").unwrap();
+    let doc_b = attach_document_in_dir(
+        &src_dir,
+        "inc-b",
+        "income_entry",
+        src_file_b.to_str().unwrap(),
+        "b.txt",
+        "text/plain",
+        21,
+        &src_state,
+    )
+    .unwrap();
+    let rel_b = doc_b["filePath"].as_str().unwrap().to_string();
+    persist_db_in_dir(&src_dir, &src_state).unwrap();
+    let backup_path = src_dir.join("backup_b.lgfa");
+    backup_db_to_path_in_dir(&src_dir, &backup_path, &src_state).unwrap();
+
+    // Test every switch phase boundary!
+    let phases = [
+        ("after_pre_commit_journal", false),
+        ("after_move_old_docs", false),
+        ("after_move_new_docs", false),
+        ("after_committing_journal", true),
+        ("after_replace_vault", true),
+    ];
+
+    for (crash_phase, expect_new_backup) in phases {
+        let live_dir = std::env::temp_dir().join(format!(
+            "lagosfile-crash-{}-{}",
+            crash_phase,
+            uuid::Uuid::new_v4()
+        ));
+        let live_state = AppState::default();
+        setup_pin_in_dir(&live_dir, "1111", &live_state).unwrap();
+        {
+            let guard = live_state.db.lock().unwrap();
+            let db = guard.as_ref().unwrap();
+            let conn = db.conn.lock().unwrap();
+            let tp_a = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Original A User', '10000001', '2026-01-01T00:00:00Z')",
+                rusqlite::params![&tp_a],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+                 VALUES ('f-a', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+                rusqlite::params![&tp_a],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+                 VALUES ('inc-a', 'f-a', 'employment', 'Salary A', 5000000, 0, 0)",
+                [],
+            ).unwrap();
+        }
+        let src_file_a = live_dir.join("a.txt");
+        std::fs::write(&src_file_a, b"RECEIPT-FROM-ORIGINAL-A").unwrap();
+        let doc_a = attach_document_in_dir(
+            &live_dir,
+            "inc-a",
+            "income_entry",
+            src_file_a.to_str().unwrap(),
+            "a.txt",
+            "text/plain",
+            23,
+            &live_state,
+        )
+        .unwrap();
+        let rel_a = doc_a["filePath"].as_str().unwrap().to_string();
+        persist_db_in_dir(&live_dir, &live_state).unwrap();
+
+        let err = restore_db_in_dir_with_phase_hook(
+            &live_dir,
+            &backup_path,
+            "9999",
+            &live_state,
+            |phase| {
+                if phase == crash_phase {
+                    Err(format!("SIMULATED_CRASH:{}", phase))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .expect_err("simulated crash must abort restore");
+        assert!(err.starts_with("SIMULATED_CRASH:"));
+
+        // Simulate fresh app restart: unlock_db_in_dir runs recover_interrupted_restore automatically.
+        let restarted = AppState::default();
+        let tp = unlock_db_in_dir(&live_dir, "1111", &restarted)
+            .expect("restart unlock after crash must recover cleanly")
+            .unwrap();
+
+        let guard = restarted.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let doc_key = doc_store::get_doc_key(db).unwrap().unwrap();
+
+        if expect_new_backup {
+            assert_eq!(tp.full_name, "Backup B User", "phase {} should roll forward", crash_phase);
+            let bytes = doc_store::read_decrypted_doc(&live_dir, &rel_b, &doc_key).unwrap();
+            assert_eq!(bytes, b"RECEIPT-FROM-BACKUP-B");
+        } else {
+            assert_eq!(tp.full_name, "Original A User", "phase {} should roll back", crash_phase);
+            let bytes = doc_store::read_decrypted_doc(&live_dir, &rel_a, &doc_key).unwrap();
+            assert_eq!(bytes, b"RECEIPT-FROM-ORIGINAL-A");
+        }
+
+        let _ = std::fs::remove_dir_all(&live_dir);
+    }
+
+    let _ = std::fs::remove_dir_all(&src_dir);
+}
+
+#[test]
+fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_external_paths() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{backup_db_to_path_in_dir, persist_db_in_dir, restore_db_in_dir, setup_pin_in_dir},
+            document::attach_document_in_dir,
+        },
+        db::doc_store,
+        AppState,
+    };
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-integrity-{}", uuid::Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        let tp_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES (?1, 'Integrity User', '30000003', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+             VALUES ('f1', ?1, 2026, 'Draft', 'NTA 2025', '2026-01-01T00:00:00Z')",
+            rusqlite::params![&tp_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, description, gross_amount_ngn, is_foreign, is_cgt_exempt)
+             VALUES ('inc-1', 'f1', 'employment', 'Salary', 5000000, 0, 0)",
+            [],
+        ).unwrap();
+    }
+    let src_file = dir.join("receipt.txt");
+    std::fs::write(&src_file, b"VALID RECEIPT DATA").unwrap();
+    let doc = attach_document_in_dir(
+        &dir,
+        "inc-1",
+        "income_entry",
+        src_file.to_str().unwrap(),
+        "receipt.txt",
+        "text/plain",
+        18,
+        &state,
+    )
+    .unwrap();
+    let rel = doc["filePath"].as_str().unwrap().to_string();
+    persist_db_in_dir(&dir, &state).unwrap();
+
+    // 1. Create a valid backup, then tamper with the encrypted attachment bytes inside LGFA.
+    let valid_backup = dir.join("valid.lgfa");
+    backup_db_to_path_in_dir(&dir, &valid_backup, &state).unwrap();
+    let raw = std::fs::read(&valid_backup).unwrap();
+    let decoded = doc_store::decode_backup_archive(&raw).unwrap();
+    assert_eq!(decoded.documents.len(), 1);
+    let mut tampered_doc = decoded.documents[0].1.to_vec();
+    let last = tampered_doc.len() - 1;
+    tampered_doc[last] ^= 0xFF; // keep LGFD header valid, break GCM tag!
+    let tampered_archive = doc_store::encode_backup_archive(
+        decoded.vault_bytes,
+        &[(decoded.documents[0].0.clone(), tampered_doc)],
+    );
+    let bad_backup = dir.join("tampered.lgfa");
+    std::fs::write(&bad_backup, &tampered_archive).unwrap();
+
+    let restore_err = restore_db_in_dir(&dir, &bad_backup, "1234", &state)
+        .expect_err("restore must reject corrupt attachment even with valid LGFD header");
+    assert!(restore_err.contains("unreadable/corrupt"), "got: {}", restore_err);
+
+    // 2. Delete the live receipt -> backup must fail explicitly instead of silently skipping it.
+    std::fs::remove_file(dir.join(&rel)).unwrap();
+    let backup_err = backup_db_to_path_in_dir(&dir, &dir.join("missing.lgfa"), &state)
+        .expect_err("backup must reject missing referenced attachment");
+    assert!(backup_err.contains("missing:"), "got: {}", backup_err);
+
+    // 3. extract_documents_rel uses rfind when ancestor folder is named 'documents'.
+    assert_eq!(
+        doc_store::extract_documents_rel("/Users/ada/documents/LagosFile/documents/e1/r.enc").as_deref(),
+        Some("documents/e1/r.enc")
+    );
+
+    // 4. remove_unreferenced_doc_files never deletes files outside <dir>/documents/.
+    let outside = dir.join("important_outside.txt");
+    std::fs::write(&outside, b"do not delete").unwrap();
+    {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        let conn = db.conn.lock().unwrap();
+        doc_store::remove_unreferenced_doc_files(&dir, &conn, &[outside.to_string_lossy().to_string()]);
+    }
+    assert!(outside.exists(), "files outside documents/ must never be removed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
