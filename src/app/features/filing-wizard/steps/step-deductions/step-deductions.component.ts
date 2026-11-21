@@ -34,7 +34,11 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
         <div class="alert alert--info">
           <span class="alert__icon">ℹ</span>
           <div class="alert__content">
-            The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief.
+            @if (craEnabled()) {
+              Under PITA (income years ≤ 2025), the Consolidated Relief Allowance (CRA) is calculated automatically on your adjusted gross income. Rent Relief does not apply.
+            } @else {
+              The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief.
+            }
           </div>
         </div>
       </div>
@@ -108,36 +112,38 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
             }
           </div>
 
-          <!-- Rent relief -->
-          <div class="relief-row">
-            <div class="relief-row__info">
-              <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
-              <div class="relief-row__sub">
-                Rent Relief = {{ rentReliefRate() * 100 }}% of annual rent, capped at {{ rentReliefCap() | naira }}.
-                Homeowners cannot claim this relief.
+          <!-- Rent relief (NTA 2025 only; PITA uses CRA instead) -->
+          @if (!craEnabled()) {
+            <div class="relief-row">
+              <div class="relief-row__info">
+                <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
+                <div class="relief-row__sub">
+                  Rent Relief = {{ rentReliefRate() * 100 }}% of annual rent, capped at {{ rentReliefCap() | naira }}.
+                  Homeowners cannot claim this relief.
+                </div>
               </div>
+              <input type="number" class="form-input relief-row__input"
+                [(ngModel)]="fields.annualRent" name="annualRent" min="0" placeholder="₦ 0.00" />
             </div>
-            <input type="number" class="form-input relief-row__input"
-              [(ngModel)]="fields.annualRent" name="annualRent" min="0" placeholder="₦ 0.00" />
-          </div>
-          <div class="relief-docs">
-            <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
-            @for (doc of standard.rent.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.rent, doc.id)">×</button></span>
-            }
-          </div>
+            <div class="relief-docs">
+              <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
+              @for (doc of standard.rent.documents; track doc.id) {
+                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.rent, doc.id)">×</button></span>
+              }
+            </div>
 
-          @if (fields.annualRent > 0) {
-            <div class="relief-callout">
-              <span>Rent Relief Applied:</span>
-              <strong>{{ rentRelief() | naira }}</strong>
-              <span class="text-muted">({{ rentReliefRate() * 100 }}% of rent, capped at {{ rentReliefCap() | naira }})</span>
-            </div>
-          } @else {
-            <div class="alert alert--info" style="grid-column:1/-1">
-              <span class="alert__icon">ℹ</span>
-              <div class="alert__content">Rent Relief is not applicable — no rent expense entered.</div>
-            </div>
+            @if (fields.annualRent > 0) {
+              <div class="relief-callout">
+                <span>Rent Relief Applied:</span>
+                <strong>{{ rentRelief() | naira }}</strong>
+                <span class="text-muted">({{ rentReliefRate() * 100 }}% of rent, capped at {{ rentReliefCap() | naira }})</span>
+              </div>
+            } @else {
+              <div class="alert alert--info" style="grid-column:1/-1">
+                <span class="alert__icon">ℹ</span>
+                <div class="alert__content">Rent Relief is not applicable — no rent expense entered.</div>
+              </div>
+            }
           }
         </div>
       </div>
@@ -388,10 +394,12 @@ export class StepDeductionsComponent implements OnInit {
 
   private caps = computed(() => (this.filingConfig() ?? this.configService.activeConfig())?.reliefCaps);
 
+  craEnabled = computed(() => Boolean(this.caps()?.craEnabled));
   rentReliefRate = computed(() => this.caps()?.rentReliefRate ?? 0.20);
   rentReliefCap = computed(() => this.caps()?.rentReliefCap ?? 500_000);
 
   rentRelief(): number {
+    if (this.craEnabled()) return 0;
     return Math.min(this.fields.annualRent * this.rentReliefRate(), this.rentReliefCap());
   }
 

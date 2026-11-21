@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { ConfigService } from '../../core/services/config.service';
@@ -106,24 +106,20 @@ export class ShellComponent implements OnInit {
   private config = inject(ConfigService);
   update = inject(UpdateService);
   private reminders = inject(DeadlineReminderService);
-  migrationNotices = signal<string[]>([]);
+  migrationNotices = this.config.migrationNotices;
 
   async ngOnInit(): Promise<void> {
     try {
       await this.config.loadActive();
     } catch { /* new install; seed data will be created on unlock */ }
     try {
-      const notices = await this.config.getMigrationNotices();
-      if (Array.isArray(notices) && notices.length > 0) {
-        this.migrationNotices.set(notices);
-      }
+      await this.config.getMigrationNotices();
     } catch { /* ignore when notices unavailable */ }
     this.update.checkForUpdates();
     void this.reminders.check();
   }
 
   async dismissMigrationNotices(): Promise<void> {
-    this.migrationNotices.set([]);
     try {
       await this.config.dismissMigrationNotices();
     } catch { /* keep UI dismissed */ }

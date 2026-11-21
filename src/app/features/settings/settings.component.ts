@@ -657,6 +657,14 @@ export class SettingsComponent {
         this.editForm.email       = taxpayer.email       ?? '';
         this.editForm.filingAgent = taxpayer.filingAgent ?? '';
       }
+      try {
+        if (typeof this.configService.loadActive === 'function') {
+          await this.configService.loadActive();
+        }
+        if (typeof this.configService.getMigrationNotices === 'function') {
+          await this.configService.getMigrationNotices();
+        }
+      } catch { /* non-fatal refresh after restore */ }
       await this.configService.loadActive();
       this.showRestoreModal.set(false);
       this.pendingRestorePath = '';

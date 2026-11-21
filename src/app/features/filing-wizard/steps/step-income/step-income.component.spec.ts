@@ -382,4 +382,41 @@ describe('StepIncomeComponent (S13 foreign amounts and share gains)', () => {
     expect(relFields.filter(f => f.label.includes('PAYE')).length).toBe(1);
     expect(relFields.some(f => f.label.includes('Consolidated Relief Allowance'))).toBeTrue();
   });
+
+  it('uses filing pinned config for CGT thresholds, clears foreign on capital_gain_shares, and resets fxRateSource when clearing override', async () => {
+    (configServiceMock as unknown as { getForFiling: (id: string) => Promise<TaxConfig> }).getForFiling =
+      async () => ({
+        ...defaultConfig,
+        cgtThresholds: { proceedsThreshold: 20_000_000, gainThreshold: 2_000_000 },
+      });
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const comp = fixture.componentInstance;
+
+    comp.addEntry();
+    const entry = comp.entries()[0];
+    entry.isForeign = true;
+    entry.foreignCurrency = 'USD';
+    entry.foreignAmount = 1000;
+    entry.fxRateFetched = 1500;
+    entry.fxRateCbnOverride = 1600;
+    comp.applyRate(entry);
+    expect(entry.fxRateSource).toBe('cbn_override');
+
+    // Clearing override must reset fxRateSource instead of leaving it stuck on 'cbn_override'
+    entry.fxRateCbnOverride = undefined;
+    comp.applyRate(entry);
+    expect(entry.fxRateSource).toBe('fawazahmed0');
+    expect(entry.grossAmountNgn).toBe(1_500_000);
+
+    // Switching to capital_gain_shares clears foreign state and evaluates against pinned config thresholds
+    entry.incomeType = 'capital_gain_shares';
+    comp.onTypeChange(entry);
+    expect(entry.isForeign).toBeFalse();
+    entry.cgtProceeds = 25_000_000;
+    entry.cgtGain = 1_000_000;
+    expect(comp.cgtSummary().exempt).toBeFalse();
+  });
 });

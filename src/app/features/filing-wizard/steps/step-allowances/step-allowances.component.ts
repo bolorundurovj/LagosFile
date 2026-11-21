@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { CapitalAllowance, AssetType } from '../../../../core/models';
+import { CapitalAllowance, AssetType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
@@ -222,6 +222,7 @@ export class StepAllowancesComponent implements OnInit {
   saving = signal(false);
   loadingPrior = signal(false);
   priorYearLoaded = signal(false);
+  private filingConfig = signal<TaxConfig | null>(null);
   private removedIds: string[] = [];
   private priorYearIds = new Set<string>();
   private initialSnapshot = '';
@@ -239,6 +240,11 @@ export class StepAllowancesComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     try {
+      try {
+        if (typeof this.configService.getForFiling === 'function') {
+          this.filingConfig.set(await this.configService.getForFiling(this.filingId()));
+        }
+      } catch { /* fall back to activeConfig */ }
       const existing = await this.filingService.listAllowances(this.filingId());
       for (const e of existing) {
         if (!e.acquisitionDate || e.acquisitionDate === '1970-01-01') {
@@ -268,7 +274,7 @@ export class StepAllowancesComponent implements OnInit {
   }
 
   rateFor(type: AssetType): number {
-    const config = this.configService.activeConfig();
+    const config = this.filingConfig() ?? this.configService.activeConfig();
     return config?.allowanceRates?.[type] ?? 0.25;
   }
 
@@ -344,7 +350,9 @@ export class StepAllowancesComponent implements OnInit {
       const existingKeys = new Set(this.entries().map(e => this.assetKey(e)));
       const newEntries: CapitalAllowance[] = [];
       for (const p of prior) {
-        const key = this.assetKey(p);
+        const normalizedDate = !p.acquisitionDate || p.acquisitionDate === '1970-01-01' ? '' : p.acquisitionDate;
+        const normalized = { ...p, acquisitionDate: normalizedDate };
+        const key = this.assetKey(normalized);
         if (existingKeys.has(key)) continue;
         existingKeys.add(key);
         const id = crypto.randomUUID();
@@ -355,7 +363,7 @@ export class StepAllowancesComponent implements OnInit {
           assetType: (p.assetType ?? 'other') as AssetType,
           assetDescription: p.assetDescription ?? '',
           assetCost: p.assetCost ?? 0,
-          acquisitionDate: p.acquisitionDate ?? '',
+          acquisitionDate: normalizedDate,
           taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
           annualAllowanceRate: p.annualAllowanceRate ?? 0,
           annualAllowanceAmount: p.annualAllowanceAmount ?? 0,

@@ -147,7 +147,7 @@ import { LucideAngularModule } from 'lucide-angular';
 
         <!-- Final total -->
         <div class="computation-total">
-          <div class="total-label">Final Tax Payable<lf-help text="The higher of net graduated tax and minimum tax. This is the amount you owe LIRS for the year of assessment." align="left"></lf-help></div>
+          <div class="total-label">Final Tax Payable<lf-help text="Graduated tax (or minimum tax floor, if higher) less WHT, PAYE, and foreign tax credits. This is the amount you owe LIRS for the year of assessment." align="left"></lf-help></div>
           <div class="total-value">{{ result()!.finalTaxPayable | naira }}</div>
           <div style="font-size:var(--text-label-sm);opacity:0.7;margin-top:var(--space-2)">
             Tax Config: {{ result()!.configVersion }}

@@ -4,7 +4,7 @@ import { FilingService } from '../../../../core/services/filing.service';
 import { FxService } from '../../../../core/services/fx.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { BikCategory, IncomeEntry, IncomeType } from '../../../../core/models';
+import { BikCategory, IncomeEntry, IncomeType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
@@ -91,8 +91,8 @@ const BIK_CATEGORIES: { value: BikCategory; label: string; costLabel: string }[]
               </div>
             </div>
 
-            <!-- Foreign currency toggle (hidden for Benefits-in-Kind) -->
-            @if (entry.incomeType !== 'benefits_in_kind') {
+            <!-- Foreign currency toggle (hidden for Benefits-in-Kind and NGN Share Gains) -->
+            @if (entry.incomeType !== 'benefits_in_kind' && entry.incomeType !== 'capital_gain_shares') {
               <div class="entry-row">
                 <label class="toggle-label">
                   <input type="checkbox" [(ngModel)]="entry.isForeign" [name]="'foreign_' + i"
@@ -110,7 +110,7 @@ const BIK_CATEGORIES: { value: BikCategory; label: string; costLabel: string }[]
               </div>
             }
 
-            @if (entry.isForeign && entry.incomeType !== 'benefits_in_kind') {
+            @if (entry.isForeign && entry.incomeType !== 'benefits_in_kind' && entry.incomeType !== 'capital_gain_shares') {
               <!-- Foreign income fields -->
               <div class="alert alert--info" style="margin:var(--space-3) 0">
                 <span class="alert__icon">ℹ</span>
@@ -403,6 +403,7 @@ export class StepIncomeComponent implements OnInit {
 
   entries = signal<IncomeEntry[]>([]);
   saving = signal(false);
+  private filingConfig = signal<TaxConfig | null>(null);
 
   readonly incomeTypes = INCOME_TYPES;
   readonly currencies = CURRENCIES;
@@ -418,6 +419,11 @@ export class StepIncomeComponent implements OnInit {
 
   async ngOnInit(): Promise<void> {
     try {
+      try {
+        if (typeof this.configService.getForFiling === 'function') {
+          this.filingConfig.set(await this.configService.getForFiling(this.filingId()));
+        }
+      } catch { /* fall back to activeConfig */ }
       const existing = await this.filingService.listIncomeEntries(this.filingId());
       this.entries.set(existing);
     } catch (err) {
@@ -451,11 +457,19 @@ export class StepIncomeComponent implements OnInit {
   }
 
   onTypeChange(entry: IncomeEntry): void {
-    // Reset CGT fields if type changes away from capital_gain_shares
+    // Reset CGT fields if type changes away from capital_gain_shares; clear foreign fields if switching to share gains
     if (entry.incomeType !== 'capital_gain_shares') {
       entry.cgtProceeds = undefined;
       entry.cgtGain = undefined;
     } else {
+      entry.isForeign = false;
+      entry.foreignCurrency = undefined;
+      entry.foreignAmount = undefined;
+      entry.fxRateFetched = undefined;
+      entry.fxRateCbnOverride = undefined;
+      entry.fxRateUsed = undefined;
+      entry.fxRateSource = undefined;
+      entry.foreignTaxPaidNgn = undefined;
       entry.grossAmountNgn = entry.cgtGain ?? 0;
     }
     // Reset BIK fields if type changes away from benefits_in_kind; clear foreign fields if switching to BIK
@@ -573,7 +587,11 @@ export class StepIncomeComponent implements OnInit {
     if (rate != null && Number.isFinite(rate) && amount != null && Number.isFinite(amount)) {
       entry.grossAmountNgn = rate * amount;
       entry.fxRateUsed = rate;
-      entry.fxRateSource = hasOverride ? 'cbn_override' : (entry.fxRateSource ?? 'manual');
+      if (hasOverride) {
+        entry.fxRateSource = 'cbn_override';
+      } else if (!entry.fxRateSource || entry.fxRateSource === 'cbn_override') {
+        entry.fxRateSource = entry.fxRateFetched != null ? 'fawazahmed0' : 'manual';
+      }
     } else if (amount === 0 || amount == null) {
       entry.grossAmountNgn = 0;
     }
@@ -581,7 +599,7 @@ export class StepIncomeComponent implements OnInit {
 
   /** Mirrors the engine: the exemption is tested on aggregate share disposals for the year. */
   cgtSummary(): { exempt: boolean; proceeds: number; gain: number; proceedsLimit: number; gainLimit: number } {
-    const limits = this.configService.activeConfig()?.cgtThresholds;
+    const limits = (this.filingConfig() ?? this.configService.activeConfig())?.cgtThresholds;
     const proceedsLimit = limits?.proceedsThreshold ?? 150_000_000;
     const gainLimit = limits?.gainThreshold ?? 10_000_000;
     let proceeds = 0;

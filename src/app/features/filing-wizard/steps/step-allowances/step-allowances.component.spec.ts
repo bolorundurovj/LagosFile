@@ -190,4 +190,33 @@ describe('StepAllowancesComponent', () => {
     const [, upserts] = filingServiceSpy.saveAllowances.calls.mostRecent().args;
     expect(upserts[0].assetCost).toBe(0);
   });
+
+  it('uses filing pinned config allowanceRates rather than activeConfig and normalizes 1970-01-01 from prior year', async () => {
+    const cfg = TestBed.inject(ConfigService) as unknown as {
+      activeConfig: () => unknown;
+      getForFiling?: (id: string) => Promise<unknown>;
+    };
+    cfg.activeConfig = () => ({ allowanceRates: { computer_laptop: 0.25 } });
+    cfg.getForFiling = async () => ({ allowanceRates: { computer_laptop: 0.40 } });
+    filingServiceSpy.getPriorYearAllowances.and.resolveTo([
+      {
+        assetDescription: 'Legacy Laptop',
+        assetType: 'computer_laptop',
+        assetCost: 1_000_000,
+        acquisitionDate: '1970-01-01',
+        taxWrittenDownValue: 600_000,
+        annualAllowanceRate: 0.40,
+        annualAllowanceAmount: 400_000,
+      },
+    ]);
+
+    const fixture = createComponent();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const comp = fixture.componentInstance;
+    expect(comp.rateFor('computer_laptop')).toBe(0.40);
+    await comp.loadFromPriorYear();
+    expect(comp.entries()[0].acquisitionDate).toBe('');
+  });
 });

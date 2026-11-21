@@ -6,6 +6,8 @@ import { TaxConfig } from '../models';
 export class ConfigService {
   private readonly _active = signal<TaxConfig | null>(null);
   readonly activeConfig = this._active.asReadonly();
+  private readonly _migrationNotices = signal<string[]>([]);
+  readonly migrationNotices = this._migrationNotices.asReadonly();
 
   constructor(private tauri: TauriService) {}
 
@@ -20,10 +22,13 @@ export class ConfigService {
   }
 
   async getMigrationNotices(): Promise<string[]> {
-    return this.tauri.invoke<string[]>('get_migration_notices');
+    const notices = await this.tauri.invoke<string[]>('get_migration_notices');
+    this._migrationNotices.set(Array.isArray(notices) ? notices : []);
+    return this._migrationNotices();
   }
 
   async dismissMigrationNotices(): Promise<void> {
+    this._migrationNotices.set([]);
     return this.tauri.invoke<void>('dismiss_migration_notices');
   }
 

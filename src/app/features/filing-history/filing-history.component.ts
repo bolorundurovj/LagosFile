@@ -955,7 +955,8 @@ export class FilingHistoryComponent implements OnInit {
         this.toast.warning(res.message);
         this.openReferencePanelForFiling(f);
       } else if (res.warnings && res.warnings.length > 0) {
-        this.toast.warning(`${res.message} (${res.warnings.join('; ')})`);
+        const alreadyIncluded = res.warnings.every(w => res.message.includes(w));
+        this.toast.warning(alreadyIncluded ? res.message : `${res.message} (${res.warnings.join('; ')})`);
       } else {
         this.toast.success(res.message);
       }
