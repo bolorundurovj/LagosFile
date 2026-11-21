@@ -582,6 +582,7 @@ pub fn build_http_response(
 ) -> String {
     let status_text = match status {
         200 => "OK",
+        400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
         _ => "Error",
@@ -939,20 +940,22 @@ pub async fn open_lirs_portal(
         (primary, all_filings, filing_ref, failures)
     };
 
-    // Stop any previous bridge BEFORE writing the new pending_filing.json so the dying bridge
-    // thread cannot delete the newly written file during restart.
-    stop_bridge(&state);
-
-    let data_dir = lirs_data_dir();
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let path = data_dir.join("pending_filing.json");
     let primary_json = serde_json::to_string(&primary).map_err(|e| e.to_string())?;
     let file_json = serde_json::to_string_pretty(&primary).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &file_json).map_err(|e| e.to_string())?;
-
     let filings_json = serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
 
+    // Start the new bridge (which stops any previous bridge first) BEFORE writing
+    // pending_filing.json, so a port-bind failure never leaves pending_filing.json on disk.
     let (_port, token) = start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+
+    let data_dir = lirs_data_dir();
+    let path = data_dir.join("pending_filing.json");
+    if let Err(e) = std::fs::create_dir_all(&data_dir)
+        .and_then(|_| std::fs::write(&path, &file_json))
+    {
+        stop_bridge(&state);
+        return Err(e.to_string());
+    }
 
     let portal_url = format!(
         "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",

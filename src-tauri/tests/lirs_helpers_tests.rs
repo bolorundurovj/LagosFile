@@ -740,4 +740,6 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
         "{}",
     );
     assert!(resp_404.starts_with("HTTP/1.1 404"), "unexpected response: {resp_404}");
+    let resp_400 = lirs::build_http_response(400, "text/plain", "bad request", None);
+    assert!(resp_400.starts_with("HTTP/1.1 400 Bad Request"), "unexpected response: {resp_400}");
 }
