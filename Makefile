@@ -1,4 +1,4 @@
-.PHONY: setup dev lint lint-fix build test test-fe test-be test-coverage sync-version help
+.PHONY: setup dev lint lint-fix check build test test-fe test-be test-coverage sync-version help
 
 # Default goal
 help:
@@ -9,6 +9,7 @@ help:
 	@echo "  make dev            Run Angular and Tauri in development mode"
 	@echo "  make lint           Run all linters (Angular & Rust)"
 	@echo "  make fix            Run all auto-fixers and formatters"
+	@echo "  make check          Run every CI check: lint, format, tests, build"
 	@echo "  make build          Build Angular app and extensions"
 	@echo "  make build-tauri    Build the Tauri desktop application"
 	@echo "  make test           Run all unit tests (Frontend & Backend)"
@@ -31,6 +32,9 @@ lint:
 
 fix:
 	npm run format:all
+
+check:
+	npm run check
 
 build:
 	npm run build

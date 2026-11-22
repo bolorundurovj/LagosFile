@@ -29,7 +29,9 @@
     "lint:rust": "cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings",
     "lint:rust:fix": "cd src-tauri && cargo clippy --fix --allow-dirty --allow-no-vcs",
     "format:rust": "cd src-tauri && cargo fmt",
+    "format:rust:check": "cd src-tauri && cargo fmt --check",
     "format:all": "npm run lint:fix && npm run format:rust",
+    "check": "npm run lint && npm run format:rust:check && npm run lint:rust && npm run test:ci && npm run test:ext && npm run test:rust && npm run test:paye && npm run build",
     "generate:notices": "node scripts/generate-third-party-notices.mjs",
     "prepare": "husky"
   },
