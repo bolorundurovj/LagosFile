@@ -3,8 +3,8 @@
 [![GitHub Release](https://img.shields.io/github/v/release/bolorundurovj/LagosFile?sort=semver&style=flat-square)](https://github.com/bolorundurovj/LagosFile/releases/latest)
 [![GitHub Downloads](https://img.shields.io/github/downloads/bolorundurovj/LagosFile/total?style=flat-square)](https://github.com/bolorundurovj/LagosFile/releases)
 [![CI](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml/badge.svg)](https://github.com/bolorundurovj/LagosFile/actions/workflows/ci.yml)
-[![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
-[![SonarCloud Coverage](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=coverage)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
+[![SonarCloud Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=alert_status&token=77b8556d4a1e733b5849ccf69ade851a97d8694d)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
+[![SonarCloud Coverage](https://sonarcloud.io/api/project_badges/measure?project=bolorundurovj_LagosFile&metric=coverage&token=77b8556d4a1e733b5849ccf69ade851a97d8694d)](https://sonarcloud.io/summary/new_code?id=bolorundurovj_LagosFile)
 [![License](https://img.shields.io/badge/License-Non--Commercial-orange?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/bolorundurovj/LagosFile?style=flat-square)](https://github.com/bolorundurovj/LagosFile/stargazers)
 

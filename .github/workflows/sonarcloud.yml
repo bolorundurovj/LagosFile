@@ -5,6 +5,7 @@ on:
     branches: [master, develop]
   pull_request:
     branches: [master, develop]
+  workflow_dispatch:
 
 jobs:
   sonarcloud:
@@ -17,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install Node dependencies
@@ -36,6 +37,9 @@ jobs:
 
       - name: Generate Frontend Coverage
         run: npm run test:coverage
+
+      - name: Generate Extension Coverage
+        run: npm run test:ext:coverage
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

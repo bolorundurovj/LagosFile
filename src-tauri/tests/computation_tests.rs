@@ -251,7 +251,7 @@ fn test_capital_allowance_is_straight_line_capped_at_wdv() {
         asset_description: "Laptop".to_string(),
         asset_type: "computer_laptop".to_string(),
         asset_cost: 1_000_000.0,
-        acquisition_date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        acquisition_date: Some(chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
         tax_written_down_value: wdv,
         annual_allowance_rate: 0.25,
         annual_allowance_amount: 0.0,

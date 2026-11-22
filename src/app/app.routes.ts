@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
-import { authGuard, publicGuard } from './core/guards/auth.guard';
+import { authGuard, firstRunGuard, publicGuard } from './core/guards/auth.guard';
+import type { FilingWizardComponent } from './features/filing-wizard/filing-wizard.component';
 
 export const routes: Routes = [
   // Auth flows (public)
@@ -10,6 +11,7 @@ export const routes: Routes = [
   },
   {
     path: 'setup-pin',
+    canActivate: [firstRunGuard],
     loadComponent: () => import('./features/pin-entry/pin-setup.component').then(m => m.PinSetupComponent),
   },
   {
@@ -38,10 +40,12 @@ export const routes: Routes = [
       },
       {
         path: 'filing/new',
+        canDeactivate: [(component: FilingWizardComponent) => component.canDeactivate()],
         loadComponent: () => import('./features/filing-wizard/filing-wizard.component').then(m => m.FilingWizardComponent),
       },
       {
         path: 'filing/:id',
+        canDeactivate: [(component: FilingWizardComponent) => component.canDeactivate()],
         loadComponent: () => import('./features/filing-wizard/filing-wizard.component').then(m => m.FilingWizardComponent),
       },
       {

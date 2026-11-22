@@ -20,14 +20,18 @@ export interface Filing {
   filingReference?: string;
   createdAt: string;
   confirmedAt?: string;
+  submittedAt?: string;
   totalIncomeNgn?: number;
   chargeableIncome?: number;
   taxPayable?: number;
   whtCredit?: number;
+  payeCredit?: number;
+  foreignTaxCredit?: number;
   netTaxPayable?: number;
   minimumTax?: number;
   finalTaxPayable?: number;
   taxConfigVersion: string;
+  taxConfigId?: string | null;
   paymentDate?: string | null;
   paymentReference?: string | null;
   amountPaid?: number | null;
@@ -48,6 +52,12 @@ export type IncomeType =
 
 export type FxRateSource = 'fawazahmed0' | 'exchangerate-api' | 'cache' | 'manual' | 'cbn_override';
 
+export type BikCategory =
+  | 'employer_owned_asset'
+  | 'rented_asset'
+  | 'accommodation'
+  | 'other';
+
 export interface IncomeEntry {
   id: string;
   filingId: string;
@@ -66,6 +76,8 @@ export interface IncomeEntry {
   isCgtExempt: boolean;
   cgtProceeds?: number;
   cgtGain?: number;
+  bikCategory?: BikCategory;
+  bikCost?: number;
   documents: Document[];
 }
 
@@ -97,6 +109,7 @@ export type ReliefType =
   | 'nhf'
   | 'rent'
   | 'wht'
+  | 'paye'
   | 'life_assurance'
   | 'foreign_tax'
   | 'other_approved';
@@ -149,6 +162,7 @@ export interface TaxConfig {
   reliefCaps: {
     rentReliefCap: number;
     rentReliefRate: number;
+    craEnabled?: boolean;
     pensionCap?: number | null;
     nhisCap?: number | null;
     nhfCap?: number | null;
@@ -181,6 +195,8 @@ export interface ComputationResult {
   bandBreakdown: BandResult[];
   graduatedTax: number;
   whtCredits: number;
+  payeCredits?: number;
+  foreignTaxCredits?: number;
   netTaxPayable: number;
   minimumTax: number;
   finalTaxPayable: number;
@@ -188,6 +204,7 @@ export interface ComputationResult {
   digitalAssetLossRingfenced: number;
   configVersion: string;
   rentReliefApplied: number;
+  consolidatedReliefAllowance?: number;
 }
 
 export interface FxResult {
@@ -228,6 +245,7 @@ export interface LIRSAutomationResult {
   message: string;
   pendingFilingPath?: string;
   filingId: string;
+  warnings?: string[];
 }
 
 export interface LIRSFieldItem {

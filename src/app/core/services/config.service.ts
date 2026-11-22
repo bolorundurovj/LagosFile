@@ -6,13 +6,34 @@ import { TaxConfig } from '../models';
 export class ConfigService {
   private readonly _active = signal<TaxConfig | null>(null);
   readonly activeConfig = this._active.asReadonly();
+  private readonly _migrationNotices = signal<string[]>([]);
+  readonly migrationNotices = this._migrationNotices.asReadonly();
 
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async loadActive(): Promise<TaxConfig> {
     const config = await this.tauri.invoke<TaxConfig>('get_active_config');
     this._active.set(config);
     return config;
+  }
+
+  async getForFiling(filingId: string): Promise<TaxConfig> {
+    return this.tauri.invoke<TaxConfig>('get_config_for_filing', { filingId });
+  }
+
+  async getMigrationNotices(): Promise<string[]> {
+    const notices = await this.tauri.invoke<string[]>('get_migration_notices');
+    this._migrationNotices.set(Array.isArray(notices) ? notices : []);
+    return this._migrationNotices();
+  }
+
+  async dismissMigrationNotices(): Promise<void> {
+    this._migrationNotices.set([]);
+    return this.tauri.invoke<void>('dismiss_migration_notices');
+  }
+
+  clearMigrationNotices(): void {
+    this._migrationNotices.set([]);
   }
 
   async listVersions(): Promise<TaxConfig[]> {

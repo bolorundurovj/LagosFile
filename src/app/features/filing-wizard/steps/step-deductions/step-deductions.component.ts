@@ -3,16 +3,16 @@ import { LucideAngularModule } from 'lucide-angular';
 import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
-import { ReliefEntry, ReliefType } from '../../../../core/models';
+import { ReliefEntry, ReliefType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
 import { ToastService } from '../../../../core/services/toast.service';
-import { queueDocument, flushDocuments } from '../pending-documents';
+import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
 
-type StandardRelief = 'pension' | 'nhis' | 'nhf' | 'life_assurance' | 'rent' | 'foreign_tax';
-type FieldKey = 'pension' | 'nhis' | 'nhf' | 'lifeAssurance' | 'annualRent' | 'foreignTaxPaid';
+type StandardRelief = 'pension' | 'nhis' | 'nhf' | 'life_assurance' | 'rent' | 'paye';
+type FieldKey = 'pension' | 'nhis' | 'nhf' | 'lifeAssurance' | 'annualRent' | 'paye';
 
 const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
   pension: 'pension',
@@ -20,7 +20,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
   nhf: 'nhf',
   life_assurance: 'lifeAssurance',
   rent: 'annualRent',
-  foreign_tax: 'foreignTaxPaid',
+  paye: 'paye',
 };
 
 @Component({
@@ -34,7 +34,11 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
         <div class="alert alert--info">
           <span class="alert__icon">ℹ</span>
           <div class="alert__content">
-            The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief.
+            @if (craEnabled()) {
+              Under PITA (income years ≤ 2025), the Consolidated Relief Allowance (CRA) is calculated automatically on your adjusted gross income. Rent Relief does not apply.
+            } @else {
+              The Consolidated Relief Allowance (CRA) has been abolished under the NTA 2025 and replaced with Rent Relief.
+            }
           </div>
         </div>
       </div>
@@ -56,7 +60,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach PFA statement" (fileSelected)="onFileSelected($event, standard.pension)" />
             @for (doc of standard.pension.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.pension, doc.id)">×</button></span>
             }
           </div>
 
@@ -72,7 +76,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach NHIS receipt" (fileSelected)="onFileSelected($event, standard.nhis)" />
             @for (doc of standard.nhis.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.nhis, doc.id)">×</button></span>
             }
           </div>
 
@@ -88,7 +92,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach NHF statement" (fileSelected)="onFileSelected($event, standard.nhf)" />
             @for (doc of standard.nhf.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.nhf, doc.id)">×</button></span>
             }
           </div>
 
@@ -104,40 +108,42 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs">
             <lf-file-dropzone [compact]="true" label="Attach policy or premium receipt" (fileSelected)="onFileSelected($event, standard.life_assurance)" />
             @for (doc of standard.life_assurance.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.life_assurance, doc.id)">×</button></span>
             }
           </div>
 
-          <!-- Rent relief -->
-          <div class="relief-row">
-            <div class="relief-row__info">
-              <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
-              <div class="relief-row__sub">
-                Rent Relief = {{ rentReliefRate() * 100 }}% of annual rent, capped at {{ rentReliefCap() | naira }}.
-                Homeowners cannot claim this relief.
+          <!-- Rent relief (NTA 2025 only; PITA uses CRA instead) -->
+          @if (!craEnabled()) {
+            <div class="relief-row">
+              <div class="relief-row__info">
+                <div class="relief-row__label">Annual Rent Paid<lf-help text="Enter total rent paid on your residential property in Lagos for the year. Relief is 20% of this amount, capped at ₦500,000 (NTA 2025, s.33). Owner-occupiers cannot claim."></lf-help></div>
+                <div class="relief-row__sub">
+                  Rent Relief = {{ rentReliefRate() * 100 }}% of annual rent, capped at {{ rentReliefCap() | naira }}.
+                  Homeowners cannot claim this relief.
+                </div>
               </div>
+              <input type="number" class="form-input relief-row__input"
+                [(ngModel)]="fields.annualRent" name="annualRent" min="0" placeholder="₦ 0.00" />
             </div>
-            <input type="number" class="form-input relief-row__input"
-              [(ngModel)]="fields.annualRent" name="annualRent" min="0" placeholder="₦ 0.00" />
-          </div>
-          <div class="relief-docs">
-            <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
-            @for (doc of standard.rent.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
-            }
-          </div>
+            <div class="relief-docs">
+              <lf-file-dropzone [compact]="true" label="Attach tenancy agreement or rent receipt" (fileSelected)="onFileSelected($event, standard.rent)" />
+              @for (doc of standard.rent.documents; track doc.id) {
+                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.rent, doc.id)">×</button></span>
+              }
+            </div>
 
-          @if (fields.annualRent > 0) {
-            <div class="relief-callout">
-              <span>Rent Relief Applied:</span>
-              <strong>{{ rentRelief() | naira }}</strong>
-              <span class="text-muted">({{ rentReliefRate() * 100 }}% of rent, capped at {{ rentReliefCap() | naira }})</span>
-            </div>
-          } @else {
-            <div class="alert alert--info" style="grid-column:1/-1">
-              <span class="alert__icon">ℹ</span>
-              <div class="alert__content">Rent Relief is not applicable — no rent expense entered.</div>
-            </div>
+            @if (fields.annualRent > 0) {
+              <div class="relief-callout">
+                <span>Rent Relief Applied:</span>
+                <strong>{{ rentRelief() | naira }}</strong>
+                <span class="text-muted">({{ rentReliefRate() * 100 }}% of rent, capped at {{ rentReliefCap() | naira }})</span>
+              </div>
+            } @else {
+              <div class="alert alert--info" style="grid-column:1/-1">
+                <span class="alert__icon">ℹ</span>
+                <div class="alert__content">Rent Relief is not applicable — no rent expense entered.</div>
+              </div>
+            }
           }
         </div>
       </div>
@@ -175,14 +181,16 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
               <div class="form-group flex-1">
                 <label class="form-label">Amount (₦)</label>
                 <input type="number" class="form-input" [(ngModel)]="w.claimedAmount"
-                  [name]="'wamt_' + i" min="0" (change)="w.approvedAmount = w.claimedAmount" />
+                  [name]="'wamt_' + i" min="0"
+                  (ngModelChange)="w.approvedAmount = w.claimedAmount"
+                  (change)="w.approvedAmount = w.claimedAmount" />
               </div>
               <button class="btn btn--danger btn--sm" style="margin-top:22px" (click)="removeWht(w.id)">Remove</button>
             </div>
             <div class="relief-docs">
               <lf-file-dropzone [compact]="true" label="Attach WHT certificate" (fileSelected)="onFileSelected($event, w)" />
               @for (doc of w.documents; track doc.id) {
-                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+                <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(w, doc.id)">×</button></span>
               }
             </div>
           </div>
@@ -196,28 +204,28 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
         }
       </div>
 
-      <!-- Foreign tax paid (reference only) -->
+      <!-- PAYE already deducted -->
       <div class="card">
-        <h3 class="title-md" style="margin-bottom:var(--space-2)">Foreign Tax Paid <span class="badge badge--draft" style="font-size:10px;vertical-align:middle">Reference only</span></h3>
+        <h3 class="title-md" style="margin-bottom:var(--space-2)">PAYE Already Deducted</h3>
         <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
-          Tax deducted or paid in the country of source on foreign income. Recorded for reference only in v1 —
-          formal double-taxation treaty relief requires a tax advisor.
+          Pay-As-You-Earn (PAYE) income tax already deducted by your employer(s) during the year.
+          Credited directly against your computed tax payable. (Foreign tax paid is recorded per foreign income entry in Step 1.)
         </p>
         <div class="relief-row">
           <div class="relief-row__info">
-            <div class="relief-row__label">Foreign Tax Paid (₦ equivalent)<lf-help text="Convert the foreign tax paid to Naira at the same rate used for the income entry. Attach the foreign tax certificate or withholding notice as a supporting document."></lf-help></div>
-            <div class="relief-row__sub">Attach supporting documentation below</div>
+            <div class="relief-row__label">Total PAYE Deducted (₦)<lf-help text="Total PAYE withheld by your employer(s) for this income year, as shown on your payslips or tax deduction card. Directly reduces your tax payable."></lf-help></div>
+            <div class="relief-row__sub">Attach employer PAYE tax deduction card or payslip summary below</div>
           </div>
           <div class="relief-row__input">
-            <input type="number" class="form-input" [(ngModel)]="fields.foreignTaxPaid"
-              name="foreignTaxPaid" min="0" placeholder="₦ 0.00" />
+            <input type="number" class="form-input" [(ngModel)]="fields.paye"
+              name="paye" min="0" placeholder="₦ 0.00" />
           </div>
         </div>
-        @if (fields.foreignTaxPaid > 0) {
+        @if (fields.paye > 0 || standard.paye.documents.length > 0) {
           <div class="relief-docs">
-            <lf-file-dropzone [compact]="true" label="Attach foreign tax certificate" (fileSelected)="onFileSelected($event, standard.foreign_tax)" />
-            @for (doc of standard.foreign_tax.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+            <lf-file-dropzone [compact]="true" label="Attach PAYE tax deduction card" (fileSelected)="onFileSelected($event, standard.paye)" />
+            @for (doc of standard.paye.documents; track doc.id) {
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(standard.paye, doc.id)">×</button></span>
             }
           </div>
         }
@@ -246,7 +254,7 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
           <div class="relief-docs" style="margin-bottom:var(--space-4)">
             <lf-file-dropzone [compact]="true" label="Attach supporting document" (fileSelected)="onFileSelected($event, o)" />
             @for (doc of o.documents; track doc.id) {
-              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</span>
+              <span class="doc-chip"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }} <button type="button" class="doc-chip__remove" aria-label="Remove attachment" (click)="onRemoveDocument(o, doc.id)">×</button></span>
             }
           </div>
         }
@@ -285,6 +293,11 @@ const STANDARD_FIELDS: Record<StandardRelief, FieldKey> = {
       font-size: var(--text-label-sm); color: var(--color-on-surface-variant);
       padding: var(--space-1) var(--space-2);
     }
+    .doc-chip__remove {
+      background: none; border: none; color: inherit; cursor: pointer;
+      padding: 0 4px; font-size: 14px; line-height: 1; opacity: 0.7;
+    }
+    .doc-chip__remove:hover { opacity: 1; color: var(--color-error, #b91c1c); }
     .relief-callout {
       display: flex; align-items: center; gap: var(--space-3);
       padding: var(--space-3) var(--space-4);
@@ -307,35 +320,72 @@ export class StepDeductionsComponent implements OnInit {
   next = output<void>();
   back = output<void>();
 
-  private filingService = inject(FilingService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
 
-  fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, foreignTaxPaid: 0 };
+  fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, paye: 0 };
   standard = {} as Record<StandardRelief, ReliefEntry>;
   whtEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   otherEntries = signal<(ReliefEntry & { description?: string })[]>([]);
   saving = signal(false);
+  private filingConfig = signal<TaxConfig | null>(null);
   private removedIds: string[] = [];
+  private persistedStandardIds = new Set<string>();
+  private initialSnapshot = '';
+  private loaded = false;
 
-  async ngOnInit(): Promise<void> {
+  private snapshot(): string {
+    return JSON.stringify({
+      fields: this.fields,
+      standardDocs: Object.fromEntries(
+        Object.entries(this.standard).map(([k, v]) => [k, v?.documents?.map(d => d.id) ?? []]),
+      ),
+      wht: this.whtEntries(),
+      other: this.otherEntries(),
+      removed: this.removedIds.length,
+    });
+  }
+
+  isDirty(): boolean {
+    return this.loaded && this.snapshot() !== this.initialSnapshot;
+  }
+
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     for (const type of Object.keys(STANDARD_FIELDS) as StandardRelief[]) {
       this.standard[type] = this.newRelief(type);
     }
-    const existing = await this.filingService.listReliefEntries(this.filingId());
-    for (const r of existing) {
-      if (r.reliefType in STANDARD_FIELDS) {
-        const type = r.reliefType as StandardRelief;
-        const current = this.standard[type];
-        // earlier versions saved a new row on every pass; keep the latest, drop the rest
-        if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
-        this.standard[type] = r;
-        this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
-      } else if (r.reliefType === 'wht') {
-        this.whtEntries.update(e => [...e, r]);
-      } else if (r.reliefType === 'other_approved') {
-        this.otherEntries.update(e => [...e, r]);
+    try {
+      try {
+        if (typeof this.configService.getForFiling === 'function') {
+          this.filingConfig.set(await this.configService.getForFiling(this.filingId()));
+        }
+      } catch { /* fall back to activeConfig */ }
+      const existing = await this.filingService.listReliefEntries(this.filingId());
+      for (const r of existing) {
+        if (r.reliefType in STANDARD_FIELDS) {
+          const type = r.reliefType as StandardRelief;
+          const current = this.standard[type];
+          // earlier versions saved a new row on every pass; keep the latest, drop the rest
+          if (current.id !== r.id && existing.some(x => x.id === current.id)) this.removedIds.push(current.id);
+          this.standard[type] = r;
+          this.persistedStandardIds.add(r.id);
+          this.fields[STANDARD_FIELDS[type]] = r.claimedAmount;
+        } else if (r.reliefType === 'wht') {
+          this.whtEntries.update(e => [...e, r]);
+        } else if (r.reliefType === 'other_approved') {
+          this.otherEntries.update(e => [...e, r]);
+        }
       }
+    } catch (err) {
+      this.toast.error('Could not load deductions: ' + String(err));
+    } finally {
+      this.initialSnapshot = this.snapshot();
+      this.loaded = true;
     }
   }
 
@@ -346,12 +396,14 @@ export class StepDeductionsComponent implements OnInit {
     };
   }
 
-  private caps = computed(() => this.configService.activeConfig()?.reliefCaps);
+  private caps = computed(() => (this.filingConfig() ?? this.configService.activeConfig())?.reliefCaps);
 
+  craEnabled = computed(() => Boolean(this.caps()?.craEnabled));
   rentReliefRate = computed(() => this.caps()?.rentReliefRate ?? 0.20);
   rentReliefCap = computed(() => this.caps()?.rentReliefCap ?? 500_000);
 
   rentRelief(): number {
+    if (this.craEnabled()) return 0;
     return Math.min(this.fields.annualRent * this.rentReliefRate(), this.rentReliefCap());
   }
 
@@ -359,7 +411,9 @@ export class StepDeductionsComponent implements OnInit {
     return cap != null && cap >= 0 ? Math.min(amount, cap) : amount;
   }
 
-  totalWht = computed(() => this.whtEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0));
+  totalWht(): number {
+    return this.whtEntries().reduce((s, e) => s + (e.claimedAmount ?? 0), 0);
+  }
 
   /** Mirrors the engine; WHT is a credit against tax, not a deduction from income. */
   totalDeductions(): number {
@@ -388,34 +442,79 @@ export class StepDeductionsComponent implements OnInit {
     if (error) this.toast.error(error);
   }
 
-  async saveAndNext(): Promise<void> {
+  async onRemoveDocument(entry: ReliefEntry, docId: string): Promise<void> {
+    const error = await removeDocument(this.filingService, entry, docId);
+    if (error) this.toast.error('Could not remove document: ' + error);
+  }
+
+  async save(): Promise<boolean> {
     this.saving.set(true);
     try {
       const fid = this.filingId();
-      for (const id of this.removedIds) await this.filingService.deleteReliefEntry(id);
-      this.removedIds = [];
+      const deleteIds: string[] = [...this.removedIds];
+      const deletedStandardIds: string[] = [];
 
       const entries: ReliefEntry[] = [...this.whtEntries(), ...this.otherEntries()];
       for (const [type, key] of Object.entries(STANDARD_FIELDS) as [StandardRelief, FieldKey][]) {
         const entry = this.standard[type];
-        entry.claimedAmount = entry.approvedAmount = this.fields[key] || 0;
+        // On PITA (CRA) drafts, rent relief is hidden and disallowed; zero out any legacy rent row.
+        if (type === 'rent' && this.craEnabled()) {
+          this.fields.annualRent = 0;
+        }
+        const amount = this.fields[key] || 0;
+        entry.claimedAmount = entry.approvedAmount = amount;
+        const hasDocs = (entry.documents?.length ?? 0) > 0;
+        if (amount <= 0 && !hasDocs) {
+          if (this.persistedStandardIds.has(entry.id)) {
+            deleteIds.push(entry.id);
+            deletedStandardIds.push(entry.id);
+          }
+          continue;
+        }
         entries.push(entry);
+      }
+
+      const toSave: ReliefEntry[] = entries.map(entry => {
+        const claimed = Number(entry.claimedAmount ?? 0) || 0;
+        entry.claimedAmount = claimed;
+        if (entry.reliefType === 'wht' || entry.reliefType === 'other_approved') {
+          entry.approvedAmount = claimed;
+        } else {
+          entry.approvedAmount = Number(entry.approvedAmount ?? claimed) || 0;
+        }
+        return { ...entry, filingId: fid };
+      });
+
+      await this.filingService.saveReliefEntries(fid, toSave, deleteIds);
+      this.removedIds = [];
+      for (const id of deletedStandardIds) this.persistedStandardIds.delete(id);
+      for (const entry of entries) {
+        if (entry.reliefType in STANDARD_FIELDS) {
+          this.persistedStandardIds.add(entry.id);
+        }
       }
 
       const failed: string[] = [];
       for (const entry of entries) {
-        if (entry.reliefType === 'wht' || entry.reliefType === 'other_approved') {
-          entry.approvedAmount = entry.claimedAmount;
-        }
-        await this.filingService.upsertReliefEntry({ ...entry, filingId: fid });
         failed.push(...await flushDocuments(this.filingService, entry, 'relief_entry'));
       }
-      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
-      this.next.emit();
+      if (failed.length) {
+        this.toast.error('Could not attach ' + failed.join('; '));
+        return false;
+      }
+      this.initialSnapshot = this.snapshot();
+      return true;
     } catch (err) {
       this.toast.error('Could not save deductions: ' + String(err));
+      return false;
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async saveAndNext(): Promise<void> {
+    if (await this.save()) {
+      this.next.emit();
     }
   }
 }

@@ -131,7 +131,7 @@ export class HelpTooltipComponent {
   direction = signal<'above' | 'below'>('above');
 
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
-  private el = inject(ElementRef);
+  private readonly el = inject(ElementRef);
 
   show(): void {
     this.cancelHide();

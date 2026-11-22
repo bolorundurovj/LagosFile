@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [master, develop]
   pull_request:
-    branches: [master]
+    branches: [master, develop]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -36,7 +37,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.diff.outputs.changed == 'true'
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Assemble version from VERSION.ini
         id: read
@@ -75,7 +76,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Sync version across all files
         run: node scripts/sync-version.mjs
@@ -113,7 +114,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -140,7 +141,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -223,6 +224,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Node dependencies for PAYE cross-check
+        run: npm ci
+
+      - name: Cross-check Rust engine against nigeria-paye
+        run: npm run test:paye
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
@@ -245,11 +257,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test extensions
+        run: npm run test:ext
 
       - name: Pack extensions
         run: npm run pack:ext

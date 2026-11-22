@@ -124,7 +124,7 @@ interface FilingRowAction {
                     (keydown.enter)="viewFiling(f.id)"
                     (keydown.space)="viewFiling(f.id); $event.preventDefault()"
                   >
-                    <td><strong>YOA {{ f.yearOfAssessment }}</strong></td>
+                    <td><strong>Income year {{ f.yearOfAssessment }}</strong> <span class="text-muted">· LIRS YOA {{ f.yearOfAssessment + 1 }}</span></td>
                     <td class="text-muted cell-truncate">{{ f.filingReference ?? '—' }}</td>
                     <td>
                       <span class="badge badge--{{ f.status | lowercase }}">{{ f.status }}</span>
@@ -326,20 +326,32 @@ interface FilingRowAction {
                 <span>Graduated Tax</span>
                 <span class="financial-value">{{ previewFiling()!.taxPayable | naira }}</span>
               </div>
+              @if ((previewFiling()!.minimumTax ?? 0) > 0) {
+                <div class="breakdown-row">
+                  <span>Minimum Tax Floor</span>
+                  <span class="financial-value">{{ previewFiling()!.minimumTax | naira }}</span>
+                </div>
+              }
               <div class="breakdown-row breakdown-row--deduct">
                 <span>Less: WHT Credits</span>
                 <span class="financial-value">{{ previewFiling()!.whtCredit | naira }}</span>
               </div>
+              @if ((previewFiling()!.payeCredit ?? 0) > 0) {
+                <div class="breakdown-row breakdown-row--deduct">
+                  <span>Less: PAYE Credits</span>
+                  <span class="financial-value">{{ previewFiling()!.payeCredit | naira }}</span>
+                </div>
+              }
+              @if ((previewFiling()!.foreignTaxCredit ?? 0) > 0) {
+                <div class="breakdown-row breakdown-row--deduct">
+                  <span>Less: Foreign Tax Credits</span>
+                  <span class="financial-value">{{ previewFiling()!.foreignTaxCredit | naira }}</span>
+                </div>
+              }
               <div class="breakdown-row breakdown-row--subtotal">
                 <span>Net Tax Payable</span>
                 <span class="financial-value">{{ previewFiling()!.netTaxPayable | naira }}</span>
               </div>
-              @if ((previewFiling()!.minimumTax ?? 0) > (previewFiling()!.netTaxPayable ?? 0)) {
-                <div class="breakdown-row breakdown-row--deduct">
-                  <span>Minimum Tax (1% of Gross)</span>
-                  <span class="financial-value">{{ previewFiling()!.minimumTax | naira }}</span>
-                </div>
-              }
             </div>
             <div class="preview-total">
               <span>Final Tax Payable</span>
@@ -692,11 +704,11 @@ interface FilingRowAction {
   `],
 })
 export class FilingHistoryComponent implements OnInit {
-  private filingService = inject(FilingService);
-  private lirsService = inject(LIRSService);
-  private toast = inject(ToastService);
-  private cdr = inject(ChangeDetectorRef);
-  private router = inject(Router);
+  private readonly filingService = inject(FilingService);
+  private readonly lirsService = inject(LIRSService);
+  private readonly toast = inject(ToastService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly router = inject(Router);
 
   openMenuId = signal<string | null>(null);
 
@@ -799,7 +811,7 @@ export class FilingHistoryComponent implements OnInit {
   runAction(id: FilingActionId, f: Filing): void {
     this.openMenuId.set(null);
     switch (id) {
-      case 'export': this.openPreview(f); break;
+      case 'export': void this.openPreview(f); break;
       case 'duplicate': void this.duplicate(f.id); break;
       case 'amend': void this.amend(f.id); break;
       case 'fileWithLirs': void this.fileWithLirs(f); break;
@@ -809,7 +821,11 @@ export class FilingHistoryComponent implements OnInit {
     }
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       this.allFilings = await this.filingService.listFilings();
       this.applyFilter();
@@ -819,8 +835,10 @@ export class FilingHistoryComponent implements OnInit {
     }
   }
 
-  private applyFilter(): void {
-    this.currentPage = 1;
+  private applyFilter(resetPage = false): void {
+    if (resetPage) {
+      this.currentPage = 1;
+    }
     let result = this.allFilings;
     const q = this.searchQuery.toLowerCase().trim();
     if (q) {
@@ -836,19 +854,22 @@ export class FilingHistoryComponent implements OnInit {
       result = result.filter(f => f.yearOfAssessment === this.yearFilter!);
     }
     this.totalPages = Math.max(1, Math.ceil(result.length / this.pageSize));
+    if (this.currentPage > this.totalPages) {
+      this.currentPage = this.totalPages;
+    }
     const start = (this.currentPage - 1) * this.pageSize;
     this.displayedFilings.set(result.slice(start, start + this.pageSize));
   }
 
-  private refreshData(): void {
-    this.applyFilter();
+  private refreshData(resetPage = false): void {
+    this.applyFilter(resetPage);
   }
 
-  onSearchChange(value: string): void { this.searchQuery = value; this.refreshData(); }
-  onStatusChange(value: string): void { this.statusFilter = value; this.refreshData(); }
-  onYearChange(value: string): void { this.yearFilter = value ? Number(value) : null; this.refreshData(); }
-  prevPage(): void { if (this.currentPage > 1) { this.currentPage--; this.refreshData(); } }
-  nextPage(): void { if (this.currentPage < this.totalPages) { this.currentPage++; this.refreshData(); } }
+  onSearchChange(value: string): void { this.searchQuery = value; this.refreshData(true); }
+  onStatusChange(value: string): void { this.statusFilter = value; this.refreshData(true); }
+  onYearChange(value: string): void { this.yearFilter = value ? Number(value) : null; this.refreshData(true); }
+  prevPage(): void { if (this.currentPage > 1) { this.currentPage--; this.refreshData(false); } }
+  nextPage(): void { if (this.currentPage < this.totalPages) { this.currentPage++; this.refreshData(false); } }
 
   openExport(f: Filing): void { this.exportFiling.set(f); }
   closeExport(): void { this.exportFiling.set(null); }
@@ -866,7 +887,10 @@ export class FilingHistoryComponent implements OnInit {
         ...allowances.flatMap(e => e.documents),
         ...reliefs.flatMap(e => e.documents),
       ].length;
-      this.previewCounts.set({ income: income.length, allowances: allowances.length, reliefs: reliefs.length, documents });
+      const realReliefs = reliefs.filter(
+        r => r.claimedAmount > 0 || r.approvedAmount > 0 || (r.documents?.length ?? 0) > 0,
+      );
+      this.previewCounts.set({ income: income.length, allowances: allowances.length, reliefs: realReliefs.length, documents });
     } catch { /* counts stay at 0 */ }
   }
   closePreview(): void { this.previewFiling.set(null); }
@@ -933,14 +957,17 @@ export class FilingHistoryComponent implements OnInit {
       const res = await this.lirsService.fileWithLirs(f.id);
       if (res.fallbackActive) {
         this.toast.warning(res.message);
-        this.openReferencePanelForFiling(f);
+        void this.openReferencePanelForFiling(f);
+      } else if (res.warnings && res.warnings.length > 0) {
+        const alreadyIncluded = res.warnings.every(w => res.message.includes(w));
+        this.toast.warning(alreadyIncluded ? res.message : `${res.message} (${res.warnings.join('; ')})`);
       } else {
         this.toast.success(res.message);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.toast.error('Failed to open LIRS portal: ' + msg);
-      this.openReferencePanelForFiling(f);
+      void this.openReferencePanelForFiling(f);
       this.referenceStatus.set('Could not open LIRS portal. Use the values below to fill Form A manually.');
     } finally {
       this.lirsActionLoading.set(false);

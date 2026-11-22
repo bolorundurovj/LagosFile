@@ -111,9 +111,9 @@ export class ProfileSetupComponent {
   loading = false;
   errors: { fullName?: string; tin?: string; general?: string } = {};
 
-  private profileService = inject(ProfileService);
-  private auth = inject(AuthService);
-  private router = inject(Router);
+  private readonly profileService = inject(ProfileService);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
   async submit(): Promise<void> {
     this.errors = {};
@@ -135,7 +135,7 @@ export class ProfileSetupComponent {
         filingAgent: this.form.filingAgent || undefined,
       });
       this.auth.setTaxpayer(taxpayer);
-      this.router.navigate(['/dashboard']);
+      void this.router.navigate(['/dashboard']);
     } catch (e: any) {
       this.errors.general = e?.toString() ?? 'Failed to create profile.';
     } finally {

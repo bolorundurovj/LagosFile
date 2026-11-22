@@ -1,51 +1,78 @@
-use crate::{models::*, services::computation::ComputationEngine, AppState};
+use crate::{
+    models::*,
+    services::{
+        computation::{bik_taxable_value, ComputationEngine},
+        config::ConfigService,
+    },
+    AppState,
+};
 use chrono::Utc;
 use rusqlite::params;
 use std::{
+    collections::BTreeMap,
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tauri::State;
 use uuid::Uuid;
 
 const LIRS_BRIDGE_PORT: u16 = 19876;
-const LIRS_BRIDGE_TIMEOUT_SECS: u64 = 600; // 10 minutes
+const LIRS_BRIDGE_IDLE_TIMEOUT_SECS: u64 = 600; // 10 minutes
+const LIRS_BRIDGE_MAX_LIFETIME_SECS: u64 = 3600; // 60 minutes hard cap
 
-fn load_active_config(conn: &rusqlite::Connection) -> rusqlite::Result<TaxConfig> {
-    conn.query_row(
-        "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
-                cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
-                is_active,last_modified,modified_by
-         FROM tax_config WHERE is_active=1 LIMIT 1",
-        [],
-        |row| {
-            let bands_json: String = row.get(3)?;
-            let caps_json: String = row.get(4)?;
-            let cgt_json: String = row.get(5)?;
-            let rates_json: String = row.get(6)?;
-            Ok(TaxConfig {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_else(|_| Uuid::new_v4()),
-                version_label: row.get(1)?,
-                governed_by: row.get(2)?,
-                bands: serde_json::from_str(&bands_json).unwrap_or_default(),
-                relief_caps: serde_json::from_str(&caps_json).unwrap_or_default(),
-                cgt_thresholds: serde_json::from_str(&cgt_json).unwrap_or(CgtThresholds {
-                    proceeds_threshold: 150_000_000.0,
-                    gain_threshold: 10_000_000.0,
-                }),
-                allowance_rates: serde_json::from_str(&rates_json).unwrap_or_default(),
-                minimum_tax_rate: row.get(7)?,
-                is_active: row.get::<_, i32>(8)? == 1,
-                last_modified: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(9)?)
-                    .unwrap_or_else(|_| {
-                        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap()
-                    })
-                    .with_timezone(&Utc),
-                modified_by: row.get(10)?,
-            })
-        },
-    )
+pub struct BridgeHandle {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    pub port: u16,
+    pub token: String,
+}
+
+fn generate_bridge_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+impl BridgeHandle {
+    pub fn stop(mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for BridgeHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+pub fn stop_bridge(state: &AppState) {
+    let existing = state.bridge.lock().unwrap().take();
+    if let Some(handle) = existing {
+        handle.stop();
+    }
 }
 
 pub fn format_payer_id(tin: &str) -> String {
@@ -61,13 +88,16 @@ fn lirs_data_dir() -> std::path::PathBuf {
     home.join("LagosFile")
 }
 
-fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
+pub fn build_pending_filing(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<PendingFiling, String> {
     let filing = conn
         .query_row(
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
-                    filing_reference,created_at,confirmed_at,total_income_ngn,
-                    chargeable_income,tax_payable,wht_credit,net_tax_payable,
-                    minimum_tax,final_tax_payable,tax_config_version
+                    filing_reference,created_at,confirmed_at,submitted_at,total_income_ngn,
+                    chargeable_income,tax_payable,wht_credit,paye_credit,foreign_tax_credit,
+                    net_tax_payable,minimum_tax,final_tax_payable,tax_config_version,tax_config_id
              FROM filing WHERE id=?1",
             params![id],
             |row| {
@@ -91,14 +121,23 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                         .get::<_, Option<String>>(7)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                         .map(|d| d.with_timezone(&Utc)),
-                    total_income_ngn: row.get(8)?,
-                    chargeable_income: row.get(9)?,
-                    tax_payable: row.get(10)?,
-                    wht_credit: row.get(11)?,
-                    net_tax_payable: row.get(12)?,
-                    minimum_tax: row.get(13)?,
-                    final_tax_payable: row.get(14)?,
-                    tax_config_version: row.get(15)?,
+                    submitted_at: row
+                        .get::<_, Option<String>>(8)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|d| d.with_timezone(&Utc)),
+                    total_income_ngn: row.get(9)?,
+                    chargeable_income: row.get(10)?,
+                    tax_payable: row.get(11)?,
+                    wht_credit: row.get(12)?,
+                    paye_credit: row.get(13)?,
+                    foreign_tax_credit: row.get(14)?,
+                    net_tax_payable: row.get(15)?,
+                    minimum_tax: row.get(16)?,
+                    final_tax_payable: row.get(17)?,
+                    tax_config_version: row.get(18)?,
+                    tax_config_id: row
+                        .get::<_, Option<String>>(19)?
+                        .and_then(|s| Uuid::parse_str(&s).ok()),
                     payment_date: None,
                     payment_reference: None,
                     amount_paid: None,
@@ -122,112 +161,14 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
         )
         .map_err(|e| format!("Taxpayer not found: {}", e))?;
 
-    let mut ie_stmt = conn
-        .prepare(
-            "SELECT income_type,gross_amount_ngn,is_foreign,foreign_currency,
-                    foreign_amount,fx_rate_used,fx_rate_source
-             FROM income_entry WHERE filing_id=?1",
-        )
-        .map_err(|e| e.to_string())?;
-
-    #[allow(clippy::type_complexity)]
-    let income_rows: Vec<(
-        String,
-        f64,
-        bool,
-        Option<String>,
-        Option<f64>,
-        Option<f64>,
-        Option<String>,
-    )> = ie_stmt
-        .query_map(params![id], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get::<_, i32>(2)? == 1,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let mut employment = 0.0_f64;
-    let mut business = 0.0_f64;
-    let mut rental = 0.0_f64;
-    let mut dividend = 0.0_f64;
-    let mut interest = 0.0_f64;
-    let mut capital_gain = 0.0_f64;
-    let mut digital_asset = 0.0_f64;
-    let mut royalty = 0.0_f64;
-    let mut prize = 0.0_f64;
-    let mut other = 0.0_f64;
-    let mut foreign_total_usd = 0.0_f64;
-    let mut foreign_naira = 0.0_f64;
-    let mut foreign_rate = 0.0_f64;
-    let mut foreign_source = String::new();
-
-    for (in_type, amt, is_foreign, _curr, f_amt, fx_used, fx_src) in &income_rows {
-        match in_type.as_str() {
-            "employment" => employment += amt,
-            "business" => business += amt,
-            "rental" => rental += amt,
-            "dividend" => dividend += amt,
-            "interest" => interest += amt,
-            "capital_gain_shares" => capital_gain += amt,
-            "digital_asset" => digital_asset += amt,
-            "royalty" => royalty += amt,
-            "prize" => prize += amt,
-            _ => other += amt,
-        }
-        if *is_foreign {
-            foreign_total_usd += f_amt.unwrap_or(0.0);
-            if let (Some(r), Some(s)) = (fx_used, fx_src) {
-                foreign_naira = *r * f_amt.unwrap_or(0.0);
-                foreign_rate = *r;
-                foreign_source = s.clone();
-            }
-        }
-    }
-
-    let mut re_stmt = conn
-        .prepare("SELECT relief_type,claimed_amount FROM relief_entry WHERE filing_id=?1")
-        .map_err(|e| e.to_string())?;
-
-    let mut pension = 0.0_f64;
-    let mut nhf = 0.0_f64;
-    let mut nhis = 0.0_f64;
-    let mut life_assurance = 0.0_f64;
-    let mut rent_relief_applied = 0.0_f64;
-
-    let relief_rows: Vec<(String, f64)> = re_stmt
-        .query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    for (r_type, amt) in &relief_rows {
-        match r_type.as_str() {
-            "pension" => pension += amt,
-            "nhf" => nhf += amt,
-            "nhis" => nhis += amt,
-            "life_assurance" => life_assurance += amt,
-            "rent" => rent_relief_applied += amt,
-            _ => {}
-        }
-    }
-
-    let config = load_active_config(conn).map_err(|e| e.to_string())?;
+    let config = ConfigService::get_for_filing(conn, id).map_err(|e| e.to_string())?;
 
     let mut ie_full_stmt = conn
         .prepare(
             "SELECT id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
                     foreign_currency,foreign_amount,income_date,fx_rate_fetched,
                     fx_rate_cbn_override,fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,
-                    is_cgt_exempt,cgt_proceeds,cgt_gain
+                    is_cgt_exempt,cgt_proceeds,cgt_gain,bik_category,bik_cost
              FROM income_entry WHERE filing_id=?1",
         )
         .map_err(|e| e.to_string())?;
@@ -255,12 +196,151 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                 is_cgt_exempt: row.get::<_, i32>(14)? == 1,
                 cgt_proceeds: row.get(15)?,
                 cgt_gain: row.get(16)?,
+                bik_category: row.get(17)?,
+                bik_cost: row.get(18)?,
                 documents: vec![],
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
+
+    let total_employment_income: f64 = income_entries
+        .iter()
+        .filter(|e| e.income_type == "employment")
+        .map(|e| e.gross_amount_ngn.max(0.0))
+        .sum();
+    let mut remaining_accommodation_cap = total_employment_income * 0.20;
+
+    let mut employment = 0.0_f64;
+    let mut benefits_in_kind = 0.0_f64;
+    let mut rent_paid_by_employer = 0.0_f64;
+    let mut business = 0.0_f64;
+    let mut rental = 0.0_f64;
+    let mut dividend = 0.0_f64;
+    let mut interest = 0.0_f64;
+    let mut capital_gain = 0.0_f64;
+    let mut digital_asset = 0.0_f64;
+    let mut royalty = 0.0_f64;
+    let mut prize = 0.0_f64;
+    let mut other = 0.0_f64;
+
+    struct ForeignAcc {
+        total_amount: f64,
+        naira_equivalent: f64,
+        last_rate: f64,
+        sources: Vec<String>,
+    }
+    let mut foreign_by_currency: BTreeMap<String, ForeignAcc> = BTreeMap::new();
+
+    let share_disposals_exempt =
+        crate::services::computation::cgt_shares_exempt(&income_entries, &config.cgt_thresholds);
+
+    for entry in &income_entries {
+        match entry.income_type.as_str() {
+            "employment" => employment += entry.gross_amount_ngn,
+            "benefits_in_kind" => {
+                if entry.bik_category.as_deref() == Some("accommodation") {
+                    rent_paid_by_employer +=
+                        entry.bik_cost.unwrap_or(entry.gross_amount_ngn).max(0.0);
+                }
+                let val = match (entry.bik_category.as_deref(), entry.bik_cost) {
+                    (Some("accommodation"), Some(cost)) => {
+                        let capped = cost.max(0.0).min(remaining_accommodation_cap);
+                        remaining_accommodation_cap =
+                            (remaining_accommodation_cap - capped).max(0.0);
+                        capped
+                    }
+                    _ => bik_taxable_value(entry, total_employment_income),
+                };
+                benefits_in_kind += val;
+            }
+            "business" => business += entry.gross_amount_ngn,
+            "rental" => rental += entry.gross_amount_ngn,
+            "dividend" => dividend += entry.gross_amount_ngn,
+            "interest" => interest += entry.gross_amount_ngn,
+            "capital_gain_shares" => {
+                if !share_disposals_exempt {
+                    capital_gain += entry.cgt_gain.unwrap_or(entry.gross_amount_ngn).max(0.0);
+                }
+            }
+            "digital_asset" => digital_asset += entry.gross_amount_ngn,
+            "royalty" => royalty += entry.gross_amount_ngn,
+            "prize" => prize += entry.gross_amount_ngn,
+            _ => other += entry.gross_amount_ngn,
+        }
+        if entry.is_foreign {
+            let curr = entry
+                .foreign_currency
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("USD")
+                .to_uppercase();
+            let amt = entry.foreign_amount.unwrap_or(0.0).max(0.0);
+            let ngn = if entry.gross_amount_ngn > 0.0 {
+                entry.gross_amount_ngn
+            } else {
+                entry.fx_rate_used.unwrap_or(0.0) * amt
+            };
+            let acc = foreign_by_currency.entry(curr).or_insert(ForeignAcc {
+                total_amount: 0.0,
+                naira_equivalent: 0.0,
+                last_rate: 0.0,
+                sources: Vec::new(),
+            });
+            acc.total_amount += amt;
+            acc.naira_equivalent += ngn;
+            if let Some(r) = entry.fx_rate_used {
+                acc.last_rate = r;
+            }
+            if let Some(ref s) = entry.fx_rate_source {
+                let s_trim = s.trim();
+                if !s_trim.is_empty() && !acc.sources.iter().any(|existing| existing == s_trim) {
+                    acc.sources.push(s_trim.to_string());
+                }
+            }
+        }
+    }
+
+    // Clamp net digital-asset losses to 0 (losses are ringfenced and not negative taxable income).
+    digital_asset = digital_asset.max(0.0);
+
+    let foreign_incomes: Vec<PendingFilingForeignCurrencySummary> = foreign_by_currency
+        .into_iter()
+        .map(|(currency, acc)| {
+            let fx_rate_used = if acc.total_amount > 0.0 {
+                acc.naira_equivalent / acc.total_amount
+            } else {
+                acc.last_rate
+            };
+            PendingFilingForeignCurrencySummary {
+                currency,
+                total_amount: acc.total_amount,
+                fx_rate_used,
+                fx_rate_source: acc.sources.join(", "),
+                naira_equivalent: acc.naira_equivalent,
+            }
+        })
+        .collect();
+
+    let primary_foreign = foreign_incomes
+        .iter()
+        .max_by(|a, b| a.naira_equivalent.total_cmp(&b.naira_equivalent))
+        .map(|f| PendingFilingForeignIncome {
+            total_usd: f.total_amount,
+            currency: f.currency.clone(),
+            fx_rate_used: f.fx_rate_used,
+            fx_rate_source: f.fx_rate_source.clone(),
+            naira_equivalent: f.naira_equivalent,
+        })
+        .unwrap_or(PendingFilingForeignIncome {
+            total_usd: 0.0,
+            currency: String::new(),
+            fx_rate_used: 0.0,
+            fx_rate_source: String::new(),
+            naira_equivalent: 0.0,
+        });
 
     let mut ca_stmt = conn
         .prepare(
@@ -283,7 +363,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
                     &row.get::<_, String>(5)?,
                     "%Y-%m-%d",
                 )
-                .unwrap_or_default(),
+                .ok(),
                 tax_written_down_value: row.get(6)?,
                 annual_allowance_rate: row.get(7)?,
                 annual_allowance_amount: row.get(8)?,
@@ -291,7 +371,7 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut re_full_stmt = conn
@@ -321,13 +401,99 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let computation = ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
         .map_err(|e| e.to_string())?;
 
-    let yoa = filing.year_of_assessment;
+    let mut pension_raw = 0.0_f64;
+    let mut nhf_raw = 0.0_f64;
+    let mut nhis_raw = 0.0_f64;
+    let mut life_assurance = 0.0_f64;
+    let mut other_approved = 0.0_f64;
+    let mut rent_paid = 0.0_f64;
+
+    for r in &reliefs {
+        let approved = r.approved_amount.max(0.0);
+        match r.relief_type.as_str() {
+            "pension" => pension_raw += approved,
+            "nhf" => nhf_raw += approved,
+            "nhis" => nhis_raw += approved,
+            "life_assurance" => life_assurance += approved,
+            "other_approved" => other_approved += approved,
+            "rent" => {
+                rent_paid += if approved > 0.0 {
+                    approved
+                } else {
+                    r.claimed_amount.max(0.0)
+                };
+            }
+            _ => {}
+        }
+    }
+
+    let apply_cap = |v: f64, cap: Option<f64>| match cap {
+        Some(limit) => v.min(limit),
+        None => v,
+    };
+    let pension = apply_cap(pension_raw, config.relief_caps.pension_cap);
+    let nhf = apply_cap(nhf_raw, config.relief_caps.nhf_cap);
+    let nhis = apply_cap(nhis_raw, config.relief_caps.nhis_cap);
+
+    let (acc_type, ownership) = if rent_paid > 0.0 {
+        ("rent".to_string(), "tenant".to_string())
+    } else if rent_paid_by_employer > 0.0 {
+        ("employer_provided".to_string(), "tenant".to_string())
+    } else {
+        ("owner".to_string(), "owner".to_string())
+    };
+
+    let income_year = filing.year_of_assessment;
+    let lirs_yoa = income_year + 1;
+
+    // Filed returns (Confirmed / Submitted) are immutable: use their stored figures
+    // so engine updates never alter what is sent to LIRS for an already-filed return.
+    let use_stored = filing.status != "Draft" && filing.final_tax_payable.is_some();
+    let payload_computation = if use_stored {
+        PendingFilingComputation {
+            total_gross_income: filing
+                .total_income_ngn
+                .unwrap_or(computation.total_gross_income),
+            total_capital_allowances: computation.prorated_capital_allowances,
+            chargeable_income: filing
+                .chargeable_income
+                .unwrap_or(computation.chargeable_income),
+            graduated_tax: filing.tax_payable.unwrap_or(computation.graduated_tax),
+            wht_credits: filing.wht_credit.unwrap_or(computation.wht_credits),
+            paye_credits: filing.paye_credit.unwrap_or(computation.paye_credits),
+            foreign_tax_credits: filing
+                .foreign_tax_credit
+                .unwrap_or(computation.foreign_tax_credits),
+            net_tax_payable: filing
+                .net_tax_payable
+                .unwrap_or(computation.net_tax_payable),
+            minimum_tax: filing.minimum_tax.unwrap_or(computation.minimum_tax),
+            final_tax_payable: filing
+                .final_tax_payable
+                .unwrap_or(computation.final_tax_payable),
+            config_version: filing.tax_config_version.clone(),
+        }
+    } else {
+        PendingFilingComputation {
+            total_gross_income: computation.total_gross_income,
+            total_capital_allowances: computation.prorated_capital_allowances,
+            chargeable_income: computation.chargeable_income,
+            graduated_tax: computation.graduated_tax,
+            wht_credits: computation.wht_credits,
+            paye_credits: computation.paye_credits,
+            foreign_tax_credits: computation.foreign_tax_credits,
+            net_tax_payable: computation.net_tax_payable,
+            minimum_tax: computation.minimum_tax,
+            final_tax_payable: computation.final_tax_payable,
+            config_version: computation.config_version.clone(),
+        }
+    };
 
     Ok(PendingFiling {
         filing_id: filing.id.to_string(),
@@ -336,10 +502,11 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
             tin: taxpayer.1.clone(),
             payer_id: format_payer_id(&taxpayer.1),
         },
-        year_of_assessment: yoa,
+        year_of_assessment: lirs_yoa,
         filing_reference: filing.filing_reference.clone(),
         income: PendingFilingIncome {
             employment,
+            benefits_in_kind,
             business,
             rental,
             dividend,
@@ -349,62 +516,36 @@ fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<Pending
             royalty,
             prize,
             other,
-            foreign_income: PendingFilingForeignIncome {
-                total_usd: foreign_total_usd,
-                currency: if foreign_total_usd > 0.0 {
-                    "USD".to_string()
-                } else {
-                    String::new()
-                },
-                fx_rate_used: foreign_rate,
-                fx_rate_source: foreign_source,
-                naira_equivalent: foreign_naira,
-            },
+            foreign_income: primary_foreign,
+            foreign_incomes,
         },
         accommodation: PendingFilingAccommodation {
-            acc_type: if rental > 0.0 {
-                "rent".to_string()
-            } else {
-                "owner".to_string()
-            },
-            ownership: if rental > 0.0 {
-                "tenant".to_string()
-            } else {
-                "owner".to_string()
-            },
-            rent_paid: rental,
-            rent_paid_by_employer: 0.0,
-            date_started: format!("{}-01-01", yoa),
-            date_end: format!("{}-12-31", yoa),
+            acc_type,
+            ownership,
+            rent_paid,
+            rent_paid_by_employer,
+            date_started: format!("{}-01-01", income_year),
+            date_end: format!("{}-12-31", income_year),
         },
         deductions: PendingFilingDeductions {
             pension,
             nhf,
             nhis,
             life_assurance,
-            rent_relief_applied,
+            rent_relief_applied: computation.rent_relief_applied,
+            consolidated_relief_allowance: computation.consolidated_relief_allowance,
+            other_approved,
         },
-        computation: PendingFilingComputation {
-            total_gross_income: computation.total_gross_income,
-            total_capital_allowances: computation.prorated_capital_allowances,
-            chargeable_income: computation.chargeable_income,
-            graduated_tax: computation.graduated_tax,
-            wht_credits: computation.wht_credits,
-            net_tax_payable: computation.net_tax_payable,
-            minimum_tax: computation.minimum_tax,
-            final_tax_payable: computation.final_tax_payable,
-            config_version: computation.config_version.clone(),
-        },
+        computation: payload_computation,
         generated_at: Utc::now().to_rfc3339(),
     })
 }
 
-/// Append an automation failure event to ~/LagosFile/automation-errors.log.
+/// Append an automation failure event to `log_dir`/automation-errors.log (~/LagosFile in the app).
 /// Never panics — errors are swallowed so a logging failure never crashes the command.
-pub fn log_automation_failure(filing_id: &str, reason: &str) {
-    let dir = lirs_data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let log_path = dir.join("automation-errors.log");
+pub fn log_automation_failure(log_dir: &std::path::Path, filing_id: &str, reason: &str) {
+    let _ = std::fs::create_dir_all(log_dir);
+    let log_path = log_dir.join("automation-errors.log");
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
     let line = format!(
         "[{}] filing_id={} reason={}\n",
@@ -421,15 +562,43 @@ pub fn log_automation_failure(filing_id: &str, reason: &str) {
     }
 }
 
-pub fn build_http_response(status: u16, content_type: &str, body: &str) -> String {
+pub fn is_allowed_origin(origin: &str) -> bool {
+    if origin.contains('\r') || origin.contains('\n') {
+        return false;
+    }
+    origin == "https://etax.lirs.net"
+        || origin == "https://etax.lirs.gov.ng"
+        || (origin.starts_with("chrome-extension://") && origin.len() > "chrome-extension://".len())
+        || (origin.starts_with("moz-extension://") && origin.len() > "moz-extension://".len())
+}
+
+pub fn is_allowed_host(host: &str, port: u16) -> bool {
+    host.eq_ignore_ascii_case(&format!("127.0.0.1:{}", port))
+}
+
+pub fn build_http_response(
+    status: u16,
+    content_type: &str,
+    body: &str,
+    allowed_origin: Option<&str>,
+) -> String {
     let status_text = match status {
         200 => "OK",
+        400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         _ => "Error",
     };
-    let cors = "Access-Control-Allow-Origin: *\r\n\
-                Access-Control-Allow-Methods: GET, OPTIONS\r\n\
-                Access-Control-Allow-Headers: Content-Type\r\n";
+    let cors = match allowed_origin {
+        Some(orig) => format!(
+            "Access-Control-Allow-Origin: {}\r\n\
+             Vary: Origin\r\n\
+             Access-Control-Allow-Methods: GET, OPTIONS\r\n\
+             Access-Control-Allow-Headers: Content-Type, X-LagosFile-Token\r\n",
+            orig
+        ),
+        None => String::new(),
+    };
     format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
@@ -441,69 +610,315 @@ pub fn build_http_response(status: u16, content_type: &str, body: &str) -> Strin
     )
 }
 
-fn start_bridge_server(filings_array_json: String, primary_json: String) {
-    std::thread::spawn(move || {
-        let listener = match TcpListener::bind(("127.0.0.1", LIRS_BRIDGE_PORT)) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!(
-                    "[LagosFile] LIRS bridge port {} already in use: {}",
-                    LIRS_BRIDGE_PORT, e
-                );
-                return;
-            }
-        };
-        listener.set_nonblocking(true).ok();
-        println!(
-            "[LagosFile] LIRS bridge started on http://127.0.0.1:{}",
-            LIRS_BRIDGE_PORT
-        );
+pub fn handle_bridge_request(
+    request: &str,
+    port: u16,
+    expected_token: &str,
+    filings_array_json: &str,
+    primary_json: &str,
+) -> (String, bool) {
+    let mut lines = request.lines();
+    let first_line = lines.next().unwrap_or("");
 
+    let mut host: Option<&str> = None;
+    let mut origin: Option<&str> = None;
+    let mut token: Option<&str> = None;
+
+    for line in lines {
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            let name_trimmed = name.trim();
+            let val_trimmed = value.trim();
+            if name_trimmed.eq_ignore_ascii_case("host") {
+                if host.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
+                host = Some(val_trimmed);
+            } else if name_trimmed.eq_ignore_ascii_case("origin") {
+                if origin.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
+                origin = Some(val_trimmed);
+            } else if name_trimmed.eq_ignore_ascii_case("x-lagosfile-token") {
+                if token.is_some() {
+                    return (build_http_response(403, "text/plain", "", None), false);
+                }
+                token = Some(val_trimmed);
+            }
+        }
+    }
+
+    match host {
+        Some(h) if is_allowed_host(h, port) => {}
+        _ => return (build_http_response(403, "text/plain", "", None), false),
+    }
+
+    let cors_origin = match origin {
+        Some(orig) => {
+            if is_allowed_origin(orig) {
+                Some(orig)
+            } else {
+                return (build_http_response(403, "text/plain", "", None), false);
+            }
+        }
+        None => None,
+    };
+
+    let mut req_parts = first_line.split_whitespace();
+    let method = req_parts.next().unwrap_or("");
+    let raw_target = req_parts.next().unwrap_or("");
+    let path = raw_target.split('?').next().unwrap_or(raw_target);
+
+    // Preflight OPTIONS does not carry the custom token and must NOT reset the idle timer.
+    if method == "OPTIONS" {
+        return (
+            build_http_response(200, "text/plain", "", cors_origin),
+            false,
+        );
+    }
+
+    // Every data/health request must present the current session token.
+    let token_valid = match token {
+        Some(provided) if !expected_token.is_empty() => {
+            constant_time_eq(provided.as_bytes(), expected_token.as_bytes())
+        }
+        _ => false,
+    };
+    if !token_valid {
+        return (
+            build_http_response(403, "text/plain", "", cors_origin),
+            false,
+        );
+    }
+
+    let (response, reset_idle) = match (method, path) {
+        ("GET", "/filings") => (
+            build_http_response(200, "application/json", filings_array_json, cors_origin),
+            true,
+        ),
+        ("GET", "/filing") => (
+            build_http_response(200, "application/json", primary_json, cors_origin),
+            true,
+        ),
+        ("GET", "/health") => (
+            build_http_response(200, "application/json", r#"{"status":"ok"}"#, cors_origin),
+            true,
+        ),
+        _ => (
+            build_http_response(404, "text/plain", "not found", cors_origin),
+            false,
+        ),
+    };
+
+    (response, reset_idle)
+}
+
+/// Reads an HTTP request head from `stream`, stopping at the blank line, the size cap,
+/// the read deadline, EOF, an error, or a stop signal. Returns the bytes read and
+/// whether the full header block was received.
+fn read_bridge_request(stream: &mut TcpStream, stop_flag: &AtomicBool) -> (Vec<u8>, bool) {
+    const MAX_HEADER_BYTES: usize = 16 * 1024;
+    const MAX_REQUEST_READ_MS: u64 = 1500;
+    let req_started = Instant::now();
+    let mut req_bytes: Vec<u8> = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    while !stop_flag.load(Ordering::SeqCst)
+        && req_started.elapsed() <= Duration::from_millis(MAX_REQUEST_READ_MS)
+    {
+        let n = match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        req_bytes.extend_from_slice(&chunk[..n]);
+        if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+            return (req_bytes, true);
+        }
+        if req_bytes.len() >= MAX_HEADER_BYTES {
+            break;
+        }
+    }
+    (req_bytes, false)
+}
+
+/// Handles one accepted bridge connection. Returns true when the request was
+/// authenticated, which resets the bridge idle timer.
+fn serve_bridge_connection(
+    mut stream: TcpStream,
+    stop_flag: &AtomicBool,
+    port: u16,
+    token: &str,
+    filings_array_json: &str,
+    primary_json: &str,
+) -> bool {
+    // Accepted sockets inherit non-blocking mode on Windows/macOS; switch back
+    // to blocking mode so read/write timeouts work reliably without spurious WouldBlock.
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+
+    let (req_bytes, has_header_end) = read_bridge_request(&mut stream, stop_flag);
+    if req_bytes.is_empty() {
+        return false;
+    }
+    let (response, authenticated) = if has_header_end {
+        let request = String::from_utf8_lossy(&req_bytes);
+        handle_bridge_request(&request, port, token, filings_array_json, primary_json)
+    } else {
+        (
+            build_http_response(400, "text/plain", "bad request", None),
+            false,
+        )
+    };
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+    authenticated
+}
+
+/// Starts the local LIRS bridge. `pending_path` (pending_filing.json in the app) is deleted
+/// when the bridge stops or times out.
+pub fn start_bridge_on_port(
+    state: &AppState,
+    port: u16,
+    filings_array_json: String,
+    primary_json: String,
+    pending_path: Option<std::path::PathBuf>,
+) -> Result<(u16, String), String> {
+    stop_bridge(state);
+
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| format!("Failed to bind LIRS bridge on port {}: {}", port, e))?;
+    let bound_port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+
+    let token = generate_bridge_token();
+    let thread_token = token.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_flag = Arc::clone(&stop);
+
+    println!(
+        "[LagosFile] LIRS bridge started on http://127.0.0.1:{}",
+        bound_port
+    );
+
+    let handle = std::thread::spawn(move || {
+        let started_at = Instant::now();
         let mut last_request = Instant::now();
 
         loop {
-            if last_request.elapsed() > Duration::from_secs(LIRS_BRIDGE_TIMEOUT_SECS) {
-                println!("[LagosFile] LIRS bridge idle timeout — shutting down.");
+            if stop_flag.load(Ordering::SeqCst) {
+                println!("[LagosFile] LIRS bridge stopped.");
+                break;
+            }
+            if started_at.elapsed() > Duration::from_secs(LIRS_BRIDGE_MAX_LIFETIME_SECS)
+                || last_request.elapsed() > Duration::from_secs(LIRS_BRIDGE_IDLE_TIMEOUT_SECS)
+            {
+                println!("[LagosFile] LIRS bridge timeout — shutting down.");
                 break;
             }
 
             match listener.accept() {
-                Ok((mut stream, _addr)) => {
-                    last_request = Instant::now();
-
-                    let mut buf = [0u8; 2048];
-                    let n = stream.read(&mut buf).unwrap_or(0);
-                    if n == 0 {
-                        continue;
+                Ok((stream, _addr)) => {
+                    let authenticated = serve_bridge_connection(
+                        stream,
+                        &stop_flag,
+                        bound_port,
+                        &thread_token,
+                        &filings_array_json,
+                        &primary_json,
+                    );
+                    if authenticated {
+                        last_request = Instant::now();
                     }
-
-                    let request = String::from_utf8_lossy(&buf[..n]);
-                    let first_line = request.lines().next().unwrap_or("");
-
-                    let response = if first_line.starts_with("OPTIONS") {
-                        build_http_response(200, "text/plain", "")
-                    } else if first_line.starts_with("GET /filings") {
-                        build_http_response(200, "application/json", &filings_array_json)
-                    } else if first_line.starts_with("GET /filing") {
-                        build_http_response(200, "application/json", &primary_json)
-                    } else if first_line.starts_with("GET /health") {
-                        build_http_response(200, "application/json", r#"{"status":"ok"}"#)
-                    } else {
-                        build_http_response(404, "text/plain", "not found")
-                    };
-
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = stream.flush();
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(200));
                 }
                 Err(_) => {
-                    std::thread::sleep(Duration::from_millis(200));
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
+        if let Some(path) = pending_path {
+            let _ = std::fs::remove_file(path);
+        }
     });
+
+    *state.bridge.lock().unwrap() = Some(BridgeHandle {
+        stop,
+        handle: Some(handle),
+        port: bound_port,
+        token: token.clone(),
+    });
+    Ok((bound_port, token))
+}
+
+pub fn build_all_pending_filings_detailed(
+    conn: &rusqlite::Connection,
+    log_dir: &std::path::Path,
+) -> Result<PendingFilingBatch, String> {
+    let rows: Vec<(String, i32)> = conn
+        .prepare(
+            "SELECT id, year_of_assessment FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
+        )
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    if rows.is_empty() {
+        return Err(
+            "No confirmed filings found. Confirm a filing before using the LIRS extension."
+                .to_string(),
+        );
+    }
+
+    let mut filings = Vec::new();
+    let mut failures = Vec::new();
+    for (id, yoa) in rows {
+        match build_pending_filing(conn, &id) {
+            Ok(f) => filings.push(f),
+            Err(e) => {
+                log_automation_failure(log_dir, &id, &e);
+                failures.push(FailedPendingFiling {
+                    filing_id: id,
+                    year_of_assessment: yoa,
+                    error: e,
+                });
+            }
+        }
+    }
+
+    if filings.is_empty() {
+        let reasons: Vec<String> = failures
+            .iter()
+            .map(|f| format!("{} ({}): {}", f.year_of_assessment, f.filing_id, f.error))
+            .collect();
+        return Err(format!(
+            "Could not build any confirmed filings for LIRS: {}",
+            reasons.join("; ")
+        ));
+    }
+
+    Ok(PendingFilingBatch { filings, failures })
+}
+
+pub fn build_all_pending_filings(
+    conn: &rusqlite::Connection,
+    log_dir: &std::path::Path,
+) -> Result<Vec<PendingFiling>, String> {
+    build_all_pending_filings_detailed(conn, log_dir).map(|b| b.filings)
+}
+
+fn format_failure_warnings(failures: &[FailedPendingFiling]) -> Vec<String> {
+    failures
+        .iter()
+        .map(|f| {
+            format!(
+                "Filing {} (income year {}) skipped: {}",
+                f.filing_id, f.year_of_assessment, f.error
+            )
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -511,7 +926,7 @@ pub async fn open_lirs_portal(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<LIRSAutomationResult, String> {
-    let (primary, all_filings, filing_ref) = {
+    let (primary, all_filings, filing_ref, failures) = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -519,55 +934,97 @@ pub async fn open_lirs_portal(
         let primary = build_pending_filing(&conn, &id)?;
         let filing_ref = primary.filing_reference.clone();
 
-        let all_ids: Vec<String> = conn
+        let all_rows: Vec<(String, i32)> = conn
             .prepare(
-                "SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
+                "SELECT id, year_of_assessment FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
             )
             .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get(0))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
 
-        let mut all_filings: Vec<PendingFiling> = all_ids
-            .iter()
-            .filter(|fid| *fid != &id)
-            .filter_map(|fid| build_pending_filing(&conn, fid).ok())
-            .collect();
+        let mut all_filings: Vec<PendingFiling> = Vec::new();
+        let mut failures: Vec<FailedPendingFiling> = Vec::new();
+        for (fid, yoa) in all_rows {
+            if fid == id {
+                continue;
+            }
+            match build_pending_filing(&conn, &fid) {
+                Ok(f) => all_filings.push(f),
+                Err(e) => {
+                    log_automation_failure(&lirs_data_dir(), &fid, &e);
+                    failures.push(FailedPendingFiling {
+                        filing_id: fid,
+                        year_of_assessment: yoa,
+                        error: e,
+                    });
+                }
+            }
+        }
 
         all_filings.insert(0, primary.clone());
 
-        (primary, all_filings, filing_ref)
+        (primary, all_filings, filing_ref, failures)
     };
 
-    let data_dir = lirs_data_dir();
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let path = data_dir.join("pending_filing.json");
     let primary_json = serde_json::to_string(&primary).map_err(|e| e.to_string())?;
     let file_json = serde_json::to_string_pretty(&primary).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &file_json).map_err(|e| e.to_string())?;
-
     let filings_json = serde_json::to_string(&all_filings).map_err(|e| e.to_string())?;
 
-    start_bridge_server(filings_json, primary_json);
+    // Start the new bridge (which stops any previous bridge first) BEFORE writing
+    // pending_filing.json, so a port-bind failure never leaves pending_filing.json on disk.
+    let (_port, token) = start_bridge_on_port(
+        &state,
+        LIRS_BRIDGE_PORT,
+        filings_json,
+        primary_json,
+        Some(lirs_data_dir().join("pending_filing.json")),
+    )?;
 
-    let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    if let Err(e) = open::that(portal_url) {
+    let data_dir = lirs_data_dir();
+    let path = data_dir.join("pending_filing.json");
+    let write_res = match tokio::fs::create_dir_all(&data_dir).await {
+        Ok(()) => tokio::fs::write(&path, &file_json).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = write_res {
+        stop_bridge(&state);
+        return Err(e.to_string());
+    }
+
+    let portal_url = format!(
+        "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",
+        token
+    );
+    if let Err(e) = open::that(&portal_url) {
+        stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
-        log_automation_failure(&id, &reason);
+        log_automation_failure(&lirs_data_dir(), &id, &reason);
         return Err(reason);
+    }
+
+    let warnings = format_failure_warnings(&failures);
+    let mut message = format!(
+        "LIRS portal opened. {} filing(s) available in the extension. Reference: {}.",
+        all_filings.len(),
+        filing_ref.unwrap_or_else(|| "N/A".to_string())
+    );
+    if !warnings.is_empty() {
+        message.push_str(&format!(
+            " {} other confirmed filing(s) could not be prepared: {}",
+            warnings.len(),
+            warnings.join("; ")
+        ));
     }
 
     Ok(LIRSAutomationResult {
         success: true,
         fallback_active: false,
-        message: format!(
-            "LIRS portal opened. {} filing(s) available in the extension. Reference: {}.",
-            all_filings.len(),
-            filing_ref.unwrap_or_else(|| "N/A".to_string())
-        ),
+        message,
         pending_filing_path: Some(path.to_string_lossy().to_string()),
         filing_id: id,
+        warnings,
     })
 }
 
@@ -575,51 +1032,52 @@ pub async fn open_lirs_portal(
 pub async fn open_lirs_portal_all(
     state: State<'_, AppState>,
 ) -> Result<LIRSAutomationResult, String> {
-    let filings = {
+    let batch = {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-
-        let ids: Vec<String> = conn
-            .prepare(
-                "SELECT id FROM filing WHERE status='Confirmed' ORDER BY year_of_assessment DESC",
-            )
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get(0))
-            .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        if ids.is_empty() {
-            return Err(
-                "No confirmed filings found. Confirm a filing before using the LIRS extension."
-                    .to_string(),
-            );
-        }
-
-        ids.iter()
-            .filter_map(|id| build_pending_filing(&conn, id).ok())
-            .collect::<Vec<_>>()
+        build_all_pending_filings_detailed(&conn, &lirs_data_dir())?
     };
 
-    let count = filings.len();
-    let primary_json = serde_json::to_string(&filings[0]).map_err(|e| e.to_string())?;
-    let filings_json = serde_json::to_string(&filings).map_err(|e| e.to_string())?;
+    let count = batch.filings.len();
+    let primary_json = serde_json::to_string(&batch.filings[0]).map_err(|e| e.to_string())?;
+    let filings_json = serde_json::to_string(&batch.filings).map_err(|e| e.to_string())?;
 
-    start_bridge_server(filings_json, primary_json);
+    let (_port, token) = start_bridge_on_port(
+        &state,
+        LIRS_BRIDGE_PORT,
+        filings_json,
+        primary_json,
+        Some(lirs_data_dir().join("pending_filing.json")),
+    )?;
 
-    let portal_url = "https://etax.lirs.net/user/assessments/tax-calculator";
-    if let Err(e) = open::that(portal_url) {
+    let portal_url = format!(
+        "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",
+        token
+    );
+    if let Err(e) = open::that(&portal_url) {
+        stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
-        log_automation_failure("batch", &reason);
+        log_automation_failure(&lirs_data_dir(), "batch", &reason);
         return Err(reason);
+    }
+
+    let warnings = format_failure_warnings(&batch.failures);
+    let mut message = format!("{} confirmed filing(s) ready in the LIRS extension.", count);
+    if !warnings.is_empty() {
+        message.push_str(&format!(
+            " {} filing(s) failed: {}",
+            warnings.len(),
+            warnings.join("; ")
+        ));
     }
 
     Ok(LIRSAutomationResult {
         success: true,
         fallback_active: false,
-        message: format!("{} confirmed filing(s) ready in the LIRS extension.", count),
+        message,
         pending_filing_path: None,
         filing_id: String::new(),
+        warnings,
     })
 }

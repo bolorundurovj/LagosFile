@@ -1,6 +1,8 @@
 import { Component, inject, OnInit, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { DatePipe } from '@angular/common';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { ConfigService } from '../../core/services/config.service';
 import { FxService, FxCacheEntry } from '../../core/services/fx.service';
 import { ToastService } from '../../core/services/toast.service';
@@ -13,9 +15,9 @@ const NTA_SECTIONS: Record<string, string> = {
   bands: 'NTA 2025, Fourth Schedule — Tax Bands',
   rentReliefCap: 'NTA 2025, s.33(2) — Rent Relief Cap',
   rentReliefRate: 'NTA 2025, s.33(1) — Rent Relief Rate (20%)',
-  cgtProceedsThreshold: 'NTA 2025, s.56 — CGT Exemption (Proceeds)',
-  cgtGainThreshold: 'NTA 2025, s.56 — CGT Exemption (Gain)',
-  minimumTaxRate: 'NTA 2025, s.43 — Minimum Tax Rate',
+  cgtProceedsThreshold: 'NTA 2025, s.34(1)(a) — CGT Exemption (Proceeds)',
+  cgtGainThreshold: 'NTA 2025, s.34(1)(a) — CGT Exemption (Gain)',
+  minimumTaxRate: 'Minimum Tax Rate (0% under NTA 2025; 1% under PITA)',
 };
 
 @Component({
@@ -52,6 +54,12 @@ const NTA_SECTIONS: Record<string, string> = {
           <div class="alert__content">Configuration saved as a new version. All new filings will use this config.</div>
         </div>
       }
+      @if (saveError()) {
+        <div class="alert alert--error">
+          <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
+          <div class="alert__content">{{ saveError() }}</div>
+        </div>
+      }
       @if (importError()) {
         <div class="alert alert--error">
           <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
@@ -62,6 +70,25 @@ const NTA_SECTIONS: Record<string, string> = {
       @if (!config()) {
         <div class="skeleton" style="height:400px;border-radius:var(--radius-xl)"></div>
       } @else {
+        <!-- Version label -->
+        <div class="card">
+          <h2 class="title-md" style="margin-bottom:var(--space-2)">Version Label</h2>
+          <p class="body-sm text-muted" style="margin-bottom:var(--space-4)">
+            Enter a unique version label before saving changes so existing filings remain tied to their original configuration.
+          </p>
+          <div class="form-group">
+            <label class="form-label" for="configVersionLabel">New Version Label</label>
+            <input
+              id="configVersionLabel"
+              type="text"
+              class="form-input"
+              [(ngModel)]="versionLabel"
+              name="versionLabel"
+              placeholder="e.g. Tax Config v2.0 — Custom Rates"
+            />
+          </div>
+        </div>
+
         <!-- Tax bands -->
         <div class="card">
           <div class="flex items-center justify-between" style="margin-bottom:var(--space-5)">
@@ -209,7 +236,7 @@ const NTA_SECTIONS: Record<string, string> = {
         <div class="card">
           <div class="config-row" style="padding:0">
             <div class="config-row__info">
-              <div class="config-row__label">Minimum Tax Rate<lf-help text="If graduated tax falls below this percentage of gross income, the minimum tax applies instead (NTA 2025, s.43). Currently 1%. Applicability to individuals is unconfirmed — verify with LIRS."></lf-help></div>
+              <div class="config-row__label">Minimum Tax Rate<lf-help text="Minimum tax floor as a percentage of gross income, applied before tax credits. 0% under NTA 2025 (no individual minimum tax); 1% under PITA for income years up to 2025."></lf-help></div>
               <div class="config-row__section">{{ ntaSection('minimumTaxRate') }}</div>
             </div>
             <div class="flex items-center gap-2">
@@ -288,18 +315,20 @@ const NTA_SECTIONS: Record<string, string> = {
   `],
 })
 export class ConfigurationComponent implements OnInit {
-  private configService = inject(ConfigService);
-  private fxService = inject(FxService);
-  private toast = inject(ToastService);
+  private readonly configService = inject(ConfigService);
+  private readonly fxService = inject(FxService);
+  private readonly toast = inject(ToastService);
 
   config = signal<TaxConfig | null>(null);
   bands = signal<TaxBand[]>([]);
   reliefCaps: TaxConfig['reliefCaps'] = { rentReliefCap: 500_000, rentReliefRate: 0.20, pensionCap: null, nhisCap: null, nhfCap: null };
   cgtThresholds = { proceedsThreshold: 150_000_000, gainThreshold: 10_000_000 };
   minimumTaxRate = 0.01;
+  versionLabel = '';
   allowanceRateEntries = signal<{ key: string; label: string; rate: number }[]>([]);
   saving = signal(false);
   saveSuccess = signal(false);
+  saveError = signal('');
   importError = signal('');
   fxEntries = signal<FxCacheEntry[]>([]);
   fxLoading = signal(false);
@@ -315,7 +344,11 @@ export class ConfigurationComponent implements OnInit {
     other: 'Other',
   };
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     await this.load();
   }
 
@@ -332,6 +365,7 @@ export class ConfigurationComponent implements OnInit {
     this.reliefCaps = { pensionCap: null, nhisCap: null, nhfCap: null, ...cfg.reliefCaps };
     this.cgtThresholds = { ...cfg.cgtThresholds };
     this.minimumTaxRate = cfg.minimumTaxRate;
+    this.versionLabel = '';
     this.allowanceRateEntries.set(
       Object.entries(cfg.allowanceRates).map(([key, rate]) => ({
         key, rate, label: this.ASSET_LABELS[key] ?? key,
@@ -358,13 +392,19 @@ export class ConfigurationComponent implements OnInit {
   }
 
   async save(): Promise<void> {
-    this.saving.set(true);
+    this.saveError.set('');
     this.saveSuccess.set(false);
+    const label = this.versionLabel.trim();
+    if (!label) {
+      this.saveError.set('Please enter a unique version label before saving.');
+      return;
+    }
+    this.saving.set(true);
     try {
       const rates = Object.fromEntries(this.allowanceRateEntries().map(e => [e.key, e.rate]));
       const cfg = await this.configService.save({
-        versionLabel: `Tax Config — NTA 2025, effective 1 Jan 2026`,
-        governedBy: 'NTA 2025',
+        versionLabel: label,
+        governedBy: this.config()?.governedBy ?? 'NTA 2025',
         bands: this.bands(),
         reliefCaps: this.reliefCaps,
         cgtThresholds: this.cgtThresholds,
@@ -374,6 +414,8 @@ export class ConfigurationComponent implements OnInit {
       this.populate(cfg);
       this.saveSuccess.set(true);
       setTimeout(() => this.saveSuccess.set(false), 4000);
+    } catch (err: unknown) {
+      this.saveError.set(err instanceof Error ? err.message : String(err));
     } finally {
       this.saving.set(false);
     }
@@ -382,20 +424,35 @@ export class ConfigurationComponent implements OnInit {
   async exportConfig(): Promise<void> {
     const cfg = this.config();
     if (!cfg) return;
-    await this.configService.exportJson(cfg.id);
+    try {
+      const json = await this.configService.exportJson(cfg.id);
+      const safeName = cfg.versionLabel.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_|_$/g, '') || 'tax-config';
+      const savePath = await saveDialog({
+        defaultPath: `${safeName}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (!savePath) return;
+      await writeTextFile(savePath, json);
+      this.toast.success('Tax configuration exported.');
+    } catch (err: unknown) {
+      this.toast.error('Could not export configuration: ' + (err instanceof Error ? err.message : String(err)));
+    }
   }
 
   async importConfig(e: Event): Promise<void> {
     this.importError.set('');
-    const file = (e.target as HTMLInputElement).files?.[0];
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
     if (!file) return;
     const text = await file.text();
     try {
-      const imported = JSON.parse(text);
-      await this.configService.importJson(imported);
+      await this.configService.importJson(text);
       await this.load();
+      this.toast.success('Tax configuration imported.');
     } catch (err: unknown) {
       this.importError.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      input.value = '';
     }
   }
 

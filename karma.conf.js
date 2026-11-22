@@ -27,7 +27,15 @@ module.exports = function (config) {
         { type: 'html' },
         { type: 'text-summary' },
         { type: 'lcovonly' }
-      ]
+      ],
+      check: {
+        global: {
+          statements: 64,
+          branches: 45,
+          functions: 66,
+          lines: 66,
+        },
+      },
     },
     reporters: ['progress', 'kjhtml'],
     browsers: ['Chrome'],

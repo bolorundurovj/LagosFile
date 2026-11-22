@@ -1,116 +1,141 @@
 // LagosFile for LIRS -- Background (Firefox MV2)
-// Caches filing data, proxies bridge fetches (bypasses mixed-content),
-// and relays INJECT_STEP to the content script.
-// persistent:true keeps the background page alive so async fetch() responses
-// are never dropped mid-flight (non-persistent event pages can be suspended).
+// Keeps filing data and the per-session bridge token strictly in memory (never written
+// to storage.local on disk), proxies authenticated bridge fetches, and relays INJECT_* messages.
 
-const EXT_VERSION = '1.1.0';
-const BRIDGE_URL  = 'http://127.0.0.1:19876';
+const EXT_VERSION = '1.3.0';
+const BRIDGE_URL = 'http://127.0.0.1:19876';
 let cachedFilings = [];
 let currentFiling = null;
+let bridgeToken = null;
 
-function restoreFromStorage() {
-  browser.storage.local.get(['filingsData', 'filingData']).then(function (r) {
-    if (r.filingsData) cachedFilings = r.filingsData;
-    if (r.filingData)  currentFiling  = r.filingData;
-  });
+function purgeLegacyLocalStorage() {
+  if (typeof browser !== 'undefined' && browser.storage?.local) {
+    browser.storage.local
+      .remove(['filingsData', 'filingData', 'bridgeToken'])
+      .catch(function () {});
+  }
 }
 
 browser.runtime.onInstalled.addListener(function () {
   console.log('[LagosFile] v' + EXT_VERSION + ' installed.');
-  restoreFromStorage();
+  purgeLegacyLocalStorage();
 });
 
 browser.runtime.onStartup.addListener(function () {
-  restoreFromStorage();
+  purgeLegacyLocalStorage();
 });
 
 browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  let responded = false;
+  function safeRespond(payload) {
+    if (responded) return;
+    responded = true;
+    try {
+      sendResponse(payload);
+    } catch (_) {
+      // Popup or tab may have closed while the async request was in flight.
+    }
+  }
+
   switch (msg.type) {
+    case 'SET_BRIDGE_TOKEN':
+      bridgeToken = typeof msg.token === 'string' && msg.token.length > 0 ? msg.token : null;
+      safeRespond({ ok: true });
+      return false;
 
     case 'SET_FILINGS_DATA':
-      cachedFilings = msg.data || [];
-      browser.storage.local.set({ filingsData: cachedFilings }).then(function () {
-        sendResponse({ ok: true });
-      });
-      return true;
+      cachedFilings = Array.isArray(msg.data) ? msg.data : [];
+      safeRespond({ ok: true });
+      return false;
 
     case 'GET_FILINGS_DATA':
-      if (cachedFilings.length > 0) {
-        sendResponse(cachedFilings);
-      } else {
-        browser.storage.local.get(['filingsData']).then(function (r) {
-          cachedFilings = r.filingsData || [];
-          sendResponse(cachedFilings);
-        });
-      }
-      return true;
+      safeRespond(cachedFilings);
+      return false;
 
     case 'SET_FILING_DATA':
       currentFiling = msg.data != null ? msg.data : null;
-      if (currentFiling) {
-        browser.storage.local.set({ filingData: currentFiling }).then(function () {
-          sendResponse({ ok: true });
-        });
-      } else {
-        browser.storage.local.remove('filingData').then(function () {
-          sendResponse({ ok: true });
-        });
-      }
-      return true;
+      safeRespond({ ok: true });
+      return false;
 
     case 'GET_FILING_DATA':
-      if (currentFiling) {
-        sendResponse(currentFiling);
-      } else {
-        browser.storage.local.get(['filingData']).then(function (r) {
-          currentFiling = r.filingData || null;
-          sendResponse(currentFiling);
-        });
-      }
-      return true;
+      safeRespond(currentFiling);
+      return false;
 
     case 'CLEAR_FILING_DATA':
       cachedFilings = [];
       currentFiling = null;
-      browser.storage.local.remove(['filingsData', 'filingData']).then(function () {
-        sendResponse({ ok: true });
-      });
-      return true;
+      safeRespond({ ok: true });
+      return false;
 
-    // Proxy bridge fetches so content scripts avoid mixed-content blocking.
-    // (https LIRS page cannot fetch http://127.0.0.1 directly in Firefox)
-    // Background has unrestricted network access via the manifest permission.
     case 'FETCH_BRIDGE':
-      fetch(BRIDGE_URL + (msg.path || '/filings'), { cache: 'no-store' })
-        .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
+      Promise.resolve()
+        .then(function () {
+          if (!bridgeToken) {
+            cachedFilings = [];
+            currentFiling = null;
+            return {
+              ok: false,
+              status: 403,
+              error: 'No bridge session token. Click "File with LIRS" in LagosFile to connect.',
+            };
+          }
+          return fetch(BRIDGE_URL + (msg.path || '/filings'), {
+            cache: 'no-store',
+            headers: { 'X-LagosFile-Token': bridgeToken },
+          })
+            .then(function (r) {
+              if (!r.ok) {
+                const err = new Error('HTTP ' + r.status);
+                err.status = r.status;
+                throw err;
+              }
+              return r.json();
+            })
+            .then(function (data) {
+              return { ok: true, data: data };
+            });
         })
-        .then(function (data) { sendResponse({ ok: true, data: data }); })
-        .catch(function (err) { sendResponse({ ok: false, error: String(err) }); });
+        .then(function (res) {
+          safeRespond(res);
+        })
+        .catch(function (err) {
+          const status = err?.status || 0;
+          if (status === 403 || status === 0) {
+            cachedFilings = [];
+            currentFiling = null;
+          }
+          safeRespond({ ok: false, status: status, error: String(err) });
+        });
       return true;
 
     case 'INJECT_STEP':
-      browser.tabs.query({ active: true, currentWindow: true })
+    case 'INJECT_ALL':
+      browser.tabs
+        .query({ active: true, currentWindow: true })
         .then(function (tabs) {
           if (!tabs[0]) return { ok: false, reason: 'no_tab' };
-          return browser.tabs.sendMessage(tabs[0].id, {
-            type: 'INJECT_STEP',
-            step: msg.step,
-            data: msg.data,
-          }).catch(function () { return { ok: false, reason: 'no_receiver' }; });
+          const payload =
+            msg.type === 'INJECT_ALL'
+              ? { type: 'INJECT_ALL', data: msg.data }
+              : { type: 'INJECT_STEP', step: msg.step, data: msg.data };
+          return browser.tabs.sendMessage(tabs[0].id, payload).catch(function () {
+            return { ok: false, reason: 'no_receiver' };
+          });
         })
-        .then(function (result) { sendResponse(result); })
-        .catch(function (err) { sendResponse({ ok: false, reason: String(err) }); });
+        .then(function (result) {
+          safeRespond(result || { ok: false });
+        })
+        .catch(function (err) {
+          safeRespond({ ok: false, reason: String(err) });
+        });
       return true;
 
     case 'PING':
-      sendResponse({ pong: true, v: EXT_VERSION });
+      safeRespond({ pong: true, v: EXT_VERSION });
       return false;
 
     default:
-      sendResponse({ ok: false });
+      safeRespond({ ok: false });
       return false;
   }
 });

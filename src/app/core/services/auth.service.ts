@@ -1,5 +1,6 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { TauriService } from './tauri.service';
+import { ConfigService } from './config.service';
 import { AppStatus, Taxpayer } from '../models';
 
 export type AuthState = 'locked' | 'unlocked' | 'needs_profile' | 'needs_pin_setup';
@@ -18,7 +19,9 @@ export class AuthService {
   readonly biometricAvailable = this._biometricAvailable.asReadonly();
   readonly biometricEnabled = this._biometricEnabled.asReadonly();
 
-  constructor(private tauri: TauriService) {}
+  private readonly configService = inject(ConfigService, { optional: true });
+
+  constructor(private readonly tauri: TauriService) {}
 
   async init(): Promise<void> {
     const status = await this.tauri.invoke<AppStatus>('check_app_status');
@@ -26,6 +29,11 @@ export class AuthService {
     this._biometricAvailable.set(status.biometricAvailable);
     this._biometricEnabled.set(status.biometricEnabled);
     this._state.set(status.hasDb ? 'locked' : 'needs_pin_setup');
+  }
+
+  async hasExistingDb(): Promise<boolean> {
+    const status = await this.tauri.invoke<AppStatus>('check_app_status');
+    return status.hasDb;
   }
 
   async setupPin(pin: string): Promise<void> {
@@ -68,6 +76,7 @@ export class AuthService {
     await this.tauri.invoke('lock_db');
     this._taxpayer.set(null);
     this._state.set('locked');
+    this.configService?.clearMigrationNotices();
   }
 
   // Recovery
@@ -102,15 +111,21 @@ export class AuthService {
   }
 
   async resetPin(newPin: string): Promise<void> {
-    await this.tauri.invoke('reset_pin', { newPin });
+    const biometricEnabled = await this.tauri.invoke<boolean | undefined>('reset_pin', { newPin });
     this._hasRecovery.set(false);
+    if (typeof biometricEnabled === 'boolean') {
+      this._biometricEnabled.set(biometricEnabled);
+    }
   }
 
   // Change PIN
 
   async changePin(currentPin: string, newPin: string): Promise<void> {
-    await this.tauri.invoke('change_pin', { currentPin, newPin });
+    const biometricEnabled = await this.tauri.invoke<boolean | undefined>('change_pin', { currentPin, newPin });
     this._hasRecovery.set(false);
+    if (typeof biometricEnabled === 'boolean') {
+      this._biometricEnabled.set(biometricEnabled);
+    }
   }
 
   // Backup / Restore
@@ -119,8 +134,16 @@ export class AuthService {
     await this.tauri.invoke('backup_db', { destPath });
   }
 
-  async restoreDb(srcPath: string): Promise<void> {
-    await this.tauri.invoke('restore_db', { srcPath });
+  async restoreDb(srcPath: string, pin: string): Promise<Taxpayer | null> {
+    const taxpayer = await this.tauri.invoke<Taxpayer | null>('restore_db', { srcPath, pin });
+    this._taxpayer.set(taxpayer);
+    return taxpayer;
+  }
+
+  async restoreBackupFresh(srcPath: string, pin: string): Promise<Taxpayer | null> {
+    const taxpayer = await this.tauri.invoke<Taxpayer | null>('restore_backup_fresh', { srcPath, pin });
+    this._setUnlocked(taxpayer);
+    return taxpayer;
   }
 
   // Helpers

@@ -213,12 +213,24 @@ describe('AuthService', () => {
 
   describe('changePin', () => {
     it('should invoke change_pin and set hasRecovery to false', async () => {
-      tauriSpy.invoke.and.resolveTo(undefined);
+      tauriSpy.invoke.and.resolveTo(true);
 
       await service.changePin('1234', '5678');
 
       expect(tauriSpy.invoke).toHaveBeenCalledWith('change_pin', { currentPin: '1234', newPin: '5678' });
       expect(service.hasRecovery()).toBeFalse();
+      expect(service.biometricEnabled()).toBeTrue();
+    });
+
+    it('should turn off biometricEnabled when change_pin reports keyring disabled', async () => {
+      tauriSpy.invoke.and.resolveTo(undefined);
+      await service.enableBiometric();
+      expect(service.biometricEnabled()).toBeTrue();
+
+      tauriSpy.invoke.and.resolveTo(false);
+      await service.changePin('1234', '5678');
+
+      expect(service.biometricEnabled()).toBeFalse();
     });
   });
 
@@ -233,12 +245,40 @@ describe('AuthService', () => {
   });
 
   describe('restoreDb', () => {
-    it('should invoke restore_db with srcPath', async () => {
-      tauriSpy.invoke.and.resolveTo(undefined);
+    it('should invoke restore_db with srcPath and pin and update taxpayer', async () => {
+      const mockTaxpayer = { id: '1', fullName: 'Restored User' };
+      tauriSpy.invoke.and.resolveTo(mockTaxpayer);
 
-      await service.restoreDb('/path/to/restore');
+      const res = await service.restoreDb('/path/to/restore', '4321');
 
-      expect(tauriSpy.invoke).toHaveBeenCalledWith('restore_db', { srcPath: '/path/to/restore' });
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('restore_db', { srcPath: '/path/to/restore', pin: '4321' });
+      expect(res).toEqual(mockTaxpayer as any);
+      expect(service.taxpayer()).toEqual(mockTaxpayer as any);
+    });
+  });
+
+  describe('restoreBackupFresh', () => {
+    it('should invoke restore_backup_fresh and unlock with taxpayer', async () => {
+      const mockTaxpayer = { id: '2', fullName: 'Fresh Restored' };
+      tauriSpy.invoke.and.resolveTo(mockTaxpayer);
+
+      const res = await service.restoreBackupFresh('/path/to/backup.lf.enc', '9999');
+
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('restore_backup_fresh', {
+        srcPath: '/path/to/backup.lf.enc',
+        pin: '9999',
+      });
+      expect(res).toEqual(mockTaxpayer as any);
+      expect(service.state()).toBe('unlocked');
+      expect(service.taxpayer()).toEqual(mockTaxpayer as any);
+    });
+
+    it('should transition to needs_profile when restored backup has no taxpayer', async () => {
+      tauriSpy.invoke.and.resolveTo(null);
+
+      await service.restoreBackupFresh('/path/to/backup.lf.enc', '9999');
+
+      expect(service.state()).toBe('needs_profile');
     });
   });
 

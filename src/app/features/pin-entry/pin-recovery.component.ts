@@ -163,10 +163,14 @@ export class PinRecoveryComponent implements OnInit {
   newPin = '';
   confirmPin = '';
 
-  private auth = inject(AuthService);
-  private router = inject(Router);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       const qs = await this.auth.getRecoveryQuestions();
       this.questions.set(qs);
@@ -229,11 +233,11 @@ export class PinRecoveryComponent implements OnInit {
         await this.auth.lock();
       }
     } finally {
-      this.router.navigate(['/unlock']);
+      void this.router.navigate(['/unlock']);
     }
   }
 
   goToDashboard(): void {
-    this.router.navigate(['/dashboard']);
+    void this.router.navigate(['/dashboard']);
   }
 }

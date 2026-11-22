@@ -1,8 +1,13 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, DestroyRef, inject, OnInit, signal, viewChild } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { DatePipe } from '@angular/common';
+import { AuthService } from '../../core/services/auth.service';
 import { FilingService } from '../../core/services/filing.service';
 import { ToastService } from '../../core/services/toast.service';
+import { CapitalAllowance, Filing, IncomeEntry, ReliefEntry } from '../../core/models';
+import { NairaPipe } from '../../shared/pipes/naira.pipe';
 import { StepIncomeComponent } from './steps/step-income/step-income.component';
 import { StepAllowancesComponent } from './steps/step-allowances/step-allowances.component';
 import { StepDeductionsComponent } from './steps/step-deductions/step-deductions.component';
@@ -11,7 +16,7 @@ import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../shared/components/help-tooltip/help-tooltip.component';
 
 type WizardStep = 1 | 2 | 3 | 4;
-type WizardMode = 'selecting-year' | 'active';
+type WizardMode = 'selecting-year' | 'active' | 'readonly';
 
 const STEPS = [
   { step: 1 as WizardStep, title: 'Income Sources',        subtitle: 'Domestic & foreign income' },
@@ -25,6 +30,8 @@ const STEPS = [
   standalone: true,
   imports: [
     FormsModule,
+    DatePipe,
+    NairaPipe,
     StepIncomeComponent,
     StepAllowancesComponent,
     StepDeductionsComponent,
@@ -51,7 +58,7 @@ const STEPS = [
               }
             </select>
             <div class="form-hint" style="margin-top:var(--space-2)">
-              Filing for income earned in {{ selectedYear }}, due 31 March {{ selectedYear + 1 }}.
+              Income year {{ selectedYear }} · LIRS year of assessment {{ selectedYear + 1 }} (due 31 March {{ selectedYear + 1 }}).
             </div>
           </div>
 
@@ -69,12 +76,103 @@ const STEPS = [
       </div>
     }
 
-    <!-- ── Active wizard ── -->
+    <!-- ── Read-only summary (Confirmed / Submitted filings) ── -->
+    @if (mode() === 'readonly' && readonlyFiling(); as filing) {
+      <div class="readonly-filing" data-testid="readonly-filing-summary">
+        <div class="readonly-filing__header">
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
+              <span class="wizard__yoa-badge">Income year {{ filing.yearOfAssessment }} · LIRS year of assessment {{ filing.yearOfAssessment + 1 }}</span>
+              <span class="badge" [class.badge--confirmed]="filing.status === 'Confirmed'" [class.badge--submitted]="filing.status === 'Submitted'">
+                {{ filing.status }}
+              </span>
+            </div>
+            <h1 class="headline-sm">{{ filing.filingReference || 'Filed Return' }}</h1>
+            <p class="body-sm text-muted" style="margin-top:var(--space-1)">
+              This return is final and read-only. To make changes, create an amendment.
+            </p>
+          </div>
+          <div style="display:flex;gap:var(--space-3);align-items:center">
+            <button class="btn btn--secondary" type="button" (click)="goToHistory()">Back to History</button>
+            <button class="btn btn--primary" type="button" (click)="amendReadonlyFiling()" [disabled]="amending()">
+              @if (amending()) { Creating Amendment… } @else { Amend }
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="title-md" style="margin-bottom:var(--space-4)">Tax Computation Summary</h2>
+          <div class="readonly-grid">
+            <div class="readonly-row"><span>Total Gross Income</span><strong class="financial-value">{{ filing.totalIncomeNgn ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Chargeable Income</span><strong class="financial-value">{{ filing.chargeableIncome ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Gross Tax Payable</span><strong class="financial-value">{{ filing.taxPayable ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>WHT Credits</span><strong class="financial-value">{{ filing.whtCredit ?? 0 | naira }}</strong></div>
+            @if ((filing.payeCredit ?? 0) > 0) {
+              <div class="readonly-row"><span>PAYE Credits</span><strong class="financial-value">{{ filing.payeCredit ?? 0 | naira }}</strong></div>
+            }
+            @if ((filing.foreignTaxCredit ?? 0) > 0) {
+              <div class="readonly-row"><span>Foreign Tax Credits</span><strong class="financial-value">{{ filing.foreignTaxCredit ?? 0 | naira }}</strong></div>
+            }
+            <div class="readonly-row"><span>Net Tax Payable</span><strong class="financial-value">{{ filing.netTaxPayable ?? 0 | naira }}</strong></div>
+            <div class="readonly-row"><span>Minimum Tax</span><strong class="financial-value">{{ filing.minimumTax ?? 0 | naira }}</strong></div>
+            <div class="readonly-row readonly-row--total"><span>Final Tax Payable</span><strong class="financial-value">{{ filing.finalTaxPayable ?? 0 | naira }}</strong></div>
+          </div>
+
+          <div class="readonly-meta">
+            <div><span class="text-muted">Tax Config:</span> {{ filing.taxConfigVersion }}</div>
+            @if (filing.confirmedAt) {
+              <div><span class="text-muted">Confirmed:</span> {{ filing.confirmedAt | date:'dd MMM yyyy, HH:mm' }}</div>
+            }
+            @if (filing.submittedAt) {
+              <div><span class="text-muted">Submitted:</span> {{ filing.submittedAt | date:'dd MMM yyyy, HH:mm' }}</div>
+            }
+          </div>
+        </div>
+
+        @if (readonlyIncome().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Income Entries ({{ readonlyIncome().length }})</h2>
+            @for (item of readonlyIncome(); track item.id) {
+              <div class="readonly-row">
+                <span>{{ item.description || item.incomeType }}</span>
+                <span class="financial-value">{{ item.grossAmountNgn | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+
+        @if (readonlyAllowances().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Capital Allowances ({{ readonlyAllowances().length }})</h2>
+            @for (ca of readonlyAllowances(); track ca.id) {
+              <div class="readonly-row">
+                <span>{{ ca.assetDescription }} ({{ ca.assetType }})</span>
+                <span class="financial-value">{{ ca.annualAllowanceAmount | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+
+        @if (readonlyReliefs().length > 0) {
+          <div class="card">
+            <h2 class="title-md" style="margin-bottom:var(--space-3)">Deductions & Reliefs ({{ readonlyReliefs().length }})</h2>
+            @for (r of readonlyReliefs(); track r.id) {
+              <div class="readonly-row">
+                <span>{{ r.description || r.reliefType }}</span>
+                <span class="financial-value">{{ r.approvedAmount | naira }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <!-- ── Active wizard (Draft filings only) ── -->
     @if (mode() === 'active') {
       <div class="wizard">
         <!-- Left: vertical progress strip -->
         <aside class="wizard__sidebar">
-          <div class="wizard__yoa-badge">YOA {{ yearOfAssessment() }}</div>
+          <div class="wizard__yoa-badge">Income year {{ yearOfAssessment() }} · LIRS year of assessment {{ yearOfAssessment() + 1 }}</div>
           <nav class="progress-strip" aria-label="Filing steps">
             @for (s of steps; track s.step) {
               <button
@@ -171,12 +269,55 @@ const STEPS = [
       justify-content: flex-end;
     }
 
+    /* ── Read-only summary ── */
+    .readonly-filing {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-5);
+      padding-bottom: var(--space-8);
+    }
+    .readonly-filing__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: var(--space-4);
+    }
+    .readonly-grid {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+    .readonly-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--space-2) 0;
+      border-bottom: 1px solid var(--color-surface-container);
+      font-size: var(--text-body-md);
+    }
+    .readonly-row:last-child { border-bottom: none; }
+    .readonly-row--total {
+      border-top: 2px solid var(--color-outline-variant);
+      padding-top: var(--space-3);
+      font-size: var(--text-title-sm);
+    }
+    .readonly-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-5);
+      margin-top: var(--space-4);
+      padding-top: var(--space-3);
+      border-top: 1px solid var(--color-surface-container);
+      font-size: var(--text-label-md);
+    }
+
     /* ── Wizard ── */
     .wizard {
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: 280px minmax(0, 1fr);
       gap: var(--space-8);
-      height: calc(100vh - var(--topbar-height) - var(--space-16));
       max-width: var(--content-max-width);
       margin: 0 auto;
     }
@@ -200,7 +341,7 @@ const STEPS = [
     }
 
     .wizard__body {
-      overflow-y: auto;
+      min-width: 0;
       padding-bottom: var(--space-8);
     }
 
@@ -275,7 +416,6 @@ const STEPS = [
       transition: all var(--transition-fast);
     }
 
-
     .progress-strip__item--active .progress-strip__step-num {
       background: var(--color-primary);
       color: white;
@@ -317,10 +457,12 @@ const STEPS = [
   `],
 })
 export class FilingWizardComponent implements OnInit {
-  private route = inject(ActivatedRoute);
-  private router = inject(Router);
-  private filingService = inject(FilingService);
-  private toast = inject(ToastService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
+  private readonly filingService = inject(FilingService);
+  private readonly toast = inject(ToastService);
+  private readonly destroyRef = inject(DestroyRef);
 
   mode = signal<WizardMode>('active');
   filingId = signal<string | undefined>(undefined);
@@ -328,6 +470,12 @@ export class FilingWizardComponent implements OnInit {
   currentStep = signal<WizardStep>(1);
   loading = signal(true);
   starting = signal(false);
+  amending = signal(false);
+
+  readonlyFiling = signal<Filing | null>(null);
+  readonlyIncome = signal<IncomeEntry[]>([]);
+  readonlyAllowances = signal<CapitalAllowance[]>([]);
+  readonlyReliefs = signal<ReliefEntry[]>([]);
 
   readonly currentYear = new Date().getFullYear();
 
@@ -340,16 +488,84 @@ export class FilingWizardComponent implements OnInit {
 
   readonly steps = STEPS;
 
-  async ngOnInit(): Promise<void> {
-    const id = this.route.snapshot.paramMap.get('id');
+  private stepIncome = viewChild(StepIncomeComponent);
+  private stepAllowances = viewChild(StepAllowancesComponent);
+  private stepDeductions = viewChild(StepDeductionsComponent);
+  private stepReview = viewChild(StepReviewComponent);
+
+  private activeStepRef(): { isDirty(): boolean; save(): Promise<boolean> } | undefined {
+    switch (this.currentStep()) {
+      case 1: return this.stepIncome();
+      case 2: return this.stepAllowances();
+      case 3: return this.stepDeductions();
+      case 4: return this.stepReview();
+    }
+  }
+
+  canDeactivate(): boolean {
+    // Never block idle lock or manual lock behind a confirmation dialog.
+    if (!this.auth.isUnlocked()) return true;
+    if (this.mode() !== 'active') return true;
+    const active = this.activeStepRef();
+    if (!active || !active.isDirty()) return true;
+    return window.confirm('You have unsaved changes on this step. Leave without saving?');
+  }
+
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
+    if (this.route.paramMap) {
+      let initialized = false;
+      const initialId = this.route.snapshot?.paramMap?.get('id') ?? null;
+      this.route.paramMap
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe((pm) => {
+          const nextId = pm.get('id');
+          if (!initialized) {
+            initialized = true;
+            return;
+          }
+          void this.loadForRouteId(nextId);
+        });
+      await this.loadForRouteId(initialId);
+    } else {
+      await this.loadForRouteId(this.route.snapshot.paramMap.get('id'));
+    }
+  }
+
+  private async loadForRouteId(id: string | null): Promise<void> {
+    this.readonlyFiling.set(null);
+    this.currentStep.set(1);
     if (id) {
       this.loading.set(true);
-      const filing = await this.filingService.getFiling(id);
-      this.filingId.set(filing.id);
-      this.yearOfAssessment.set(filing.yearOfAssessment);
-      this.mode.set('active');
-      this.loading.set(false);
+      try {
+        const filing = await this.filingService.getFiling(id);
+        this.filingId.set(filing.id);
+        this.yearOfAssessment.set(filing.yearOfAssessment);
+        if (filing.status !== 'Draft') {
+          this.readonlyFiling.set(filing);
+          const [income, allowances, reliefs] = await Promise.all([
+            this.filingService.listIncomeEntries(filing.id),
+            this.filingService.listAllowances(filing.id),
+            this.filingService.listReliefEntries(filing.id),
+          ]);
+          this.readonlyIncome.set(income);
+          this.readonlyAllowances.set(allowances);
+          this.readonlyReliefs.set(reliefs);
+          this.mode.set('readonly');
+        } else {
+          this.mode.set('active');
+        }
+      } catch (err: unknown) {
+        this.toast.error('Failed to load filing: ' + (err instanceof Error ? err.message : String(err)));
+        void this.router.navigate(['/history']);
+      } finally {
+        this.loading.set(false);
+      }
     } else {
+      this.filingId.set(undefined);
       this.mode.set('selecting-year');
       this.loading.set(false);
     }
@@ -366,26 +582,59 @@ export class FilingWizardComponent implements OnInit {
       this.filingId.set(draft.id);
       this.yearOfAssessment.set(draft.yearOfAssessment);
       this.mode.set('active');
+    } catch (err: unknown) {
+      this.toast.error('Failed to create filing: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.starting.set(false);
     }
   }
 
-  cancel(): void { this.router.navigate(['/dashboard']); }
+  async amendReadonlyFiling(): Promise<void> {
+    const filing = this.readonlyFiling();
+    if (!filing || this.amending()) return;
+    this.amending.set(true);
+    try {
+      const amended = await this.filingService.amendFiling(filing.id);
+      this.filingId.set(amended.id);
+      this.yearOfAssessment.set(amended.yearOfAssessment);
+      this.readonlyFiling.set(null);
+      this.currentStep.set(1);
+      this.mode.set('active');
+      void this.router.navigate(['/filing', amended.id]);
+    } catch (err: unknown) {
+      this.toast.error('Failed to create amendment: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.amending.set(false);
+    }
+  }
 
-  goToStep(step: WizardStep): void { this.currentStep.set(step); }
+  goToHistory(): void { void this.router.navigate(['/history']); }
+
+  cancel(): void { void this.router.navigate(['/dashboard']); }
+
+  async goToStep(step: WizardStep): Promise<void> {
+    if (step === this.currentStep()) return;
+    const active = this.activeStepRef();
+    if (active?.isDirty()) {
+      const ok = await active.save();
+      if (!ok) return;
+    }
+    this.currentStep.set(step);
+  }
 
   goNext(_?: unknown): void {
     const next = (this.currentStep() + 1) as WizardStep;
     if (next <= 4) this.currentStep.set(next);
   }
 
-  goBack(): void {
+  async goBack(): Promise<void> {
     const prev = (this.currentStep() - 1) as WizardStep;
-    if (prev >= 1) this.currentStep.set(prev);
+    if (prev >= 1) {
+      await this.goToStep(prev);
+    }
   }
 
   onConfirmed(): void {
-    this.router.navigate(['/history']);
+    void this.router.navigate(['/history']);
   }
 }

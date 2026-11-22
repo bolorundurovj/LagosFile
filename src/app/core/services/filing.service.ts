@@ -10,7 +10,7 @@ export class FilingService {
   private readonly _wizard = signal<WizardState | null>(null);
   readonly wizard = this._wizard.asReadonly();
 
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async listFilings(): Promise<Filing[]> {
     return this.tauri.invoke<Filing[]>('list_filings');
@@ -43,8 +43,14 @@ export class FilingService {
     incomeEntries: Partial<IncomeEntry>[],
     capitalAllowances: Partial<CapitalAllowance>[],
     reliefEntries: Partial<ReliefEntry>[],
+    incomeYear?: number,
   ): Promise<ComputationResult> {
-    return this.tauri.invoke<ComputationResult>('estimate_tax', { incomeEntries, capitalAllowances, reliefEntries });
+    return this.tauri.invoke<ComputationResult>('estimate_tax', {
+      incomeEntries,
+      capitalAllowances,
+      reliefEntries,
+      ...(incomeYear != null ? { incomeYear } : {}),
+    });
   }
 
   async deleteFiling(id: string): Promise<void> {
@@ -71,6 +77,14 @@ export class FilingService {
     return this.tauri.invoke('delete_income_entry', { id });
   }
 
+  async saveIncomeEntries(
+    filingId: string,
+    upserts: (Partial<IncomeEntry> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_income_entries', { filingId, upserts, deleteIds });
+  }
+
   async listAllowances(filingId: string): Promise<CapitalAllowance[]> {
     return this.tauri.invoke<CapitalAllowance[]>('list_allowances', { filingId });
   }
@@ -81,6 +95,14 @@ export class FilingService {
 
   async deleteAllowance(id: string): Promise<void> {
     return this.tauri.invoke('delete_allowance', { id });
+  }
+
+  async saveAllowances(
+    filingId: string,
+    upserts: (Partial<CapitalAllowance> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_allowances', { filingId, upserts, deleteIds });
   }
 
   /** Returns CA entries from the most recent confirmed filing for yearOfAssessment-1,
@@ -103,6 +125,14 @@ export class FilingService {
     return this.tauri.invoke('delete_relief_entry', { id });
   }
 
+  async saveReliefEntries(
+    filingId: string,
+    upserts: (Partial<ReliefEntry> & { filingId: string })[],
+    deleteIds: string[],
+  ): Promise<string[]> {
+    return this.tauri.invoke<string[]>('save_relief_entries', { filingId, upserts, deleteIds });
+  }
+
   async attachDocument(
     parentEntryId: string,
     parentEntryType: string,
@@ -110,8 +140,8 @@ export class FilingService {
     fileName: string,
     fileType: string,
     fileSizeBytes: number,
-  ): Promise<void> {
-    return this.tauri.invoke('attach_document', {
+  ): Promise<{ id: string; fileName: string; filePath: string; fileSizeBytes: number }> {
+    return this.tauri.invoke<{ id: string; fileName: string; filePath: string; fileSizeBytes: number }>('attach_document', {
       parentEntryId, parentEntryType, filePath, fileName, fileType, fileSizeBytes,
     });
   }

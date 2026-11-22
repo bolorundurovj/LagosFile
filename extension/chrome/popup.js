@@ -1,15 +1,32 @@
 (function () {
   'use strict';
 
-  const BRIDGE_URL  = 'http://127.0.0.1:19876';
-  const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
-  const tabs    = (typeof browser !== 'undefined') ? browser.tabs   : chrome.tabs;
+  const core = window.LagosFileCore;
 
-  let allFilings  = [];   // array from /filings
-  let filingData  = null; // currently selected PendingFiling
+  let allFilings = [];
+  let filingData = null;
 
   const $ = (id) => document.getElementById(id);
 
+  function sendMsg(msg) {
+    return new Promise(function (resolve) {
+      let settled = false;
+      const done = function (resp) {
+        if (settled) return;
+        settled = true;
+        resolve(resp);
+      };
+      try {
+        if (typeof browser !== 'undefined') {
+          browser.runtime.sendMessage(msg).then(done).catch(function () { done(null); });
+        } else {
+          chrome.runtime.sendMessage(msg, done);
+        }
+      } catch (_) {
+        done(null);
+      }
+    });
+  }
 
   function showLoading() {
     $('state-loading').classList.remove('hidden');
@@ -43,23 +60,38 @@
       '<div class="sf-meta">YOA ' + esc(yoa) + ' · Ref: ' + esc(ref) + '</div>' +
       '<div class="sf-tax">' + fmtNaira(tax) + ' due</div>';
     $('status-text').textContent = tp + ' · ' + yoa;
+    buildManualFields();
     buildCopyFields();
   }
 
-  function showOffline() {
+  function showOffline(isAuthError) {
     $('state-loading').classList.add('hidden');
     $('state-pick').classList.add('hidden');
     $('state-fill').classList.add('hidden');
     $('state-offline').classList.remove('hidden');
-    $('status-text').textContent = 'Not connected';
+    const titleEl = $('offline-title');
+    const descEl = $('offline-desc');
+    if (isAuthError) {
+      if (titleEl) titleEl.textContent = 'Session Token Expired or Missing';
+      if (descEl) {
+        descEl.innerHTML =
+          'Your LagosFile bridge session token expired or was not received. Re-open the portal via <strong>File with LIRS</strong> in LagosFile, then click Try Again.';
+      }
+      $('status-text').textContent = 'Auth required (403)';
+    } else {
+      if (titleEl) titleEl.textContent = 'LagosFile Not Detected';
+      if (descEl) {
+        descEl.innerHTML =
+          'Open LagosFile, then click <strong>File with LIRS</strong> on any confirmed filing. Then click Try Again below.';
+      }
+      $('status-text').textContent = 'Not connected';
+    }
   }
-
 
   function syncSelectedToBackground() {
-    runtime.sendMessage({ type: 'SET_FILING_DATA', data: filingData || null }, function () {});
+    void sendMsg({ type: 'SET_FILING_DATA', data: filingData || null });
   }
 
-  /** After network refresh: use the freshest object from `allFilings` when possible. */
   function reconcileSelectionFromAllFilings() {
     if (!filingData || !filingData.filingId) return;
     const m = allFilings.find(function (f) { return f.filingId === filingData.filingId; });
@@ -67,7 +99,7 @@
   }
 
   function applyFilingsPayloadFromNetwork(options) {
-    const silent = options && options.silent;
+    const silent = options?.silent;
     reconcileSelectionFromAllFilings();
 
     if (allFilings.length === 1) {
@@ -96,110 +128,61 @@
     }
   }
 
-
-  bootstrapFromCache();
-
-  function bootstrapFromCache() {
-    runtime.sendMessage({ type: 'GET_FILINGS_DATA' }, function (cachedList) {
-      runtime.sendMessage({ type: 'GET_FILING_DATA' }, function (cachedSelected) {
-        const listOk = cachedList && cachedList.length > 0;
-
-        if (!listOk) {
-          showLoading();
-          fetchFilings({ silent: false });
-          return;
-        }
-
-        allFilings = cachedList;
-
-        let match =
-          cachedSelected &&
-          cachedSelected.filingId &&
-          allFilings.find(function (f) { return f.filingId === cachedSelected.filingId; });
-
-        if (match) {
-          filingData = match;
-          syncSelectedToBackground();
-          showFillState();
-          fetchFilings({ silent: true });
-          return;
-        }
-
-        if (allFilings.length === 1) {
-          filingData = allFilings[0];
-          syncSelectedToBackground();
-          showFillState();
-          fetchFilings({ silent: true });
-          return;
-        }
-
-        filingData = null;
-        syncSelectedToBackground();
-        showPickState();
-        fetchFilings({ silent: true });
-      });
-    });
+  async function bootstrapFromCache() {
+    // Always verify live bridge availability so locked/stopped LagosFile sessions
+    // never serve stale cached taxpayer PII.
+    showLoading();
+    const cachedSelected = await sendMsg({ type: 'GET_FILING_DATA' });
+    if (cachedSelected?.filingId) {
+      filingData = cachedSelected;
+    }
+    await fetchFilings({ silent: false });
   }
 
-  function fetchFilings(options) {
-    const silent = options && options.silent;
+  async function fetchFilings(options) {
+    const silent = options?.silent;
     if (!silent) showLoading();
 
-    fetch(BRIDGE_URL + '/filings', { mode: 'cors', cache: 'no-store' })
-      .then(function (r) {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(function (data) {
-        if (!Array.isArray(data) || data.length === 0) throw new Error('empty');
-        allFilings = data;
-        runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }, function () {});
-        applyFilingsPayloadFromNetwork({ silent: silent });
-      })
-      .catch(function () {
-        if (silent) return;
+    const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
+    if (resp?.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+      allFilings = resp.data;
+      await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      applyFilingsPayloadFromNetwork({ silent: silent });
+      return;
+    }
 
-        fetch(BRIDGE_URL + '/filing', { mode: 'cors', cache: 'no-store' })
-          .then(function (r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
-          .then(function (single) {
-            allFilings = [single];
-            filingData = single;
-            runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }, function () {});
-            syncSelectedToBackground();
-            showFillState();
-          })
-          .catch(function () {
-            runtime.sendMessage({ type: 'GET_FILINGS_DATA' }, function (cached) {
-              if (cached && cached.length > 0) {
-                allFilings = cached;
-                if (allFilings.length === 1) {
-                  filingData = allFilings[0];
-                  syncSelectedToBackground();
-                  showFillState();
-                } else {
-                  filingData = null;
-                  syncSelectedToBackground();
-                  showPickState();
-                }
-              } else {
-                showOffline();
-              }
-            });
-          });
-      });
+    if (resp?.status === 403) {
+      allFilings = [];
+      filingData = null;
+      await sendMsg({ type: 'CLEAR_FILING_DATA' });
+      showOffline(true);
+      return;
+    }
+
+    const respSingle = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
+    if (respSingle?.ok && respSingle.data) {
+      allFilings = [respSingle.data];
+      filingData = respSingle.data;
+      await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      syncSelectedToBackground();
+      showFillState();
+      return;
+    }
+
+    // Bridge is offline or rejected auth — never serve stale cached taxpayer PII.
+    allFilings = [];
+    filingData = null;
+    await sendMsg({ type: 'CLEAR_FILING_DATA' });
+    showOffline(Boolean(respSingle?.status === 403));
   }
 
-
   function renderFilingList() {
-    var container = $('filing-list');
+    const container = $('filing-list');
     container.innerHTML = '';
     allFilings.forEach(function (f) {
-      var card = document.createElement('div');
+      const card = document.createElement('div');
       card.className = 'filing-card';
-      var tax = f.computation?.finalTaxPayable;
+      const tax = f.computation?.finalTaxPayable;
       card.innerHTML =
         '<div class="filing-card-body">' +
           '<div class="filing-name">' + esc(f.taxpayer?.fullName || '—') + '</div>' +
@@ -217,42 +200,29 @@
     });
   }
 
-
-  function buildCopyFields() {
-    var container = $('copy-fields');
+  function buildManualFields() {
+    const section = $('manual-section');
+    const container = $('manual-fields');
     container.innerHTML = '';
-    if (!filingData) return;
-
-    var groups = [
-      { label: 'Payer ID',          value: filingData.taxpayer?.payerId || fmtPayerId(filingData.taxpayer?.tin) },
-      { label: 'TIN',               value: filingData.taxpayer?.tin },
-      { label: 'Employment',        value: fmtNum(filingData.income?.employment) },
-      { label: 'Trade / Business',  value: fmtNum(filingData.income?.business) },
-      { label: 'Dividend',          value: fmtNum(filingData.income?.dividend) },
-      { label: 'Interest',          value: fmtNum(filingData.income?.interest) },
-      { label: 'Royalty',           value: fmtNum(filingData.income?.royalty) },
-      { label: 'Rent',              value: fmtNum(filingData.income?.rental) },
-      { label: 'Pension',           value: fmtNum(filingData.deductions?.pension) },
-      { label: 'NHF',               value: fmtNum(filingData.deductions?.nhf) },
-      { label: 'NHIS',              value: fmtNum(filingData.deductions?.nhis) },
-      { label: 'Life Assurance',    value: fmtNum(filingData.deductions?.lifeAssurance) },
-      { label: 'Capital Allowance', value: fmtNum(filingData.computation?.totalCapitalAllowances) },
-      { label: 'WHT Credits',       value: fmtNum(filingData.computation?.whtCredits) },
-      { label: 'Chargeable Income', value: fmtNum(filingData.computation?.chargeableIncome) },
-      { label: 'Final Tax Payable', value: fmtNum(filingData.computation?.finalTaxPayable) },
-    ].filter(function (f) { return f.value != null && f.value !== ''; });
-
-    groups.forEach(function (f) {
-      var row = document.createElement('div');
-      row.className = 'copy-field';
-      var raw = String(f.value).replace(/,/g, '');
+    const items = core ? core.getManualFields(filingData) : [];
+    if (items.length === 0) {
+      section.classList.add('hidden');
+      return;
+    }
+    section.classList.remove('hidden');
+    items.forEach(function (item) {
+      const row = document.createElement('div');
+      row.className = 'manual-field';
       row.innerHTML =
-        '<span class="copy-field-label">' + esc(f.label) + '</span>' +
-        '<span class="copy-field-value">' + esc(f.value) + '</span>' +
-        '<button type="button" class="copy-btn">cp</button>';
+        '<div class="manual-row">' +
+          '<span class="copy-field-label">' + esc(item.label) + '</span>' +
+          '<span class="copy-field-value">' + esc(item.displayValue) + '</span>' +
+          '<button type="button" class="copy-btn">cp</button>' +
+        '</div>' +
+        '<div class="manual-hint">' + esc(item.hint) + '</div>';
       row.querySelector('.copy-btn').addEventListener('click', function () {
-        navigator.clipboard.writeText(raw).catch(function () {});
-        var btn = row.querySelector('.copy-btn');
+        navigator.clipboard.writeText(item.rawValue).catch(function () {});
+        const btn = row.querySelector('.copy-btn');
         btn.textContent = 'ok';
         setTimeout(function () { btn.textContent = 'cp'; }, 1200);
       });
@@ -260,9 +230,55 @@
     });
   }
 
+  function buildCopyFields() {
+    const container = $('copy-fields');
+    container.innerHTML = '';
+    if (!filingData) return;
+
+    const groups = [
+      { label: 'Payer ID',                value: filingData.taxpayer?.payerId || fmtPayerId(filingData.taxpayer?.tin) },
+      { label: 'TIN',                     value: filingData.taxpayer?.tin },
+      { label: 'Employment',              value: fmtNum(filingData.income?.employment) },
+      { label: 'Benefits in Kind (BIK)',  value: fmtNum(filingData.income?.benefitsInKind) },
+      { label: 'Trade / Business',        value: fmtNum(filingData.income?.business) },
+      { label: 'Dividend',                value: fmtNum(filingData.income?.dividend) },
+      { label: 'Interest',                value: fmtNum(filingData.income?.interest) },
+      { label: 'Royalty',                 value: fmtNum(filingData.income?.royalty) },
+      { label: 'Rent',                    value: fmtNum(filingData.income?.rental) },
+      { label: 'Pension',                 value: fmtNum(filingData.deductions?.pension) },
+      { label: 'Other Deductions',        value: fmtNum(filingData.deductions?.otherApproved) },
+      { label: 'NHF',                     value: fmtNum(filingData.deductions?.nhf) },
+      { label: 'NHIS',                    value: fmtNum(filingData.deductions?.nhis) },
+      { label: 'Life Assurance',          value: fmtNum(filingData.deductions?.lifeAssurance) },
+      { label: 'Rent Relief Applied',     value: fmtNum(filingData.deductions?.rentReliefApplied) },
+      { label: 'Capital Allowance',       value: fmtNum(filingData.computation?.totalCapitalAllowances) },
+      { label: 'WHT Credits',             value: fmtNum(filingData.computation?.whtCredits) },
+      { label: 'PAYE Credits',            value: fmtNum(filingData.computation?.payeCredits) },
+      { label: 'Double Taxation Reliefs', value: fmtNum(filingData.computation?.foreignTaxCredits) },
+      { label: 'Chargeable Income',       value: fmtNum(filingData.computation?.chargeableIncome) },
+      { label: 'Final Tax Payable',       value: fmtNum(filingData.computation?.finalTaxPayable) },
+    ].filter(function (f) { return f.value != null && f.value !== ''; });
+
+    groups.forEach(function (f) {
+      const row = document.createElement('div');
+      row.className = 'copy-field';
+      const raw = String(f.value).replace(/,/g, '');
+      row.innerHTML =
+        '<span class="copy-field-label">' + esc(f.label) + '</span>' +
+        '<span class="copy-field-value">' + esc(f.value) + '</span>' +
+        '<button type="button" class="copy-btn">cp</button>';
+      row.querySelector('.copy-btn').addEventListener('click', function () {
+        navigator.clipboard.writeText(raw).catch(function () {});
+        const btn = row.querySelector('.copy-btn');
+        btn.textContent = 'ok';
+        setTimeout(function () { btn.textContent = 'cp'; }, 1200);
+      });
+      container.appendChild(row);
+    });
+  }
 
   function fmtNaira(n) {
-    if (n == null || isNaN(n)) return '—';
+    if (n == null || Number.isNaN(Number(n))) return '—';
     return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
   }
 
@@ -277,44 +293,52 @@
   }
 
   function esc(str) {
-    var d = document.createElement('div');
+    const d = document.createElement('div');
     d.textContent = String(str ?? '');
     return d.innerHTML;
   }
 
-
-  var STEPS = ['income', 'deductions', 'reliefs', 'wht', 'adjustments'];
-
   $('fill-income-btn').addEventListener('click',      function () { injectStep('income'); });
   $('fill-deductions-btn').addEventListener('click',  function () { injectStep('deductions'); });
+  $('fill-adjustments-btn').addEventListener('click', function () { injectStep('adjustments'); });
   $('fill-reliefs-btn').addEventListener('click',     function () { injectStep('reliefs'); });
   $('fill-wht-btn').addEventListener('click',         function () { injectStep('wht'); });
-  $('fill-adjustments-btn').addEventListener('click', function () { injectStep('adjustments'); });
-  $('fill-all-btn').addEventListener('click', function () {
-    STEPS.forEach(function (step, i) {
-      setTimeout(function () { injectStep(step); }, i * 900);
-    });
-  });
+  $('fill-others-btn').addEventListener('click',      function () { injectStep('others'); });
+  $('fill-all-btn').addEventListener('click',         function () { injectAll(); });
+
+  function queryActiveTab(cb) {
+    if (typeof browser !== 'undefined') {
+      browser.tabs.query({ active: true, currentWindow: true })
+        .then(function (foundTabs) { cb(foundTabs && foundTabs[0]); })
+        .catch(function () { cb(null); });
+    } else {
+      chrome.tabs.query({ active: true, currentWindow: true }, function (foundTabs) {
+        cb(foundTabs && foundTabs[0]);
+      });
+    }
+  }
 
   function injectStep(step) {
     if (!filingData) {
       alert('No filing selected. Choose a filing first.');
       return;
     }
-    const q = tabs.query({ active: true, currentWindow: true });
-    if (q && typeof q.then === 'function') {
-      q.then(function (foundTabs) {
-        if (!foundTabs || !foundTabs[0]) return;
-        runtime.sendMessage({ type: 'INJECT_STEP', step: step, data: filingData });
-      });
-      return;
-    }
-    tabs.query({ active: true, currentWindow: true }, function (foundTabs) {
-      if (!foundTabs[0]) return;
-      runtime.sendMessage({ type: 'INJECT_STEP', step: step, data: filingData });
+    queryActiveTab(function (tab) {
+      if (!tab) return;
+      void sendMsg({ type: 'INJECT_STEP', step: step, data: filingData });
     });
   }
 
+  function injectAll() {
+    if (!filingData) {
+      alert('No filing selected. Choose a filing first.');
+      return;
+    }
+    queryActiveTab(function (tab) {
+      if (!tab) return;
+      void sendMsg({ type: 'INJECT_ALL', data: filingData });
+    });
+  }
 
   $('back-btn').addEventListener('click', function () {
     filingData = null;
@@ -322,24 +346,23 @@
     showPickState();
   });
 
-  $('pick-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
-  $('fill-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
-  $('offline-refresh-btn').addEventListener('click', function () { fetchFilings({ silent: false }); });
+  $('pick-refresh-btn').addEventListener('click',    function () { void fetchFilings({ silent: false }); });
+  $('fill-refresh-btn').addEventListener('click',    function () { void fetchFilings({ silent: false }); });
+  $('offline-refresh-btn').addEventListener('click', function () { void fetchFilings({ silent: false }); });
 
   $('pick-manual-btn').addEventListener('click', function () {
     filingData = null;
     allFilings = [];
-    runtime.sendMessage({ type: 'CLEAR_FILING_DATA' }, function () {});
+    void sendMsg({ type: 'CLEAR_FILING_DATA' });
     showOffline();
   });
-
 
   $('load-file-btn').addEventListener('click', function () { $('file-input').click(); });
 
   $('file-input').addEventListener('change', function (e) {
-    var file = e.target.files[0];
+    const file = e.target.files[0];
     if (!file) return;
-    var reader = new FileReader();
+    const reader = new FileReader();
     reader.onload = function (evt) {
       $('json-input').value = evt.target.result;
       $('parse-json-btn').click();
@@ -349,11 +372,10 @@
   });
 
   $('parse-json-btn').addEventListener('click', function () {
-    var raw = $('json-input').value.trim();
+    const raw = $('json-input').value.trim();
     if (!raw) { showParseError('Paste JSON first.'); return; }
     try {
-      var parsed = JSON.parse(raw);
-      // Accept either a single filing or an array
+      const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         if (parsed.length === 0) throw new Error('Empty array.');
         allFilings = parsed;
@@ -363,7 +385,7 @@
         }
         allFilings = [parsed];
       }
-      runtime.sendMessage({ type: 'SET_FILINGS_DATA', data: allFilings }, function () {});
+      void sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       hideParseError();
       $('json-input').value = '';
       if (allFilings.length === 1) {
@@ -388,4 +410,5 @@
     $('parse-error').classList.add('hidden');
   }
 
+  void bootstrapFromCache();
 })();

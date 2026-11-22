@@ -1,6 +1,11 @@
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS app_meta (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS taxpayer (
     id              TEXT PRIMARY KEY,
     full_name       TEXT NOT NULL,
@@ -15,20 +20,32 @@ CREATE TABLE IF NOT EXISTS taxpayer (
 CREATE TABLE IF NOT EXISTS filing (
     id                  TEXT PRIMARY KEY,
     taxpayer_id         TEXT NOT NULL REFERENCES taxpayer(id),
-    parent_filing_id    TEXT REFERENCES filing(id),
+    parent_filing_id    TEXT REFERENCES filing(id) ON DELETE SET NULL,
     year_of_assessment  INTEGER NOT NULL,
     status              TEXT NOT NULL DEFAULT 'Draft',
     filing_reference    TEXT,
     created_at          TEXT NOT NULL,
     confirmed_at        TEXT,
+    submitted_at        TEXT,
     total_income_ngn    REAL,
     chargeable_income   REAL,
     tax_payable         REAL,
     wht_credit          REAL,
+    paye_credit         REAL,
+    foreign_tax_credit  REAL,
     net_tax_payable     REAL,
     minimum_tax         REAL,
     final_tax_payable   REAL,
-    tax_config_version  TEXT NOT NULL DEFAULT 'default'
+    tax_config_version  TEXT NOT NULL DEFAULT 'default',
+    tax_config_id       TEXT REFERENCES tax_config(id),
+    payment_date        TEXT,
+    payment_reference   TEXT,
+    amount_paid         REAL
+);
+
+CREATE TABLE IF NOT EXISTS filing_ref_counter (
+    year_of_assessment  INTEGER PRIMARY KEY,
+    last_seq            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS income_entry (
@@ -48,7 +65,9 @@ CREATE TABLE IF NOT EXISTS income_entry (
     foreign_tax_paid_ngn    REAL,
     is_cgt_exempt           INTEGER NOT NULL DEFAULT 0,
     cgt_proceeds            REAL,
-    cgt_gain                REAL
+    cgt_gain                REAL,
+    bik_category            TEXT,
+    bik_cost                REAL
 );
 
 CREATE TABLE IF NOT EXISTS capital_allowance (
@@ -71,7 +90,8 @@ CREATE TABLE IF NOT EXISTS relief_entry (
     approved_amount REAL NOT NULL DEFAULT 0,
     wht_ref         TEXT,
     wht_income_type TEXT,
-    wht_date        TEXT
+    wht_date        TEXT,
+    description     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS document (
@@ -84,6 +104,11 @@ CREATE TABLE IF NOT EXISTS document (
     file_size_bytes     INTEGER NOT NULL DEFAULT 0,
     uploaded_at         TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_income_entry_filing_id ON income_entry(filing_id);
+CREATE INDEX IF NOT EXISTS idx_capital_allowance_filing_id ON capital_allowance(filing_id);
+CREATE INDEX IF NOT EXISTS idx_relief_entry_filing_id ON relief_entry(filing_id);
+CREATE INDEX IF NOT EXISTS idx_document_parent_entry_id ON document(parent_entry_id);
 
 CREATE TABLE IF NOT EXISTS fx_cache (
     id              TEXT PRIMARY KEY,
@@ -110,28 +135,54 @@ CREATE TABLE IF NOT EXISTS tax_config (
     modified_by         TEXT NOT NULL DEFAULT 'system'
 );
 
--- Seed default NTA 2025 config if none exists
+-- Seed system tax configs with is_active=0; migrate() activates NTA 2025 on fresh installs
+-- and upgrades untouched v1.0 seeds without overriding user-edited configurations.
 INSERT OR IGNORE INTO tax_config (
     id, version_label, governed_by, bands_json, relief_caps_json,
     cgt_thresholds_json, allowance_rates_json, minimum_tax_rate,
     is_active, last_modified, modified_by
 ) VALUES (
-    'a0000000-0000-0000-0000-000000000001',
-    'Tax Config v1.0 — NTA 2025, effective 1 Jan 2026',
+    'a0000000-0000-0000-0000-000000000002',
+    'Tax Config v2.0 — NTA 2025, effective 1 Jan 2026',
     'NTA 2025',
     '[
-      {"lower":0,"upper":800000,"rate":0.07},
-      {"lower":800000,"upper":2800000,"rate":0.11},
-      {"lower":2800000,"upper":6800000,"rate":0.15},
-      {"lower":6800000,"upper":18800000,"rate":0.19},
-      {"lower":18800000,"upper":38800000,"rate":0.21},
-      {"lower":38800000,"upper":null,"rate":0.24}
+      {"lower":0,"upper":800000,"rate":0.00},
+      {"lower":800000,"upper":3000000,"rate":0.15},
+      {"lower":3000000,"upper":12000000,"rate":0.18},
+      {"lower":12000000,"upper":25000000,"rate":0.21},
+      {"lower":25000000,"upper":50000000,"rate":0.23},
+      {"lower":50000000,"upper":null,"rate":0.25}
     ]',
     '{"rentReliefCap":500000,"rentReliefRate":0.20}',
     '{"proceedsThreshold":150000000,"gainThreshold":10000000}',
-    '{"computer_laptop":0.25,"router_networking":0.25,"monitor":0.25,"keyboard_peripherals":0.25,"camera_recording":0.25,"software_licence":0.33,"other":0.25}',
+    '{"computer_laptop":0.25,"router_networking":0.25,"monitor":0.25,"keyboard_peripherals":0.25,"camera_recording":0.25,"software_licence":0.25,"other":0.25}',
+    0.0,
+    0,
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    'system'
+);
+
+INSERT OR IGNORE INTO tax_config (
+    id, version_label, governed_by, bands_json, relief_caps_json,
+    cgt_thresholds_json, allowance_rates_json, minimum_tax_rate,
+    is_active, last_modified, modified_by
+) VALUES (
+    'a0000000-0000-0000-0000-000000000004',
+    'Tax Config v2.1 — PITA + CRA (Income Years <= 2025)',
+    'PITA',
+    '[
+      {"lower":0,"upper":300000,"rate":0.07},
+      {"lower":300000,"upper":600000,"rate":0.11},
+      {"lower":600000,"upper":1100000,"rate":0.15},
+      {"lower":1100000,"upper":1600000,"rate":0.19},
+      {"lower":1600000,"upper":3200000,"rate":0.21},
+      {"lower":3200000,"upper":null,"rate":0.24}
+    ]',
+    '{"rentReliefCap":0,"rentReliefRate":0.0,"craEnabled":true}',
+    '{"proceedsThreshold":150000000,"gainThreshold":10000000}',
+    '{"computer_laptop":0.25,"router_networking":0.25,"monitor":0.25,"keyboard_peripherals":0.25,"camera_recording":0.25,"software_licence":0.25,"other":0.25}',
     0.01,
-    1,
+    0,
     strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
     'system'
 );

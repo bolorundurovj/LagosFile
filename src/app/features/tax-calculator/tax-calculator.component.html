@@ -6,6 +6,16 @@
 
   <div class="calc__grid">
     <div class="card calc__inputs">
+      <div class="calc__fields" style="margin-bottom:var(--space-4)">
+        <label class="form-group">
+          <span class="form-label">Income Year (Tax Regime)</span>
+          <select class="form-input" [(ngModel)]="selectedYear" name="incomeYear" (change)="recompute()">
+            @for (yr of availableYears; track yr) {
+              <option [ngValue]="yr">{{ yr }} (LIRS YOA {{ yr + 1 }} · {{ yr <= 2025 ? 'PITA + CRA' : 'NTA 2025' }})</option>
+            }
+          </select>
+        </label>
+      </div>
       <h2 class="title-md">Income</h2>
       @for (line of income; track $index; let i = $index) {
         <div class="calc__row">
@@ -52,14 +62,21 @@
       } @else if (result(); as r) {
         <div class="calc__line"><span>Gross income</span><span>{{ r.totalGrossIncome | naira }}</span></div>
         <div class="calc__line"><span>Capital allowances</span><span>− {{ r.proratedCapitalAllowances | naira }}</span></div>
-        <div class="calc__line"><span>Deductions & reliefs</span><span>− {{ r.totalDeductions | naira }}</span></div>
+        @if ((r.consolidatedReliefAllowance ?? 0) > 0) {
+          <div class="calc__line"><span>Consolidated Relief Allowance (PITA)</span><span>− {{ r.consolidatedReliefAllowance | naira }}</span></div>
+          <div class="calc__line"><span>Other deductions &amp; reliefs</span><span>− {{ (r.totalDeductions - (r.consolidatedReliefAllowance ?? 0)) | naira }}</span></div>
+        } @else {
+          <div class="calc__line"><span>Deductions &amp; reliefs</span><span>− {{ r.totalDeductions | naira }}</span></div>
+        }
         <div class="calc__line calc__line--strong"><span>Chargeable income</span><span>{{ r.chargeableIncome | naira }}</span></div>
         @for (b of r.bandBreakdown; track b.lower) {
           <div class="calc__line calc__line--band"><span>{{ b.rate * 100 }}% on {{ b.taxableAmount | naira }}</span><span>{{ b.taxAmount | naira }}</span></div>
         }
         <div class="calc__line"><span>Graduated tax</span><span>{{ r.graduatedTax | naira }}</span></div>
+        @if (r.minimumTax > 0) {
+          <div class="calc__line"><span>Minimum tax floor</span><span>{{ r.minimumTax | naira }}</span></div>
+        }
         <div class="calc__line"><span>WHT credits</span><span>− {{ r.whtCredits | naira }}</span></div>
-        <div class="calc__line"><span>Minimum tax</span><span>{{ r.minimumTax | naira }}</span></div>
         @if (r.cgtExemptAmount > 0) {
           <div class="calc__note">{{ r.cgtExemptAmount | naira }} of share gains is CGT-exempt.</div>
         }
