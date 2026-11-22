@@ -268,7 +268,7 @@ import { buildDeadlineIcs } from '../../core/services/deadline-reminder.service'
   `],
 })
 export class DashboardComponent implements OnInit {
-  private filingService = inject(FilingService);
+  private readonly filingService = inject(FilingService);
   auth = inject(AuthService);
 
   filings = signal<Filing[]>([]);
@@ -277,7 +277,7 @@ export class DashboardComponent implements OnInit {
   readonly currentYear = new Date().getFullYear();
   readonly taxpayer = this.auth.taxpayer;
 
-  private toast = inject(ToastService);
+  private readonly toast = inject(ToastService);
 
   daysLeft = signal(0);
   deadlineYear = signal(new Date().getFullYear());
@@ -345,7 +345,11 @@ export class DashboardComponent implements OnInit {
     }
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       const all = await this.filingService.listFilings();
       this.filings.set(all);

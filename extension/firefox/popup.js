@@ -2,8 +2,6 @@
   'use strict';
 
   const core = window.LagosFileCore;
-  const runtime = (typeof browser !== 'undefined') ? browser.runtime : chrome.runtime;
-  const tabs = (typeof browser !== 'undefined') ? browser.tabs : chrome.tabs;
 
   let allFilings = [];
   let filingData = null;
@@ -91,7 +89,7 @@
   }
 
   function syncSelectedToBackground() {
-    sendMsg({ type: 'SET_FILING_DATA', data: filingData || null });
+    void sendMsg({ type: 'SET_FILING_DATA', data: filingData || null });
   }
 
   function reconcileSelectionFromAllFilings() {
@@ -101,7 +99,7 @@
   }
 
   function applyFilingsPayloadFromNetwork(options) {
-    const silent = options && options.silent;
+    const silent = options?.silent;
     reconcileSelectionFromAllFilings();
 
     if (allFilings.length === 1) {
@@ -135,25 +133,25 @@
     // never serve stale cached taxpayer PII.
     showLoading();
     const cachedSelected = await sendMsg({ type: 'GET_FILING_DATA' });
-    if (cachedSelected && cachedSelected.filingId) {
+    if (cachedSelected?.filingId) {
       filingData = cachedSelected;
     }
     await fetchFilings({ silent: false });
   }
 
   async function fetchFilings(options) {
-    const silent = options && options.silent;
+    const silent = options?.silent;
     if (!silent) showLoading();
 
     const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
-    if (resp && resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+    if (resp?.ok && Array.isArray(resp.data) && resp.data.length > 0) {
       allFilings = resp.data;
       await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       applyFilingsPayloadFromNetwork({ silent: silent });
       return;
     }
 
-    if (resp && resp.status === 403) {
+    if (resp?.status === 403) {
       allFilings = [];
       filingData = null;
       await sendMsg({ type: 'CLEAR_FILING_DATA' });
@@ -162,7 +160,7 @@
     }
 
     const respSingle = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
-    if (respSingle && respSingle.ok && respSingle.data) {
+    if (respSingle?.ok && respSingle.data) {
       allFilings = [respSingle.data];
       filingData = respSingle.data;
       await sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
@@ -175,7 +173,7 @@
     allFilings = [];
     filingData = null;
     await sendMsg({ type: 'CLEAR_FILING_DATA' });
-    showOffline(Boolean(respSingle && respSingle.status === 403));
+    showOffline(Boolean(respSingle?.status === 403));
   }
 
   function renderFilingList() {
@@ -280,7 +278,7 @@
   }
 
   function fmtNaira(n) {
-    if (n == null || isNaN(n)) return '—';
+    if (n == null || Number.isNaN(Number(n))) return '—';
     return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
   }
 
@@ -327,7 +325,7 @@
     }
     queryActiveTab(function (tab) {
       if (!tab) return;
-      sendMsg({ type: 'INJECT_STEP', step: step, data: filingData });
+      void sendMsg({ type: 'INJECT_STEP', step: step, data: filingData });
     });
   }
 
@@ -338,7 +336,7 @@
     }
     queryActiveTab(function (tab) {
       if (!tab) return;
-      sendMsg({ type: 'INJECT_ALL', data: filingData });
+      void sendMsg({ type: 'INJECT_ALL', data: filingData });
     });
   }
 
@@ -348,14 +346,14 @@
     showPickState();
   });
 
-  $('pick-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
-  $('fill-refresh-btn').addEventListener('click',    function () { fetchFilings({ silent: false }); });
-  $('offline-refresh-btn').addEventListener('click', function () { fetchFilings({ silent: false }); });
+  $('pick-refresh-btn').addEventListener('click',    function () { void fetchFilings({ silent: false }); });
+  $('fill-refresh-btn').addEventListener('click',    function () { void fetchFilings({ silent: false }); });
+  $('offline-refresh-btn').addEventListener('click', function () { void fetchFilings({ silent: false }); });
 
   $('pick-manual-btn').addEventListener('click', function () {
     filingData = null;
     allFilings = [];
-    sendMsg({ type: 'CLEAR_FILING_DATA' });
+    void sendMsg({ type: 'CLEAR_FILING_DATA' });
     showOffline();
   });
 
@@ -387,7 +385,7 @@
         }
         allFilings = [parsed];
       }
-      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      void sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       hideParseError();
       $('json-input').value = '';
       if (allFilings.length === 1) {
@@ -412,5 +410,5 @@
     $('parse-error').classList.add('hidden');
   }
 
-  bootstrapFromCache();
+  void bootstrapFromCache();
 })();

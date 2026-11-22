@@ -125,38 +125,41 @@
       .toLowerCase();
   }
 
-  function isVisibleElement(el, win) {
-    if (!el || el.nodeType !== 1) return false;
-    const view = win || (el.ownerDocument && el.ownerDocument.defaultView) || null;
-
-    if (typeof el.checkVisibility === 'function') {
-      try {
-        if (!el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true })) {
-          return false;
-        }
-      } catch (_) {}
+  function failsNativeVisibilityCheck(el) {
+    if (typeof el.checkVisibility !== 'function') return false;
+    try {
+      return !el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true });
+    } catch (_) {
+      return false;
     }
+  }
 
-    for (let cur = el; cur && cur.nodeType === 1; cur = cur.parentElement) {
-      if (cur.hasAttribute && cur.hasAttribute('hidden')) return false;
-      if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
-      if (cur.classList) {
-        if (cur.classList.contains('hidden') || cur.classList.contains('d-none')) return false;
-        if (
-          cur.classList.contains('tab-pane') &&
-          !cur.classList.contains('active') &&
-          !cur.classList.contains('show')
-        ) {
-          return false;
-        }
-      }
-      if (cur.style) {
-        if (cur.style.display === 'none' || cur.style.visibility === 'hidden') return false;
-      }
-      if (view && typeof view.getComputedStyle === 'function') {
-        const cs = view.getComputedStyle(cur);
-        if (cs && (cs.display === 'none' || cs.visibility === 'hidden')) return false;
-      }
+  function isHiddenByAttribute(node) {
+    return Boolean(node.hasAttribute?.('hidden')) || node.getAttribute?.('aria-hidden') === 'true';
+  }
+
+  function isHiddenByClass(node) {
+    const cl = node.classList;
+    if (!cl) return false;
+    if (cl.contains('hidden') || cl.contains('d-none')) return true;
+    return cl.contains('tab-pane') && !cl.contains('active') && !cl.contains('show');
+  }
+
+  function isHiddenStyle(style) {
+    return Boolean(style) && (style.display === 'none' || style.visibility === 'hidden');
+  }
+
+  function isHiddenNode(node, view) {
+    if (isHiddenByAttribute(node) || isHiddenByClass(node) || isHiddenStyle(node.style)) return true;
+    return typeof view?.getComputedStyle === 'function' && isHiddenStyle(view.getComputedStyle(node));
+  }
+
+  function isVisibleElement(el, win) {
+    if (el?.nodeType !== 1) return false;
+    if (failsNativeVisibilityCheck(el)) return false;
+    const view = win || el.ownerDocument?.defaultView || null;
+    for (let cur = el; cur?.nodeType === 1; cur = cur.parentElement) {
+      if (isHiddenNode(cur, view)) return false;
     }
     return true;
   }
@@ -274,13 +277,13 @@
 
   function setFieldValue(el, value, win) {
     if (!el) return false;
-    const view = win || (el.ownerDocument && el.ownerDocument.defaultView) || (typeof window !== 'undefined' ? window : null);
+    const view = win || (el.ownerDocument?.defaultView) || (typeof window !== 'undefined' ? window : null);
     const clean = String(value).replace(/,/g, '').trim();
     if (typeof el.focus === 'function') {
       try { el.focus(); } catch (_) {}
     }
 
-    const htmlInputProto = view && view.HTMLInputElement ? view.HTMLInputElement.prototype : null;
+    const htmlInputProto = view?.HTMLInputElement ? view.HTMLInputElement.prototype : null;
     const nativeSetter = htmlInputProto &&
       Object.getOwnPropertyDescriptor(htmlInputProto, 'value') &&
       Object.getOwnPropertyDescriptor(htmlInputProto, 'value').set;
@@ -288,7 +291,7 @@
     else el.value = clean;
 
     try {
-      const InputEv = (view && view.InputEvent) || (typeof InputEvent !== 'undefined' ? InputEvent : null);
+      const InputEv = (view?.InputEvent) || (typeof InputEvent !== 'undefined' ? InputEvent : null);
       if (InputEv) {
         el.dispatchEvent(new InputEv('input', {
           bubbles: true,
@@ -297,10 +300,10 @@
           data: clean,
         }));
       } else {
-        const Ev = (view && view.Event) || Event;
+        const Ev = (view?.Event) || Event;
         el.dispatchEvent(new Ev('input', { bubbles: true, composed: true }));
       }
-      const Ev = (view && view.Event) || Event;
+      const Ev = (view?.Event) || Event;
       el.dispatchEvent(new Ev('change', { bubbles: true, composed: true }));
     } catch (_) {}
 
@@ -309,7 +312,7 @@
     });
     if (reactKey) {
       const props = el[reactKey] && (el[reactKey].memoizedProps || (el[reactKey].return && el[reactKey].return.memoizedProps));
-      if (props && props.onChange) {
+      if (props?.onChange) {
         try { props.onChange({ target: el, type: 'change' }); } catch (_) {}
       }
     }
@@ -469,9 +472,9 @@
       }
     });
 
-    const foreignList = Array.isArray(filing.income && filing.income.foreignIncomes) && filing.income.foreignIncomes.length > 0
+    const foreignList = Array.isArray(filing.income?.foreignIncomes) && filing.income.foreignIncomes.length > 0
       ? filing.income.foreignIncomes
-      : (filing.income && filing.income.foreignIncome && filing.income.foreignIncome.nairaEquivalent > 0
+      : (filing.income?.foreignIncome?.nairaEquivalent > 0
         ? [{
           currency: filing.income.foreignIncome.currency || 'FX',
           totalAmount: filing.income.foreignIncome.totalUsd || 0,

@@ -25,18 +25,18 @@
   function sendTokenOnce(token) {
     return new Promise(function (resolve) {
       try {
-        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+        if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
           browser.runtime
             .sendMessage({ type: 'SET_BRIDGE_TOKEN', token: token })
-            .then(function (resp) { resolve(Boolean(resp && resp.ok)); })
+            .then(function (resp) { resolve(Boolean(resp?.ok)); })
             .catch(function () { resolve(false); });
-        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        } else if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
           chrome.runtime.sendMessage({ type: 'SET_BRIDGE_TOKEN', token: token }, function (resp) {
             if (chrome.runtime.lastError) {
               resolve(false);
               return;
             }
-            resolve(Boolean(resp && resp.ok));
+            resolve(Boolean(resp?.ok));
           });
         } else {
           resolve(false);
@@ -58,7 +58,7 @@
         if (ok) return true;
         return new Promise(function (resolve) {
           setTimeout(function () {
-            sendTokenOnce(token).then(resolve);
+            void sendTokenOnce(token).then(resolve);
           }, 150);
         });
       })

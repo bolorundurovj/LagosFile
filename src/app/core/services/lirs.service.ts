@@ -8,7 +8,7 @@ import {
 
 @Injectable({ providedIn: 'root' })
 export class LIRSService {
-  private tauri = inject(TauriService);
+  private readonly tauri = inject(TauriService);
 
   async fileWithLirs(filingId: string): Promise<LIRSAutomationResult> {
     return this.tauri.invoke<LIRSAutomationResult>('open_lirs_portal', { id: filingId });

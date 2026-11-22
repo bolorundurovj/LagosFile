@@ -38,7 +38,7 @@
     const token = core.extractTokenFromHash(window.location.hash);
     if (!token) return Promise.resolve(false);
     return sendMsg({ type: 'SET_BRIDGE_TOKEN', token: token }).then(function (resp) {
-      if (resp && resp.ok) {
+      if (resp?.ok) {
         try {
           const cleanUrl = window.location.pathname + window.location.search;
           window.history.replaceState(null, '', cleanUrl);
@@ -56,13 +56,13 @@
     }
   );
   window.addEventListener('hashchange', function () {
-    captureBridgeTokenFromHash().then(function (captured) {
+    void captureBridgeTokenFromHash().then(function (captured) {
       if (captured) {
         allFilings = [];
         selectedFiling = null;
         if (panelOpen) {
           renderLoading();
-          loadFilings();
+          void loadFilings();
         }
       }
     });
@@ -266,7 +266,7 @@
     toggleBtn.classList.toggle('active', panelOpen);
     if (panelOpen && allFilings.length === 0) {
       renderLoading();
-      loadFilings();
+      void loadFilings();
     }
   });
 
@@ -294,7 +294,7 @@
       '</div>';
     shadow.getElementById('offline-refresh').addEventListener('click', function () {
       renderLoading();
-      loadFilings();
+      void loadFilings();
     });
   }
 
@@ -306,10 +306,10 @@
     allFilings.forEach(function (f) {
       const card = document.createElement('div');
       card.className = 'fc';
-      const tax = f.computation && f.computation.finalTaxPayable;
+      const tax = f.computation?.finalTaxPayable;
       card.innerHTML =
         '<div class="fc-body">' +
-          '<div class="fc-name">' + esc(f.taxpayer && f.taxpayer.fullName || '—') + '</div>' +
+          '<div class="fc-name">' + esc(f.taxpayer?.fullName || '—') + '</div>' +
           '<div class="fc-meta">YOA ' + esc(f.yearOfAssessment) +
             (f.filingReference ? ' · ' + esc(f.filingReference) : '') + '</div>' +
         '</div>' +
@@ -324,16 +324,16 @@
     shadow.getElementById('pick-refresh').addEventListener('click', function () {
       allFilings = [];
       renderLoading();
-      loadFilings();
+      void loadFilings();
     });
   }
 
   function renderFill() {
     if (!selectedFiling) { renderPicker(); return; }
-    const tp = (selectedFiling.taxpayer && selectedFiling.taxpayer.fullName) || '—';
+    const tp = (selectedFiling.taxpayer?.fullName) || '—';
     const yoa = selectedFiling.yearOfAssessment || '—';
     const ref = selectedFiling.filingReference || '—';
-    const tax = selectedFiling.computation && selectedFiling.computation.finalTaxPayable;
+    const tax = selectedFiling.computation?.finalTaxPayable;
     const manualItems = core ? core.getManualFields(selectedFiling) : [];
 
     let manualHtml = '';
@@ -383,9 +383,9 @@
   async function loadFilings() {
     await tokenCapturePromise;
     const resp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filings' });
-    if (resp && resp.ok && Array.isArray(resp.data) && resp.data.length > 0) {
+    if (resp?.ok && Array.isArray(resp.data) && resp.data.length > 0) {
       allFilings = resp.data;
-      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      void sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       if (allFilings.length === 1) {
         selectedFiling = allFilings[0];
         renderFill();
@@ -395,7 +395,7 @@
       return;
     }
 
-    if (resp && resp.status === 403) {
+    if (resp?.status === 403) {
       allFilings = [];
       selectedFiling = null;
       renderOffline(true);
@@ -403,17 +403,17 @@
     }
 
     const singleResp = await sendMsg({ type: 'FETCH_BRIDGE', path: '/filing' });
-    if (singleResp && singleResp.ok && singleResp.data) {
+    if (singleResp?.ok && singleResp.data) {
       allFilings = [singleResp.data];
       selectedFiling = singleResp.data;
-      sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
+      void sendMsg({ type: 'SET_FILINGS_DATA', data: allFilings });
       renderFill();
       return;
     }
 
     allFilings = [];
     selectedFiling = null;
-    renderOffline(Boolean(singleResp && singleResp.status === 403));
+    renderOffline(Boolean(singleResp?.status === 403));
   }
 
   function runStep(step) {
@@ -493,33 +493,21 @@
   }
 
   function fmtN(n) {
-    if (n == null || isNaN(n)) return '—';
+    if (n == null || Number.isNaN(Number(n))) return '—';
     return '₦' + Math.abs(n).toLocaleString('en-NG', { minimumFractionDigits: 2 });
   }
 
   runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
-    if (msg.type === 'INJECT_STEP') {
-      const saved = selectedFiling;
+    if (msg.type === 'INJECT_STEP' || msg.type === 'INJECT_ALL') {
+      // A filing sent from the popup becomes the panel's selection so delayed tab fills use it.
       if (msg.data) selectedFiling = msg.data;
       try {
-        runStep(msg.step);
+        if (msg.type === 'INJECT_STEP') runStep(msg.step);
+        else runAllSteps();
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: String(e) });
       }
-      if (!saved && msg.data) selectedFiling = msg.data;
-      return false;
-    }
-    if (msg.type === 'INJECT_ALL') {
-      const saved = selectedFiling;
-      if (msg.data) selectedFiling = msg.data;
-      try {
-        runAllSteps();
-        sendResponse({ ok: true });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e) });
-      }
-      if (!saved && msg.data) selectedFiling = msg.data;
       return false;
     }
     if (msg.type === 'PING') {

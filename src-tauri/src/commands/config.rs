@@ -74,7 +74,7 @@ pub async fn list_configs(state: State<'_, AppState>) -> Result<Vec<TaxConfig>, 
     let configs = stmt
         .query_map([], row_to_config)
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(configs)
 }

@@ -280,7 +280,7 @@ where
         let mapped = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
         mapped
     };
@@ -407,7 +407,7 @@ pub fn remove_unreferenced_doc_files(
     let mut referenced = std::collections::HashSet::<PathBuf>::new();
     if let Ok(mut stmt) = conn.prepare("SELECT file_path FROM document") {
         if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-            for path_str in rows.filter_map(|r| r.ok()) {
+            for path_str in rows.filter_map(Result::ok) {
                 let resolved = resolve_doc_path(dir, &path_str);
                 if let Ok(canon) = std::fs::canonicalize(&resolved) {
                     referenced.insert(canon);
@@ -466,7 +466,7 @@ pub fn sweep_orphan_doc_files(dir: &Path, conn: &rusqlite::Connection) -> usize 
     let mut referenced = std::collections::HashSet::<PathBuf>::new();
     if let Ok(mut stmt) = conn.prepare("SELECT file_path FROM document") {
         if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-            for path_str in rows.filter_map(|r| r.ok()) {
+            for path_str in rows.filter_map(Result::ok) {
                 let resolved = resolve_doc_path(dir, &path_str);
                 if let Ok(canon) = std::fs::canonicalize(&resolved) {
                     referenced.insert(canon);
@@ -485,7 +485,7 @@ pub fn sweep_orphan_doc_files(dir: &Path, conn: &rusqlite::Connection) -> usize 
         let Ok(entries) = std::fs::read_dir(dir_path) else {
             return;
         };
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
             if path.is_dir() {
                 walk_and_clean(&path, docs_root, referenced, removed);
@@ -528,7 +528,7 @@ pub fn collect_backup_doc_refs(db: &AppDb) -> Result<BackupDocRefs, String> {
         let mapped = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
         mapped
     };
@@ -785,7 +785,7 @@ where
         let mapped = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
         mapped
     };

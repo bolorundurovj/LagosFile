@@ -160,8 +160,8 @@ export class PinSetupComponent {
   loading = false;
   errors: { pin?: string; confirm?: string; file?: string; general?: string } = {};
 
-  private auth = inject(AuthService);
-  private router = inject(Router);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
 
   enterRestoreMode(): void {
     this.restoreMode = true;
@@ -201,7 +201,7 @@ export class PinSetupComponent {
     this.loading = true;
     try {
       await this.auth.setupPin(this.pin);
-      this.router.navigate(['/setup-recovery']);
+      void this.router.navigate(['/setup-recovery']);
     } catch (e: unknown) {
       this.errors.general = e instanceof Error ? e.message : String(e ?? 'Failed to set PIN.');
     } finally {
@@ -223,9 +223,9 @@ export class PinSetupComponent {
     try {
       const taxpayer = await this.auth.restoreBackupFresh(this.backupPath, this.backupPin);
       if (taxpayer) {
-        this.router.navigate(['/dashboard']);
+        void this.router.navigate(['/dashboard']);
       } else {
-        this.router.navigate(['/profile-setup']);
+        void this.router.navigate(['/profile-setup']);
       }
     } catch (e: unknown) {
       this.errors.general = e instanceof Error ? e.message : String(e ?? 'Restore failed.');

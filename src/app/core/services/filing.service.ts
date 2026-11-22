@@ -10,7 +10,7 @@ export class FilingService {
   private readonly _wizard = signal<WizardState | null>(null);
   readonly wizard = this._wizard.asReadonly();
 
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async listFilings(): Promise<Filing[]> {
     return this.tauri.invoke<Filing[]>('list_filings');

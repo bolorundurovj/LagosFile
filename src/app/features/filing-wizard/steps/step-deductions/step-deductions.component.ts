@@ -320,9 +320,9 @@ export class StepDeductionsComponent implements OnInit {
   next = output<void>();
   back = output<void>();
 
-  private filingService = inject(FilingService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
 
   fields: Record<FieldKey, number> = { pension: 0, nhis: 0, nhf: 0, lifeAssurance: 0, annualRent: 0, paye: 0 };
   standard = {} as Record<StandardRelief, ReliefEntry>;
@@ -351,7 +351,11 @@ export class StepDeductionsComponent implements OnInit {
     return this.loaded && this.snapshot() !== this.initialSnapshot;
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     for (const type of Object.keys(STANDARD_FIELDS) as StandardRelief[]) {
       this.standard[type] = this.newRelief(type);
     }

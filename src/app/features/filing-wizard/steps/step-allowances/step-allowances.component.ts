@@ -214,9 +214,9 @@ export class StepAllowancesComponent implements OnInit {
   next = output<void>();
   back = output<void>();
 
-  private filingService = inject(FilingService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
 
   entries = signal<CapitalAllowance[]>([]);
   saving = signal(false);
@@ -238,7 +238,11 @@ export class StepAllowancesComponent implements OnInit {
     return this.loaded && this.snapshot() !== this.initialSnapshot;
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       try {
         if (typeof this.configService.getForFiling === 'function') {

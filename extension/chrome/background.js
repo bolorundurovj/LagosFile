@@ -5,15 +5,17 @@ let currentFiling = null;
 let bridgeToken = null;
 
 // Ephemeral session storage (in-memory only, cleared on browser exit, never persisted to disk).
+function consumeLastError() {
+  return chrome.runtime.lastError;
+}
+
 function sessionStore() {
-  return chrome.storage && chrome.storage.session ? chrome.storage.session : null;
+  return chrome.storage?.session || null;
 }
 
 function purgeLegacyLocalStorage() {
-  if (chrome.storage && chrome.storage.local) {
-    chrome.storage.local.remove(['filingsData', 'filingData', 'bridgeToken'], () => {
-      void chrome.runtime.lastError;
-    });
+  if (chrome.storage?.local) {
+    chrome.storage.local.remove(['filingsData', 'filingData', 'bridgeToken'], consumeLastError);
   }
 }
 
@@ -41,7 +43,7 @@ function clearCachedFilings(cb) {
   const store = sessionStore();
   if (store) {
     store.remove(['filingsData', 'filingData'], () => {
-      void chrome.runtime.lastError;
+      consumeLastError();
       if (cb) cb();
     });
   } else if (cb) {
@@ -71,7 +73,7 @@ function withToken(fn) {
     return;
   }
   store.get(['bridgeToken'], (r) => {
-    bridgeToken = !chrome.runtime.lastError && r && r.bridgeToken ? r.bridgeToken : null;
+    bridgeToken = !chrome.runtime.lastError && r?.bridgeToken ? r.bridgeToken : null;
     fn(bridgeToken);
   });
 }
@@ -169,7 +171,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           })
           .then((data) => sendResponse({ ok: true, data }))
           .catch((err) => {
-            const status = err && err.status ? err.status : 0;
+            const status = err?.status || 0;
             // Clear cached filings whenever the bridge rejects auth or is offline (vault locked).
             if (status === 403 || status === 0) {
               clearCachedFilings(() => {

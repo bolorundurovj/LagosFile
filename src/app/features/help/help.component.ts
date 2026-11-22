@@ -51,7 +51,7 @@ interface Guide { title: string; body: string[]; }
   `],
 })
 export class HelpComponent {
-  private configService = inject(ConfigService);
+  private readonly configService = inject(ConfigService);
 
   config = this.configService.activeConfig;
   query = signal('');

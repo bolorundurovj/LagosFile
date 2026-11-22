@@ -457,12 +457,12 @@ const STEPS = [
   `],
 })
 export class FilingWizardComponent implements OnInit {
-  private route = inject(ActivatedRoute);
-  private router = inject(Router);
-  private auth = inject(AuthService);
-  private filingService = inject(FilingService);
-  private toast = inject(ToastService);
-  private destroyRef = inject(DestroyRef);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
+  private readonly filingService = inject(FilingService);
+  private readonly toast = inject(ToastService);
+  private readonly destroyRef = inject(DestroyRef);
 
   mode = signal<WizardMode>('active');
   filingId = signal<string | undefined>(undefined);
@@ -511,7 +511,11 @@ export class FilingWizardComponent implements OnInit {
     return window.confirm('You have unsaved changes on this step. Leave without saving?');
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     if (this.route.paramMap) {
       let initialized = false;
       const initialId = this.route.snapshot?.paramMap?.get('id') ?? null;
@@ -556,7 +560,7 @@ export class FilingWizardComponent implements OnInit {
         }
       } catch (err: unknown) {
         this.toast.error('Failed to load filing: ' + (err instanceof Error ? err.message : String(err)));
-        this.router.navigate(['/history']);
+        void this.router.navigate(['/history']);
       } finally {
         this.loading.set(false);
       }
@@ -596,7 +600,7 @@ export class FilingWizardComponent implements OnInit {
       this.readonlyFiling.set(null);
       this.currentStep.set(1);
       this.mode.set('active');
-      this.router.navigate(['/filing', amended.id]);
+      void this.router.navigate(['/filing', amended.id]);
     } catch (err: unknown) {
       this.toast.error('Failed to create amendment: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
@@ -604,9 +608,9 @@ export class FilingWizardComponent implements OnInit {
     }
   }
 
-  goToHistory(): void { this.router.navigate(['/history']); }
+  goToHistory(): void { void this.router.navigate(['/history']); }
 
-  cancel(): void { this.router.navigate(['/dashboard']); }
+  cancel(): void { void this.router.navigate(['/dashboard']); }
 
   async goToStep(step: WizardStep): Promise<void> {
     if (step === this.currentStep()) return;
@@ -631,6 +635,6 @@ export class FilingWizardComponent implements OnInit {
   }
 
   onConfirmed(): void {
-    this.router.navigate(['/history']);
+    void this.router.navigate(['/history']);
   }
 }

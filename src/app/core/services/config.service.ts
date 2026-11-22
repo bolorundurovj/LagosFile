@@ -9,7 +9,7 @@ export class ConfigService {
   private readonly _migrationNotices = signal<string[]>([]);
   readonly migrationNotices = this._migrationNotices.asReadonly();
 
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async loadActive(): Promise<TaxConfig> {
     const config = await this.tauri.invoke<TaxConfig>('get_active_config');

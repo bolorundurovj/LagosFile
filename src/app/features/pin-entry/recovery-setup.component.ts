@@ -92,9 +92,9 @@ export class RecoverySetupComponent {
   loading = false;
   error = '';
 
-  private auth = inject(AuthService);
-  private router = inject(Router);
-  private route = inject(ActivatedRoute);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
   private get returnPath(): string {
     return this.auth.isUnlocked() ? '/settings' : '/profile-setup';
@@ -125,7 +125,7 @@ export class RecoverySetupComponent {
         [this.selectedQuestions[0], this.selectedQuestions[1], this.selectedQuestions[2]],
         [this.answers[0], this.answers[1], this.answers[2]],
       );
-      this.router.navigate([this.returnPath]);
+      void this.router.navigate([this.returnPath]);
     } catch (err: unknown) {
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -134,6 +134,6 @@ export class RecoverySetupComponent {
   }
 
   skip(): void {
-    this.router.navigate([this.returnPath]);
+    void this.router.navigate([this.returnPath]);
   }
 }

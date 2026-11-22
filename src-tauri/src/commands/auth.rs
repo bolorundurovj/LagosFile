@@ -874,12 +874,15 @@ pub async fn setup_recovery(
 
 #[tauri::command]
 pub async fn check_recovery_setup() -> Result<bool, String> {
-    Ok(recovery_path().exists())
+    Ok(tokio::fs::try_exists(recovery_path())
+        .await
+        .unwrap_or(false))
 }
 
 #[tauri::command]
 pub async fn get_recovery_questions() -> Result<Vec<String>, String> {
-    let json = std::fs::read_to_string(recovery_path())
+    let json = tokio::fs::read_to_string(recovery_path())
+        .await
         .map_err(|_| "No recovery data found. Have you set up security questions?".to_string())?;
     let data: RecoveryData = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(vec![data.question_1, data.question_2, data.question_3])

@@ -197,7 +197,7 @@ pub async fn attach_document(
     })();
 
     if let Err(e) = insert_res {
-        let _ = std::fs::remove_file(&dest);
+        let _ = tokio::fs::remove_file(&dest).await;
         return Err(e);
     }
 
@@ -219,7 +219,7 @@ pub async fn attach_document(
             }
         }
         if row_deleted {
-            let _ = std::fs::remove_file(&dest);
+            let _ = tokio::fs::remove_file(&dest).await;
         }
         return Err(e);
     }
@@ -260,7 +260,7 @@ pub async fn list_documents(
             }))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(docs)
 }

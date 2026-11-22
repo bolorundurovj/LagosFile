@@ -9,7 +9,7 @@ let currentFiling = null;
 let bridgeToken = null;
 
 function purgeLegacyLocalStorage() {
-  if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+  if (typeof browser !== 'undefined' && browser.storage?.local) {
     browser.storage.local
       .remove(['filingsData', 'filingData', 'bridgeToken'])
       .catch(function () {});
@@ -99,7 +99,7 @@ browser.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           safeRespond(res);
         })
         .catch(function (err) {
-          const status = err && err.status ? err.status : 0;
+          const status = err?.status || 0;
           if (status === 403 || status === 0) {
             cachedFilings = [];
             currentFiling = null;

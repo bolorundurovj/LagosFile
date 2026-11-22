@@ -9,9 +9,9 @@ const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchsta
 /** Locks the encrypted database after a period with no user activity. */
 @Injectable({ providedIn: 'root' })
 export class IdleLockService {
-  private auth = inject(AuthService);
-  private router = inject(Router);
-  private zone = inject(NgZone);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+  private readonly zone = inject(NgZone);
 
   /** Minutes of inactivity before locking; 0 disables the auto-lock. */
   readonly minutes = signal(this.readMinutes());
@@ -57,7 +57,7 @@ export class IdleLockService {
     clearTimeout(this.timer);
     const minutes = this.minutes();
     if (!this.running || minutes <= 0) return;
-    this.timer = setTimeout(() => this.zone.run(() => this.lock()), minutes * 60_000);
+    this.timer = setTimeout(() => { void this.zone.run(() => this.lock()); }, minutes * 60_000);
   }
 
   private async lock(): Promise<void> {

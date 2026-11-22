@@ -127,7 +127,7 @@ pub async fn list_fx_cache(state: State<'_, AppState>) -> Result<Vec<FxCacheEntr
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(entries)
 }

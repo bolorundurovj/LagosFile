@@ -343,8 +343,8 @@ export class StepReviewComponent implements OnInit {
   back = output<void>();
   confirmed = output<void>();
 
-  private filingService = inject(FilingService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly toast = inject(ToastService);
 
   result = signal<ComputationResult | null>(null);
   loading = signal(true);
@@ -399,7 +399,11 @@ export class StepReviewComponent implements OnInit {
     return { priorYoa: p.yearOfAssessment, rows, flagged: rows.some(x => x.flagged) };
   });
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       const [r, entries] = await Promise.all([
         this.filingService.compute(this.filingId()),

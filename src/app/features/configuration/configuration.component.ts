@@ -315,9 +315,9 @@ const NTA_SECTIONS: Record<string, string> = {
   `],
 })
 export class ConfigurationComponent implements OnInit {
-  private configService = inject(ConfigService);
-  private fxService = inject(FxService);
-  private toast = inject(ToastService);
+  private readonly configService = inject(ConfigService);
+  private readonly fxService = inject(FxService);
+  private readonly toast = inject(ToastService);
 
   config = signal<TaxConfig | null>(null);
   bands = signal<TaxBand[]>([]);
@@ -344,7 +344,11 @@ export class ConfigurationComponent implements OnInit {
     other: 'Other',
   };
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     await this.load();
   }
 

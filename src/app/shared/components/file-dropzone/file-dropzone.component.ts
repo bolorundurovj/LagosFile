@@ -34,8 +34,8 @@ export interface DropzoneFile {
   `,
 })
 export class FileDropzoneComponent implements OnInit, OnDestroy {
-  private host = inject(ElementRef<HTMLElement>);
-  private zone = inject(NgZone);
+  private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly zone = inject(NgZone);
   private unlisten?: () => void;
 
   label = input('Attach supporting document');
@@ -62,7 +62,11 @@ export class FileDropzoneComponent implements OnInit, OnDestroy {
    * The webview swallows HTML5 drops and reports native file paths through
    * Tauri instead, so drops are matched to this zone by cursor position.
    */
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       this.unlisten = await getCurrentWebview().onDragDropEvent(({ payload }) => this.zone.run(() => {
         if (payload.type === 'leave') {

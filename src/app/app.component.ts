@@ -48,7 +48,11 @@ export class AppComponent implements OnInit, OnDestroy {
   private unlisten: UnlistenFn | null = null;
   private clearTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       try {
         this.unlisten = await listen<DocMigrationProgress>('doc-migration-progress', (event) => {

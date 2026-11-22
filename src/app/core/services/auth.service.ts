@@ -19,9 +19,9 @@ export class AuthService {
   readonly biometricAvailable = this._biometricAvailable.asReadonly();
   readonly biometricEnabled = this._biometricEnabled.asReadonly();
 
-  private configService = inject(ConfigService, { optional: true });
+  private readonly configService = inject(ConfigService, { optional: true });
 
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async init(): Promise<void> {
     const status = await this.tauri.invoke<AppStatus>('check_app_status');

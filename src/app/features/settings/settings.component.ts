@@ -438,10 +438,10 @@ export class SettingsComponent {
     { value: 60, label: 'After 1 hour' },
     { value: 0, label: 'Never' },
   ];
-  private profileService = inject(ProfileService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
-  private router = inject(Router);
+  private readonly profileService = inject(ProfileService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
+  private readonly router = inject(Router);
 
   savingProfile = signal(false);
   backingUp = signal(false);
@@ -591,7 +591,7 @@ export class SettingsComponent {
       this.pinForm = { current: '', next: '', confirm: '' };
       this.toast.success(
         'PIN changed successfully. Security questions were cleared — please set them up again.',
-        { label: 'Set Up Now', fn: () => this.router.navigate(['/setup-recovery']) }
+        { label: 'Set Up Now', fn: () => { void this.router.navigate(['/setup-recovery']); } }
       );
     } catch (err: unknown) {
       this.pinError.set(err instanceof Error ? err.message : String(err));
@@ -679,7 +679,7 @@ export class SettingsComponent {
   async lock(): Promise<void> {
     try {
       await this.auth.lock();
-      this.router.navigate(['/unlock']);
+      void this.router.navigate(['/unlock']);
     } catch (err: unknown) {
       this.toast.error('Failed to lock app: ' + (err instanceof Error ? err.message : String(err)));
     }

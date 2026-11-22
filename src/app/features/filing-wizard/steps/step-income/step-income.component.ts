@@ -393,10 +393,10 @@ export class StepIncomeComponent implements OnInit {
   filingId = input.required<string>();
   next = output<void>();
 
-  private filingService = inject(FilingService);
-  private fxService = inject(FxService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly fxService = inject(FxService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
   private removedIds: string[] = [];
   private initialSnapshot = '';
   private loaded = false;
@@ -417,7 +417,11 @@ export class StepIncomeComponent implements OnInit {
     return this.loaded && this.snapshot() !== this.initialSnapshot;
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       try {
         if (typeof this.configService.getForFiling === 'function') {
@@ -561,7 +565,7 @@ export class StepIncomeComponent implements OnInit {
     } else {
       entry.foreignCurrency = 'USD';
       // Auto-fetch for today if date not yet filled; re-fetch if date already set
-      this.fetchRate(entry);
+      void this.fetchRate(entry);
     }
   }
 

@@ -704,11 +704,11 @@ interface FilingRowAction {
   `],
 })
 export class FilingHistoryComponent implements OnInit {
-  private filingService = inject(FilingService);
-  private lirsService = inject(LIRSService);
-  private toast = inject(ToastService);
-  private cdr = inject(ChangeDetectorRef);
-  private router = inject(Router);
+  private readonly filingService = inject(FilingService);
+  private readonly lirsService = inject(LIRSService);
+  private readonly toast = inject(ToastService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly router = inject(Router);
 
   openMenuId = signal<string | null>(null);
 
@@ -811,7 +811,7 @@ export class FilingHistoryComponent implements OnInit {
   runAction(id: FilingActionId, f: Filing): void {
     this.openMenuId.set(null);
     switch (id) {
-      case 'export': this.openPreview(f); break;
+      case 'export': void this.openPreview(f); break;
       case 'duplicate': void this.duplicate(f.id); break;
       case 'amend': void this.amend(f.id); break;
       case 'fileWithLirs': void this.fileWithLirs(f); break;
@@ -821,7 +821,11 @@ export class FilingHistoryComponent implements OnInit {
     }
   }
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       this.allFilings = await this.filingService.listFilings();
       this.applyFilter();
@@ -953,7 +957,7 @@ export class FilingHistoryComponent implements OnInit {
       const res = await this.lirsService.fileWithLirs(f.id);
       if (res.fallbackActive) {
         this.toast.warning(res.message);
-        this.openReferencePanelForFiling(f);
+        void this.openReferencePanelForFiling(f);
       } else if (res.warnings && res.warnings.length > 0) {
         const alreadyIncluded = res.warnings.every(w => res.message.includes(w));
         this.toast.warning(alreadyIncluded ? res.message : `${res.message} (${res.warnings.join('; ')})`);
@@ -963,7 +967,7 @@ export class FilingHistoryComponent implements OnInit {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.toast.error('Failed to open LIRS portal: ' + msg);
-      this.openReferencePanelForFiling(f);
+      void this.openReferencePanelForFiling(f);
       this.referenceStatus.set('Could not open LIRS portal. Use the values below to fill Form A manually.');
     } finally {
       this.lirsActionLoading.set(false);

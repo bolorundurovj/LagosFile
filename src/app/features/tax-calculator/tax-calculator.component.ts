@@ -29,7 +29,7 @@ interface IncomeLine { incomeType: IncomeType; grossAmountNgn: number; cgtProcee
   styleUrl: './tax-calculator.component.scss',
 })
 export class TaxCalculatorComponent {
-  private filingService = inject(FilingService);
+  private readonly filingService = inject(FilingService);
 
   readonly incomeTypes = INCOME_TYPES;
   readonly currentYear = new Date().getFullYear();
@@ -57,7 +57,7 @@ export class TaxCalculatorComponent {
 
   recompute(): void {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.run(), 250);
+    this.timer = setTimeout(() => { void this.run(); }, 250);
   }
 
   effectiveRate(): number {

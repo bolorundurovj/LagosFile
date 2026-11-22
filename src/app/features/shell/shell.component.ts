@@ -113,19 +113,23 @@ import { LucideAngularModule } from 'lucide-angular';
 })
 export class ShellComponent implements OnInit {
   auth = inject(AuthService);
-  private config = inject(ConfigService);
+  private readonly config = inject(ConfigService);
   update = inject(UpdateService);
-  private reminders = inject(DeadlineReminderService);
+  private readonly reminders = inject(DeadlineReminderService);
   migrationNotices = this.config.migrationNotices;
 
-  async ngOnInit(): Promise<void> {
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
     try {
       await this.config.loadActive();
     } catch { /* new install; seed data will be created on unlock */ }
     try {
       await this.config.getMigrationNotices();
     } catch { /* ignore when notices unavailable */ }
-    this.update.checkForUpdates();
+    void this.update.checkForUpdates();
     void this.reminders.check();
   }
 

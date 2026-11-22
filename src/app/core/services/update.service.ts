@@ -18,7 +18,7 @@ export class UpdateService {
   updateUrl = signal<string | null>(null);
   checking = signal(false);
 
-  constructor(private http: HttpClient) {}
+  constructor(private readonly http: HttpClient) {}
 
   async checkForUpdates(): Promise<void> {
     const dismissed = localStorage.getItem(this.dismissedKey);
@@ -47,7 +47,7 @@ export class UpdateService {
   private isNewer(latest: string, current: string): boolean {
     const parse = (v: string) => {
       const [numeric, pre] = v.split('-', 2);
-      const parts = numeric.split('.').map(n => parseInt(n, 10) || 0);
+      const parts = numeric.split('.').map(n => Number.parseInt(n, 10) || 0);
       return { parts, pre: pre ?? null };
     };
     const l = parse(latest);

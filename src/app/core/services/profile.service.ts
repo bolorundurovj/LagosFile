@@ -4,7 +4,7 @@ import { Taxpayer } from '../models';
 
 @Injectable({ providedIn: 'root' })
 export class ProfileService {
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async create(data: Omit<Taxpayer, 'id' | 'createdAt'>): Promise<Taxpayer> {
     return this.tauri.invoke<Taxpayer>('create_profile', { profile: data });

@@ -3,7 +3,11 @@ use crate::{
     AppState,
 };
 use ::lopdf;
-use printpdf::*;
+use printpdf::{
+    BuiltinFont, Color, ColorBits, ColorSpace, Greyscale, Image, ImageFilter, ImageTransform,
+    ImageXObject, IndirectFontRef, Line, Mm, PdfDocument, PdfDocumentReference, PdfLayerReference,
+    Point, Px, Svg, SvgTransform, TextMatrix, TextRenderingMode,
+};
 use rusqlite::params;
 use std::io::BufWriter;
 use std::path::Path;
@@ -257,7 +261,7 @@ fn load_filing_documents(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(docs)
 }
@@ -1459,7 +1463,7 @@ pub fn export_filing_csv_with_conn(
             ]))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .for_each(|line| csv.push_str(&line));
 
     // Capital allowances
@@ -1496,7 +1500,7 @@ pub fn export_filing_csv_with_conn(
             ]))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .for_each(|line| csv.push_str(&line));
 
     // Relief entries
@@ -1536,7 +1540,7 @@ pub fn export_filing_csv_with_conn(
             ]))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .for_each(|line| csv.push_str(&line));
 
     ensure_parent(save_path)?;
@@ -1591,7 +1595,7 @@ pub fn export_filing_json_with_conn(
             }))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut ca_stmt = conn
@@ -1615,7 +1619,7 @@ pub fn export_filing_json_with_conn(
             }))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut relief_stmt = conn
@@ -1638,7 +1642,7 @@ pub fn export_filing_json_with_conn(
             }))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let output = serde_json::json!({
