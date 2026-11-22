@@ -85,6 +85,7 @@ windows = { version = "0.58", features = ["Security_Credentials_UI", "Foundation
 
 [dev-dependencies]
 cucumber = "=0.21.1"
+tauri = { version = "2", features = ["test"] }
 
 [[test]]
 name = "lirs_parity"

@@ -5,6 +5,9 @@ use lagosfile_lib::{
     db::AppDb,
     services::{computation::ComputationEngine, config::ConfigService},
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static UNRECORDED_CASES: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Default, World)]
 pub struct LirsParityWorld {
@@ -211,22 +214,19 @@ fn lagosfile_matches_lirs(world: &mut LirsParityWorld) {
         || world.lirs_gross_tax.is_some()
         || world.lirs_tax_payable.is_some();
 
-    if !any_recorded {
-        // Unrecorded row: skipped in CI until a tester records portal outputs.
-        return;
+    if any_recorded {
+        assert!(
+            !world.recorded_by.is_empty(),
+            "Case {} has recorded LIRS figures but missing recorded_by",
+            world.case_id
+        );
+        NaiveDate::parse_from_str(&world.recorded_on, "%Y-%m-%d").unwrap_or_else(|_| {
+            panic!(
+                "Case {} has recorded LIRS figures but invalid recorded_on '{}' (expected YYYY-MM-DD)",
+                world.case_id, world.recorded_on
+            )
+        });
     }
-
-    assert!(
-        !world.recorded_by.is_empty(),
-        "Case {} has recorded LIRS figures but missing recorded_by",
-        world.case_id
-    );
-    NaiveDate::parse_from_str(&world.recorded_on, "%Y-%m-%d").unwrap_or_else(|_| {
-        panic!(
-            "Case {} has recorded LIRS figures but invalid recorded_on '{}' (expected YYYY-MM-DD)",
-            world.case_id, world.recorded_on
-        )
-    });
 
     let db = AppDb::open_in_memory().expect("failed to open in-memory DB");
     let config = {
@@ -246,6 +246,34 @@ fn lagosfile_matches_lirs(world: &mut LirsParityWorld) {
     let (inc, ca, rel) = build_estimate_entries(incomes, allowances, reliefs, &config);
     let result = ComputationEngine::compute(&inc, &ca, &rel, &config)
         .unwrap_or_else(|e| panic!("Case {} computation failed: {}", world.case_id, e));
+
+    if !any_recorded {
+        // No portal figures yet: parity cannot be asserted, so only check that LagosFile's
+        // own figures for this case are well-formed.
+        UNRECORDED_CASES.fetch_add(1, Ordering::Relaxed);
+        for (label, value) in [
+            ("total_income", result.total_gross_income),
+            ("chargeable_income", result.chargeable_income),
+            ("gross_tax", result.graduated_tax),
+            ("tax_payable", result.final_tax_payable),
+        ] {
+            assert!(
+                value.is_finite() && value >= 0.0,
+                "Case {} {} must be a non-negative amount, got {}",
+                world.case_id,
+                label,
+                value
+            );
+        }
+        assert!(
+            result.chargeable_income <= result.total_gross_income + 0.01,
+            "Case {} chargeable income {} exceeds total income {}",
+            world.case_id,
+            result.chargeable_income,
+            result.total_gross_income
+        );
+        return;
+    }
 
     let check = |label: &str, expected: Option<f64>, actual: f64| {
         if let Some(exp) = expected {
@@ -283,42 +311,23 @@ fn lagosfile_matches_lirs(world: &mut LirsParityWorld) {
 #[tokio::main]
 async fn main() {
     use cucumber::writer::Stats as _;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
 
     let feature_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("features")
         .join("lirs_parity.feature");
 
-    let skipped_unrecorded = Arc::new(AtomicUsize::new(0));
-    let skipped_counter = Arc::clone(&skipped_unrecorded);
-
     let writer = LirsParityWorld::cucumber()
-        .filter_run(feature_path, move |_feature, _rule, scenario| {
-            if scenario.tags.iter().any(|tag| tag == "pending") {
-                return false;
-            }
-            // Skip unrecorded rows instead of falsely reporting them as PASSED;
-            // once any LIRS figure is filled in, the scenario runs and asserts within ₦1.
-            let is_unrecorded = scenario.steps.iter().any(|step| {
-                step.value
-                    == r#"LIRS showed total income "", chargeable income "", gross tax "" and tax payable """#
-            });
-            if is_unrecorded {
-                skipped_counter.fetch_add(1, Ordering::Relaxed);
-                return false;
-            }
-            true
+        .fail_on_skipped()
+        .filter_run(feature_path, |_feature, _rule, scenario| {
+            !scenario.tags.iter().any(|tag| tag == "pending")
         })
         .await;
 
-    let skipped = skipped_unrecorded.load(Ordering::Relaxed);
-    if skipped > 0 {
+    let unrecorded = UNRECORDED_CASES.load(Ordering::Relaxed);
+    if unrecorded > 0 {
         println!(
-            "[lirs_parity] SKIPPED {skipped} unrecorded scenario(s) — record live LIRS portal figures in tests/features/lirs_parity.feature to activate parity assertions."
+            "[lirs_parity] {unrecorded} case(s) have no LIRS portal figures yet: LagosFile's figures were sanity-checked but parity was NOT asserted. Record portal figures in tests/features/lirs_parity.feature to enable parity checks."
         );
     }
 

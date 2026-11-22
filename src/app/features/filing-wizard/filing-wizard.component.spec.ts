@@ -1,5 +1,6 @@
-import { TestBed } from '@angular/core/testing';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ActivatedRoute, ParamMap, Router, convertToParamMap } from '@angular/router';
+import { BehaviorSubject } from 'rxjs';
 import { FilingWizardComponent } from './filing-wizard.component';
 import { StepReviewComponent } from './steps/step-review/step-review.component';
 import { FilingService } from '../../core/services/filing.service';
@@ -422,6 +423,214 @@ describe('FilingWizardComponent (dirty step saving, route guard, and error handl
     const fixture = TestBed.createComponent(FilingWizardComponent);
     fixture.componentInstance.mode.set('active');
     expect(fixture.componentInstance.canDeactivate()).toBeTrue();
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('FilingWizardComponent (navigation and route changes)', () => {
+  let filingServiceSpy: jasmine.SpyObj<FilingService>;
+  let routerSpy: jasmine.SpyObj<Router>;
+  let toastSpy: jasmine.SpyObj<ToastService>;
+  let paramMap$: BehaviorSubject<ParamMap>;
+  let fixture: ComponentFixture<FilingWizardComponent>;
+  let comp: FilingWizardComponent;
+
+  const confirmed: Filing = {
+    id: 'filing-c-1',
+    taxpayerId: 'tp-1',
+    yearOfAssessment: 2023,
+    status: 'Confirmed',
+    createdAt: '2024-02-01T00:00:00Z',
+    confirmedAt: '2024-02-02T00:00:00Z',
+    payeCredit: 120_000,
+    foreignTaxCredit: 30_000,
+    taxConfigVersion: 'PITA',
+  };
+
+  function stepRef(dirty: boolean, saveResult = true) {
+    return { isDirty: () => dirty, save: jasmine.createSpy('save').and.resolveTo(saveResult) };
+  }
+
+  async function create(id: string | null): Promise<void> {
+    paramMap$ = new BehaviorSubject(convertToParamMap(id ? { id } : {}));
+    TestBed.overrideProvider(ActivatedRoute, {
+      useValue: { paramMap: paramMap$.asObservable(), snapshot: { paramMap: convertToParamMap(id ? { id } : {}) } },
+    });
+    fixture = TestBed.createComponent(FilingWizardComponent);
+    comp = fixture.componentInstance;
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+  }
+
+  beforeEach(async () => {
+    filingServiceSpy = jasmine.createSpyObj('FilingService', [
+      'getFiling', 'listIncomeEntries', 'listAllowances', 'listReliefEntries', 'amendFiling', 'createDraft',
+    ]);
+    routerSpy = jasmine.createSpyObj('Router', ['navigate']);
+    routerSpy.navigate.and.resolveTo(true);
+    toastSpy = jasmine.createSpyObj('ToastService', ['error', 'success']);
+    filingServiceSpy.getFiling.and.resolveTo(confirmed);
+    filingServiceSpy.listIncomeEntries.and.resolveTo([
+      { id: 'i1', filingId: 'filing-c-1', incomeType: 'employment', grossAmountNgn: 4_000_000, isForeign: false, isCgtExempt: false, documents: [] },
+    ]);
+    filingServiceSpy.listAllowances.and.resolveTo([
+      { id: 'a1', filingId: 'filing-c-1', assetDescription: 'Laptop', assetType: 'computer_laptop', assetCost: 1, acquisitionDate: '', taxWrittenDownValue: 1, annualAllowanceRate: 0.25, annualAllowanceAmount: 250_000, documents: [] },
+    ]);
+    filingServiceSpy.listReliefEntries.and.resolveTo([
+      { id: 'r1', filingId: 'filing-c-1', reliefType: 'pension', claimedAmount: 1, approvedAmount: 320_000, documents: [] },
+    ]);
+
+    await TestBed.configureTestingModule({
+      imports: [FilingWizardComponent],
+      providers: [
+        { provide: FilingService, useValue: filingServiceSpy },
+        { provide: Router, useValue: routerSpy },
+        { provide: ToastService, useValue: toastSpy },
+        { provide: ActivatedRoute, useValue: {} },
+        { provide: LUCIDE_ICONS, multi: true, useValue: new LucideIconProvider({ FileText, Check }) },
+      ],
+    }).compileComponents();
+  });
+
+  it('renders read-only income, allowances, reliefs and optional credits', async () => {
+    await create('filing-c-1');
+    const text = fixture.nativeElement.textContent as string;
+    expect(comp.mode()).toBe('readonly');
+    expect(text).toContain('Filed Return');
+    expect(text).toContain('Income Entries (1)');
+    expect(text).toContain('Capital Allowances (1)');
+    expect(text).toContain('Laptop (computer_laptop)');
+    expect(text).toContain('Deductions & Reliefs (1)');
+    expect(text).toContain('PAYE Credits');
+    expect(text).toContain('Foreign Tax Credits');
+  });
+
+  it('reloads when the route id changes but ignores the initial emission', async () => {
+    await create('filing-c-1');
+    expect(filingServiceSpy.getFiling).toHaveBeenCalledTimes(1);
+
+    filingServiceSpy.getFiling.and.resolveTo({ ...confirmed, id: 'draft-2', status: 'Draft', yearOfAssessment: 2024 });
+    paramMap$.next(convertToParamMap({ id: 'draft-2' }));
+    await fixture.whenStable();
+    expect(filingServiceSpy.getFiling).toHaveBeenCalledWith('draft-2');
+    expect(comp.mode()).toBe('active');
+    expect(comp.filingId()).toBe('draft-2');
+    expect(comp.yearOfAssessment()).toBe(2024);
+    expect(comp.readonlyFiling()).toBeNull();
+
+    paramMap$.next(convertToParamMap({}));
+    await fixture.whenStable();
+    expect(comp.mode()).toBe('selecting-year');
+    expect(comp.filingId()).toBeUndefined();
+  });
+
+  it('starts in year selection for a new filing and offers the last ten years', async () => {
+    await create(null);
+    const year = new Date().getFullYear();
+    expect(comp.mode()).toBe('selecting-year');
+    expect(comp.loading()).toBeFalse();
+    expect(comp.selectedYear).toBe(year - 1);
+    expect(comp.availableYears.length).toBe(10);
+    expect(comp.availableYears[0]).toBe(year - 1);
+    expect(fixture.nativeElement.querySelectorAll('option').length).toBe(10);
+  });
+
+  it('blocks filings for the current or a future year', async () => {
+    await create(null);
+    comp.selectedYear = new Date().getFullYear();
+    await comp.beginFiling();
+    expect(toastSpy.error).toHaveBeenCalledWith(jasmine.stringContaining('past years of assessment'));
+    expect(filingServiceSpy.createDraft).not.toHaveBeenCalled();
+  });
+
+  it('creates a draft for the selected year and enters the wizard', async () => {
+    await create(null);
+    filingServiceSpy.createDraft.and.resolveTo({ ...confirmed, id: 'draft-9', status: 'Draft', yearOfAssessment: 2022 });
+    comp.selectedYear = 2022;
+    await comp.beginFiling();
+    expect(filingServiceSpy.createDraft).toHaveBeenCalledWith(2022);
+    expect(comp.filingId()).toBe('draft-9');
+    expect(comp.yearOfAssessment()).toBe(2022);
+    expect(comp.mode()).toBe('active');
+    expect(comp.starting()).toBeFalse();
+  });
+
+  it('reports amendment failures and ignores amend without a read-only filing', async () => {
+    await create('filing-c-1');
+    filingServiceSpy.amendFiling.and.rejectWith(new Error('Amendment exists'));
+    await comp.amendReadonlyFiling();
+    expect(toastSpy.error).toHaveBeenCalledWith('Failed to create amendment: Amendment exists');
+    expect(comp.amending()).toBeFalse();
+    expect(comp.mode()).toBe('readonly');
+
+    filingServiceSpy.amendFiling.calls.reset();
+    comp.readonlyFiling.set(null);
+    await comp.amendReadonlyFiling();
+    expect(filingServiceSpy.amendFiling).not.toHaveBeenCalled();
+  });
+
+  it('navigates to history, dashboard and back to history after confirmation', async () => {
+    await create(null);
+    comp.goToHistory();
+    expect(routerSpy.navigate).toHaveBeenCalledWith(['/history']);
+    comp.cancel();
+    expect(routerSpy.navigate).toHaveBeenCalledWith(['/dashboard']);
+    routerSpy.navigate.calls.reset();
+    comp.onConfirmed();
+    expect(routerSpy.navigate).toHaveBeenCalledWith(['/history']);
+  });
+
+  it('moves forward up to step 4 and back down to step 1', async () => {
+    await create(null);
+    spyOn(comp as never, 'activeStepRef').and.returnValue(undefined as never);
+    comp.goNext();
+    comp.goNext();
+    comp.goNext();
+    comp.goNext();
+    expect(comp.currentStep()).toBe(4);
+    await comp.goBack();
+    expect(comp.currentStep()).toBe(3);
+    comp.currentStep.set(1);
+    await comp.goBack();
+    expect(comp.currentStep()).toBe(1);
+  });
+
+  it('saves a dirty step before switching and stays put if saving fails', async () => {
+    await create(null);
+    const ref = stepRef(true, false);
+    spyOn(comp as never, 'activeStepRef').and.returnValue(ref as never);
+    await comp.goToStep(3);
+    expect(ref.save).toHaveBeenCalled();
+    expect(comp.currentStep()).toBe(1);
+
+    ref.save.and.resolveTo(true);
+    await comp.goToStep(3);
+    expect(comp.currentStep()).toBe(3);
+
+    ref.save.calls.reset();
+    await comp.goToStep(3);
+    expect(ref.save).not.toHaveBeenCalled();
+  });
+
+  it('skips saving when the step is clean', async () => {
+    await create(null);
+    const ref = stepRef(false);
+    spyOn(comp as never, 'activeStepRef').and.returnValue(ref as never);
+    await comp.goToStep(2);
+    expect(ref.save).not.toHaveBeenCalled();
+    expect(comp.currentStep()).toBe(2);
+  });
+
+  it('canDeactivate allows leaving read-only and clean wizards without prompting', async () => {
+    await create('filing-c-1');
+    const auth = TestBed.inject(AuthService);
+    (auth as unknown as { _state: { set(v: string): void } })._state.set('unlocked');
+    const confirmSpy = spyOn(window, 'confirm');
+    expect(comp.canDeactivate()).toBeTrue();
+    comp.mode.set('active');
+    spyOn(comp as never, 'activeStepRef').and.returnValue(undefined as never);
+    expect(comp.canDeactivate()).toBeTrue();
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 });
