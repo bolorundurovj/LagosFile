@@ -11,7 +11,7 @@ use rusqlite::params;
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -202,7 +202,7 @@ pub fn build_pending_filing(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let total_employment_income: f64 = income_entries
@@ -371,7 +371,7 @@ pub fn build_pending_filing(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut re_full_stmt = conn
@@ -401,7 +401,7 @@ pub fn build_pending_filing(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let computation = ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)
@@ -541,12 +541,11 @@ pub fn build_pending_filing(
     })
 }
 
-/// Append an automation failure event to ~/LagosFile/automation-errors.log.
+/// Append an automation failure event to `log_dir`/automation-errors.log (~/LagosFile in the app).
 /// Never panics — errors are swallowed so a logging failure never crashes the command.
-pub fn log_automation_failure(filing_id: &str, reason: &str) {
-    let dir = lirs_data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let log_path = dir.join("automation-errors.log");
+pub fn log_automation_failure(log_dir: &std::path::Path, filing_id: &str, reason: &str) {
+    let _ = std::fs::create_dir_all(log_dir);
+    let log_path = log_dir.join("automation-errors.log");
     let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
     let line = format!(
         "[{}] filing_id={} reason={}\n",
@@ -716,11 +715,75 @@ pub fn handle_bridge_request(
     (response, reset_idle)
 }
 
+/// Reads an HTTP request head from `stream`, stopping at the blank line, the size cap,
+/// the read deadline, EOF, an error, or a stop signal. Returns the bytes read and
+/// whether the full header block was received.
+fn read_bridge_request(stream: &mut TcpStream, stop_flag: &AtomicBool) -> (Vec<u8>, bool) {
+    const MAX_HEADER_BYTES: usize = 16 * 1024;
+    const MAX_REQUEST_READ_MS: u64 = 1500;
+    let req_started = Instant::now();
+    let mut req_bytes: Vec<u8> = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    while !stop_flag.load(Ordering::SeqCst)
+        && req_started.elapsed() <= Duration::from_millis(MAX_REQUEST_READ_MS)
+    {
+        let n = match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        req_bytes.extend_from_slice(&chunk[..n]);
+        if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+            return (req_bytes, true);
+        }
+        if req_bytes.len() >= MAX_HEADER_BYTES {
+            break;
+        }
+    }
+    (req_bytes, false)
+}
+
+/// Handles one accepted bridge connection. Returns true when the request was
+/// authenticated, which resets the bridge idle timer.
+fn serve_bridge_connection(
+    mut stream: TcpStream,
+    stop_flag: &AtomicBool,
+    port: u16,
+    token: &str,
+    filings_array_json: &str,
+    primary_json: &str,
+) -> bool {
+    // Accepted sockets inherit non-blocking mode on Windows/macOS; switch back
+    // to blocking mode so read/write timeouts work reliably without spurious WouldBlock.
+    let _ = stream.set_nonblocking(false);
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+
+    let (req_bytes, has_header_end) = read_bridge_request(&mut stream, stop_flag);
+    if req_bytes.is_empty() {
+        return false;
+    }
+    let (response, authenticated) = if has_header_end {
+        let request = String::from_utf8_lossy(&req_bytes);
+        handle_bridge_request(&request, port, token, filings_array_json, primary_json)
+    } else {
+        (
+            build_http_response(400, "text/plain", "bad request", None),
+            false,
+        )
+    };
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+    authenticated
+}
+
+/// Starts the local LIRS bridge. `pending_path` (pending_filing.json in the app) is deleted
+/// when the bridge stops or times out.
 pub fn start_bridge_on_port(
     state: &AppState,
     port: u16,
     filings_array_json: String,
     primary_json: String,
+    pending_path: Option<std::path::PathBuf>,
 ) -> Result<(u16, String), String> {
     stop_bridge(state);
 
@@ -756,53 +819,10 @@ pub fn start_bridge_on_port(
             }
 
             match listener.accept() {
-                Ok((mut stream, _addr)) => {
-                    // Accepted sockets inherit non-blocking mode on Windows/macOS; switch back
-                    // to blocking mode so read/write timeouts work reliably without spurious WouldBlock.
-                    let _ = stream.set_nonblocking(false);
-                    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
-
-                    const MAX_HEADER_BYTES: usize = 16 * 1024;
-                    const MAX_REQUEST_READ_MS: u64 = 1500;
-                    let req_started = Instant::now();
-                    let mut req_bytes: Vec<u8> = Vec::with_capacity(1024);
-                    let mut chunk = [0u8; 1024];
-                    let mut has_header_end = false;
-                    loop {
-                        if stop_flag.load(Ordering::SeqCst)
-                            || req_started.elapsed() > Duration::from_millis(MAX_REQUEST_READ_MS)
-                        {
-                            break;
-                        }
-                        match stream.read(&mut chunk) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                req_bytes.extend_from_slice(&chunk[..n]);
-                                if req_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
-                                    has_header_end = true;
-                                    break;
-                                }
-                                if req_bytes.len() >= MAX_HEADER_BYTES {
-                                    break;
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    if req_bytes.is_empty() {
-                        continue;
-                    }
-                    if !has_header_end {
-                        let bad = build_http_response(400, "text/plain", "bad request", None);
-                        let _ = stream.write_all(bad.as_bytes());
-                        let _ = stream.flush();
-                        continue;
-                    }
-
-                    let request = String::from_utf8_lossy(&req_bytes);
-                    let (response, authenticated) = handle_bridge_request(
-                        &request,
+                Ok((stream, _addr)) => {
+                    let authenticated = serve_bridge_connection(
+                        stream,
+                        &stop_flag,
                         bound_port,
                         &thread_token,
                         &filings_array_json,
@@ -811,20 +831,15 @@ pub fn start_bridge_on_port(
                     if authenticated {
                         last_request = Instant::now();
                     }
-
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = stream.flush();
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => {
                     std::thread::sleep(Duration::from_millis(50));
                 }
             }
         }
-        // Always clear pending_filing.json when the bridge stops or times out.
-        let _ = std::fs::remove_file(lirs_data_dir().join("pending_filing.json"));
+        if let Some(path) = pending_path {
+            let _ = std::fs::remove_file(path);
+        }
     });
 
     *state.bridge.lock().unwrap() = Some(BridgeHandle {
@@ -838,6 +853,7 @@ pub fn start_bridge_on_port(
 
 pub fn build_all_pending_filings_detailed(
     conn: &rusqlite::Connection,
+    log_dir: &std::path::Path,
 ) -> Result<PendingFilingBatch, String> {
     let rows: Vec<(String, i32)> = conn
         .prepare(
@@ -846,7 +862,7 @@ pub fn build_all_pending_filings_detailed(
         .map_err(|e| e.to_string())?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     if rows.is_empty() {
@@ -862,7 +878,7 @@ pub fn build_all_pending_filings_detailed(
         match build_pending_filing(conn, &id) {
             Ok(f) => filings.push(f),
             Err(e) => {
-                log_automation_failure(&id, &e);
+                log_automation_failure(log_dir, &id, &e);
                 failures.push(FailedPendingFiling {
                     filing_id: id,
                     year_of_assessment: yoa,
@@ -888,8 +904,9 @@ pub fn build_all_pending_filings_detailed(
 
 pub fn build_all_pending_filings(
     conn: &rusqlite::Connection,
+    log_dir: &std::path::Path,
 ) -> Result<Vec<PendingFiling>, String> {
-    build_all_pending_filings_detailed(conn).map(|b| b.filings)
+    build_all_pending_filings_detailed(conn, log_dir).map(|b| b.filings)
 }
 
 fn format_failure_warnings(failures: &[FailedPendingFiling]) -> Vec<String> {
@@ -924,7 +941,7 @@ pub async fn open_lirs_portal(
             .map_err(|e| e.to_string())?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
 
         let mut all_filings: Vec<PendingFiling> = Vec::new();
@@ -936,7 +953,7 @@ pub async fn open_lirs_portal(
             match build_pending_filing(&conn, &fid) {
                 Ok(f) => all_filings.push(f),
                 Err(e) => {
-                    log_automation_failure(&fid, &e);
+                    log_automation_failure(&lirs_data_dir(), &fid, &e);
                     failures.push(FailedPendingFiling {
                         filing_id: fid,
                         year_of_assessment: yoa,
@@ -957,14 +974,21 @@ pub async fn open_lirs_portal(
 
     // Start the new bridge (which stops any previous bridge first) BEFORE writing
     // pending_filing.json, so a port-bind failure never leaves pending_filing.json on disk.
-    let (_port, token) =
-        start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) = start_bridge_on_port(
+        &state,
+        LIRS_BRIDGE_PORT,
+        filings_json,
+        primary_json,
+        Some(lirs_data_dir().join("pending_filing.json")),
+    )?;
 
     let data_dir = lirs_data_dir();
     let path = data_dir.join("pending_filing.json");
-    if let Err(e) =
-        std::fs::create_dir_all(&data_dir).and_then(|_| std::fs::write(&path, &file_json))
-    {
+    let write_res = match tokio::fs::create_dir_all(&data_dir).await {
+        Ok(()) => tokio::fs::write(&path, &file_json).await,
+        Err(e) => Err(e),
+    };
+    if let Err(e) = write_res {
         stop_bridge(&state);
         return Err(e.to_string());
     }
@@ -976,7 +1000,7 @@ pub async fn open_lirs_portal(
     if let Err(e) = open::that(&portal_url) {
         stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
-        log_automation_failure(&id, &reason);
+        log_automation_failure(&lirs_data_dir(), &id, &reason);
         return Err(reason);
     }
 
@@ -1012,15 +1036,20 @@ pub async fn open_lirs_portal_all(
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        build_all_pending_filings_detailed(&conn)?
+        build_all_pending_filings_detailed(&conn, &lirs_data_dir())?
     };
 
     let count = batch.filings.len();
     let primary_json = serde_json::to_string(&batch.filings[0]).map_err(|e| e.to_string())?;
     let filings_json = serde_json::to_string(&batch.filings).map_err(|e| e.to_string())?;
 
-    let (_port, token) =
-        start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) = start_bridge_on_port(
+        &state,
+        LIRS_BRIDGE_PORT,
+        filings_json,
+        primary_json,
+        Some(lirs_data_dir().join("pending_filing.json")),
+    )?;
 
     let portal_url = format!(
         "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",
@@ -1029,7 +1058,7 @@ pub async fn open_lirs_portal_all(
     if let Err(e) = open::that(&portal_url) {
         stop_bridge(&state);
         let reason = format!("Failed to open browser: {}", e);
-        log_automation_failure("batch", &reason);
+        log_automation_failure(&lirs_data_dir(), "batch", &reason);
         return Err(reason);
     }
 

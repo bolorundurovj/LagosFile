@@ -41,7 +41,7 @@ fn load_documents(conn: &rusqlite::Connection, parent_entry_id: &str) -> Vec<Doc
         Ok(rows) => rows,
         Err(_) => return vec![],
     };
-    mapped.filter_map(|r| r.ok()).collect()
+    mapped.filter_map(Result::ok).collect()
 }
 
 fn row_to_filing(row: &rusqlite::Row<'_>) -> rusqlite::Result<Filing> {
@@ -249,7 +249,7 @@ pub async fn list_filings(state: State<'_, AppState>) -> Result<Vec<Filing>, Str
     let filings = stmt
         .query_map([], row_to_filing)
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(filings)
 }
@@ -494,7 +494,7 @@ fn delete_filing_db_only(id: &str, state: &AppState) -> Result<Vec<String>, Stri
         let collected = stmt
             .query_map(params![id], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
         collected
     };
@@ -666,6 +666,296 @@ pub async fn duplicate_filing(id: String, state: State<'_, AppState>) -> Result<
     Ok(filing)
 }
 
+/// (old_entry_id, new_entry_id, parent_entry_type) for every copied entry, used to copy attachments.
+type AmendEntryMap = Vec<(String, String, &'static str)>;
+
+/// If the parent return was pinned to an obsolete seed (legacy v1.0 or pre-CRA PITA),
+/// upgrade the amendment to the current regime for its income year so amending actually
+/// recomputes under updated PITA+CRA / NTA 2025 rules.
+fn amend_target_config(
+    conn: &rusqlite::Connection,
+    yoa: i32,
+    config_ver: String,
+    config_id: Option<String>,
+) -> (String, Option<String>) {
+    let is_obsolete_seed = match config_id.as_deref() {
+        None => true,
+        Some(cid) => cid == crate::db::SEED_V1_CONFIG_ID || cid == crate::db::PITA_LEGACY_CONFIG_ID,
+    };
+    if !is_obsolete_seed {
+        return (config_ver, config_id);
+    }
+    match ConfigService::get_for_income_year(conn, yoa) {
+        Ok(cfg) => (cfg.version_label, Some(cfg.id.to_string())),
+        Err(_) => (config_ver, config_id),
+    }
+}
+
+/// Copies income entries as-is. Returns (new_id, gross_amount_ngn, is_foreign) per copy.
+fn copy_income_entries(
+    tx: &rusqlite::Connection,
+    id: &str,
+    new_filing_id: &str,
+    entry_id_map: &mut AmendEntryMap,
+) -> Result<Vec<(String, f64, bool)>, String> {
+    let mut stmt = tx
+        .prepare("SELECT id, gross_amount_ngn, is_foreign FROM income_entry WHERE filing_id=?1")
+        .map_err(|e| e.to_string())?;
+    let old_rows: Vec<(String, f64, bool)> = stmt
+        .query_map(params![id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, i32>(2)? != 0,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    let mut copied_income = Vec::with_capacity(old_rows.len());
+    for (old_entry_id, gross, is_foreign) in old_rows {
+        let new_entry_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
+             foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+             fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
+             bik_category,bik_cost)
+             SELECT ?1,?2,income_type,description,gross_amount_ngn,is_foreign,
+             foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
+             fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
+             bik_category,bik_cost
+             FROM income_entry WHERE id=?3",
+            params![new_entry_id, new_filing_id, old_entry_id],
+        )
+        .map_err(|e| e.to_string())?;
+        copied_income.push((new_entry_id.clone(), gross, is_foreign));
+        entry_id_map.push((old_entry_id, new_entry_id, "income_entry"));
+    }
+    Ok(copied_income)
+}
+
+/// Copies capital allowances as-is (same year, so WDV is not reduced).
+fn copy_capital_allowances(
+    tx: &rusqlite::Connection,
+    id: &str,
+    new_filing_id: &str,
+    entry_id_map: &mut AmendEntryMap,
+) -> Result<(), String> {
+    let mut stmt = tx
+        .prepare("SELECT id FROM capital_allowance WHERE filing_id=?1")
+        .map_err(|e| e.to_string())?;
+    let old_ids: Vec<String> = stmt
+        .query_map(params![id], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    for old_entry_id in old_ids {
+        let new_entry_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO capital_allowance
+               (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
+                tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
+             SELECT ?1,?2,asset_description,asset_type,asset_cost,acquisition_date,
+                tax_written_down_value,annual_allowance_rate,annual_allowance_amount
+             FROM capital_allowance WHERE id=?3",
+            params![new_entry_id, new_filing_id, old_entry_id],
+        )
+        .map_err(|e| e.to_string())?;
+        entry_id_map.push((old_entry_id, new_entry_id, "capital_allowance"));
+    }
+    Ok(())
+}
+
+/// Moves a legacy `foreign_tax` relief onto the copied income entries instead of creating
+/// a hidden/ignored `foreign_tax` row on the amended Draft, keeping its attachments.
+fn migrate_amended_foreign_tax(
+    tx: &rusqlite::Connection,
+    new_filing_id: &str,
+    old_entry_id: String,
+    amount: f64,
+    copied_income: &[(String, f64, bool)],
+    entry_id_map: &mut AmendEntryMap,
+) -> Result<(), String> {
+    if amount > 0.0 && !copied_income.is_empty() {
+        let targets = crate::db::foreign_tax_targets(copied_income);
+        crate::db::distribute_foreign_tax(tx, amount, &targets).map_err(|e| e.to_string())?;
+        entry_id_map.push((old_entry_id, targets[0].0.clone(), "income_entry"));
+        return Ok(());
+    }
+    if let Some((first_income_id, _, _)) = copied_income.first() {
+        // Even when a legacy foreign_tax row is ₦0, preserve any attached receipts
+        // by mapping them to the first copied income entry.
+        entry_id_map.push((old_entry_id, first_income_id.clone(), "income_entry"));
+        return Ok(());
+    }
+    // No income entries exist on this filing; if the foreign_tax row had
+    // attachments, preserve them on a ₦0 other_approved relief row.
+    let has_docs = tx
+        .query_row(
+            "SELECT COUNT(1) FROM document WHERE parent_entry_id=?1",
+            params![&old_entry_id],
+            |r| r.get::<_, i32>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if has_docs {
+        let new_entry_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO relief_entry
+               (id,filing_id,relief_type,claimed_amount,approved_amount,description)
+             VALUES (?1,?2,'other_approved',0,0,'Migrated foreign tax attachment')",
+            params![new_entry_id, new_filing_id],
+        )
+        .map_err(|e| e.to_string())?;
+        entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
+    }
+    Ok(())
+}
+
+/// Copies relief entries, migrating legacy `foreign_tax` rows onto copied income entries.
+fn copy_relief_entries(
+    tx: &rusqlite::Connection,
+    id: &str,
+    new_filing_id: &str,
+    copied_income: &[(String, f64, bool)],
+    entry_id_map: &mut AmendEntryMap,
+) -> Result<(), String> {
+    let mut stmt = tx
+        .prepare("SELECT id, relief_type, claimed_amount, approved_amount FROM relief_entry WHERE filing_id=?1")
+        .map_err(|e| e.to_string())?;
+    let old_reliefs: Vec<(String, String, f64, f64)> = stmt
+        .query_map(params![id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    for (old_entry_id, rtype, claimed, approved) in old_reliefs {
+        if rtype == "foreign_tax" {
+            let amount = if approved > 0.0 { approved } else { claimed };
+            migrate_amended_foreign_tax(
+                tx,
+                new_filing_id,
+                old_entry_id,
+                amount,
+                copied_income,
+                entry_id_map,
+            )?;
+            continue;
+        }
+        let new_entry_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO relief_entry
+               (id,filing_id,relief_type,claimed_amount,approved_amount,
+                wht_ref,wht_income_type,wht_date,description)
+             SELECT ?1,?2,relief_type,claimed_amount,approved_amount,
+                wht_ref,wht_income_type,wht_date,description
+             FROM relief_entry WHERE id=?3",
+            params![new_entry_id, new_filing_id, old_entry_id],
+        )
+        .map_err(|e| e.to_string())?;
+        entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
+    }
+    Ok(())
+}
+
+struct AmendDocRow {
+    file_path: String,
+    file_name: String,
+    file_type: String,
+    file_size_bytes: i64,
+    uploaded_at: String,
+}
+
+fn load_entry_documents(
+    tx: &rusqlite::Connection,
+    entry_id: &str,
+) -> Result<Vec<AmendDocRow>, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT file_path,file_name,file_type,file_size_bytes,uploaded_at
+             FROM document WHERE parent_entry_id=?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let docs = stmt
+        .query_map(params![entry_id], |r| {
+            Ok(AmendDocRow {
+                file_path: r.get(0)?,
+                file_name: r.get(1)?,
+                file_type: r.get(2)?,
+                file_size_bytes: r.get(3)?,
+                uploaded_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    Ok(docs)
+}
+
+/// Copies one attachment to a brand-new file under the new entry's folder and inserts its row.
+/// Skips rows whose underlying file is missing so no dangling document rows are created.
+fn copy_amend_document(
+    tx: &rusqlite::Connection,
+    dir: &std::path::Path,
+    doc: AmendDocRow,
+    new_entry_id: &str,
+    parent_type: &str,
+    copied_files: &mut Vec<std::path::PathBuf>,
+) -> Result<(), String> {
+    let src = crate::db::doc_store::resolve_doc_path(dir, &doc.file_path);
+    if !src.is_file() {
+        return Ok(());
+    }
+    let suffix = if doc.file_path.ends_with(".enc") {
+        ".enc"
+    } else {
+        ""
+    };
+    let safe_name = crate::db::doc_store::sanitize_file_name(&doc.file_name);
+    let new_doc_id = Uuid::new_v4();
+    let new_rel = format!("documents/{new_entry_id}/{new_doc_id}_{safe_name}{suffix}");
+    let validated_rel = crate::db::doc_store::validate_safe_rel_doc_path(&new_rel)?;
+    let dest = dir.join(validated_rel);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::copy(&src, &dest)
+        .map_err(|e| format!("Failed to copy attachment '{}': {}", safe_name, e))?;
+    copied_files.push(dest);
+    tx.execute(
+        "INSERT INTO document
+         (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+        params![
+            new_doc_id.to_string(),
+            new_entry_id,
+            parent_type,
+            new_rel,
+            safe_name,
+            doc.file_type,
+            doc.file_size_bytes,
+            doc.uploaded_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn copy_entry_documents(
+    tx: &rusqlite::Connection,
+    dir: &std::path::Path,
+    entry_id_map: &AmendEntryMap,
+    copied_files: &mut Vec<std::path::PathBuf>,
+) -> Result<(), String> {
+    for (old_entry_id, new_entry_id, parent_type) in entry_id_map {
+        for doc in load_entry_documents(tx, old_entry_id)? {
+            copy_amend_document(tx, dir, doc, new_entry_id, parent_type, copied_files)?;
+        }
+    }
+    Ok(())
+}
+
 /// Copies a Confirmed/Submitted filing's entries and attachments as-is into a
 /// new same-year Draft amendment. Each attachment is copied to a brand-new file
 /// under the new entry's folder so the amendment never shares files with its parent.
@@ -697,21 +987,8 @@ pub fn amend_filing_with_conn(
     let new_id_str = new_id.to_string();
     let now = Utc::now().to_rfc3339();
 
-    // If the parent return was pinned to an obsolete seed (legacy v1.0 or pre-CRA PITA),
-    // upgrade the new Draft amendment to the current regime for its income year so amending
-    // actually recomputes under updated PITA+CRA / NTA 2025 rules.
-    let is_obsolete_seed = match config_id.as_deref() {
-        None => true,
-        Some(cid) => cid == crate::db::SEED_V1_CONFIG_ID || cid == crate::db::PITA_LEGACY_CONFIG_ID,
-    };
-    let (target_config_ver, target_config_id) = if is_obsolete_seed {
-        match ConfigService::get_for_income_year(conn, yoa) {
-            Ok(cfg) => (cfg.version_label, Some(cfg.id.to_string())),
-            Err(_) => (config_ver, config_id),
-        }
-    } else {
-        (config_ver, config_id)
-    };
+    let (target_config_ver, target_config_id) =
+        amend_target_config(conn, yoa, config_ver, config_id);
 
     let mut copied_files: Vec<std::path::PathBuf> = Vec::new();
     let res: Result<(), String> = (|| {
@@ -731,253 +1008,11 @@ pub fn amend_filing_with_conn(
         )
         .map_err(|e| e.to_string())?;
 
-        // Track (old_entry_id, new_entry_id, parent_entry_type) so we can copy attachments
-        let mut entry_id_map: Vec<(String, String, &'static str)> = Vec::new();
-        // Track copied income entries (new_id, gross_amount_ngn, is_foreign) for legacy foreign_tax migration
-        let mut copied_income: Vec<(String, f64, bool)> = Vec::new();
-
-        // 1. Copy income entries as-is
-        {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT id, gross_amount_ngn, is_foreign FROM income_entry WHERE filing_id=?1",
-                )
-                .map_err(|e| e.to_string())?;
-            let old_rows: Vec<(String, f64, bool)> = stmt
-                .query_map(params![id], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, f64>(1)?,
-                        r.get::<_, i32>(2)? != 0,
-                    ))
-                })
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            for (old_entry_id, gross, is_foreign) in old_rows {
-                let new_entry_id = Uuid::new_v4().to_string();
-                tx.execute(
-                    "INSERT INTO income_entry (id,filing_id,income_type,description,gross_amount_ngn,is_foreign,
-                     foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-                     fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
-                     bik_category,bik_cost)
-                     SELECT ?1,?2,income_type,description,gross_amount_ngn,is_foreign,
-                     foreign_currency,foreign_amount,income_date,fx_rate_fetched,fx_rate_cbn_override,
-                     fx_rate_used,fx_rate_source,foreign_tax_paid_ngn,is_cgt_exempt,cgt_proceeds,cgt_gain,
-                     bik_category,bik_cost
-                     FROM income_entry WHERE id=?3",
-                    params![new_entry_id, new_id_str, old_entry_id],
-                )
-                .map_err(|e| e.to_string())?;
-                copied_income.push((new_entry_id.clone(), gross, is_foreign));
-                entry_id_map.push((old_entry_id, new_entry_id, "income_entry"));
-            }
-        }
-
-        // 2. Copy capital allowances as-is (same year — do not reduce WDV)
-        {
-            let mut stmt = tx
-                .prepare("SELECT id FROM capital_allowance WHERE filing_id=?1")
-                .map_err(|e| e.to_string())?;
-            let old_ids: Vec<String> = stmt
-                .query_map(params![id], |r| r.get(0))
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            for old_entry_id in old_ids {
-                let new_entry_id = Uuid::new_v4().to_string();
-                tx.execute(
-                    "INSERT INTO capital_allowance
-                       (id,filing_id,asset_description,asset_type,asset_cost,acquisition_date,
-                        tax_written_down_value,annual_allowance_rate,annual_allowance_amount)
-                     SELECT ?1,?2,asset_description,asset_type,asset_cost,acquisition_date,
-                        tax_written_down_value,annual_allowance_rate,annual_allowance_amount
-                     FROM capital_allowance WHERE id=?3",
-                    params![new_entry_id, new_id_str, old_entry_id],
-                )
-                .map_err(|e| e.to_string())?;
-                entry_id_map.push((old_entry_id, new_entry_id, "capital_allowance"));
-            }
-        }
-
-        // 3. Copy relief entries (migrating legacy `foreign_tax` relief rows onto copied income
-        // entries instead of creating hidden/ignored `foreign_tax` rows on the amended Draft).
-        {
-            let mut stmt = tx
-                .prepare("SELECT id, relief_type, claimed_amount, approved_amount FROM relief_entry WHERE filing_id=?1")
-                .map_err(|e| e.to_string())?;
-            let old_reliefs: Vec<(String, String, f64, f64)> = stmt
-                .query_map(params![id], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-                })
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            for (old_entry_id, rtype, claimed, approved) in old_reliefs {
-                if rtype == "foreign_tax" {
-                    let amount = if approved > 0.0 { approved } else { claimed };
-                    if amount > 0.0 && !copied_income.is_empty() {
-                        let foreign_pos: Vec<(String, f64)> = copied_income
-                            .iter()
-                            .filter(|(_, g, is_f)| *is_f && *g > 0.0)
-                            .map(|(eid, g, _)| (eid.clone(), *g))
-                            .collect();
-                        let targets: Vec<(String, f64)> = if !foreign_pos.is_empty() {
-                            foreign_pos
-                        } else {
-                            let any_pos: Vec<(String, f64)> = copied_income
-                                .iter()
-                                .filter(|(_, g, _)| *g > 0.0)
-                                .map(|(eid, g, _)| (eid.clone(), *g))
-                                .collect();
-                            if !any_pos.is_empty() {
-                                any_pos
-                            } else {
-                                vec![(copied_income[0].0.clone(), 1.0)]
-                            }
-                        };
-                        let total_weight: f64 = targets.iter().map(|(_, g)| *g).sum();
-                        let primary_income_id = targets[0].0.clone();
-                        let mut remaining = amount;
-                        for (idx, (entry_id, weight)) in targets.iter().enumerate() {
-                            let share = if idx + 1 == targets.len() || total_weight <= 0.0 {
-                                remaining.max(0.0)
-                            } else {
-                                let s = ((amount * (*weight / total_weight) * 100.0).round()
-                                    / 100.0)
-                                    .min(remaining.max(0.0));
-                                remaining = (remaining - s).max(0.0);
-                                s
-                            };
-                            if share > 0.0 {
-                                tx.execute(
-                                    "UPDATE income_entry
-                                     SET foreign_tax_paid_ngn = COALESCE(foreign_tax_paid_ngn, 0.0) + ?1
-                                     WHERE id = ?2",
-                                    params![share, entry_id],
-                                )
-                                .map_err(|e| e.to_string())?;
-                            }
-                        }
-                        entry_id_map.push((old_entry_id, primary_income_id, "income_entry"));
-                    } else if let Some((first_income_id, _, _)) = copied_income.first() {
-                        // Even when a legacy foreign_tax row is ₦0, preserve any attached receipts
-                        // by mapping them to the first copied income entry.
-                        entry_id_map.push((old_entry_id, first_income_id.clone(), "income_entry"));
-                    } else {
-                        // No income entries exist on this filing; if the foreign_tax row had
-                        // attachments, preserve them on a ₦0 other_approved relief row.
-                        let has_docs: bool = tx
-                            .query_row(
-                                "SELECT COUNT(1) FROM document WHERE parent_entry_id=?1",
-                                params![&old_entry_id],
-                                |r| r.get::<_, i32>(0),
-                            )
-                            .unwrap_or(0)
-                            > 0;
-                        if has_docs {
-                            let new_entry_id = Uuid::new_v4().to_string();
-                            tx.execute(
-                                "INSERT INTO relief_entry
-                                   (id,filing_id,relief_type,claimed_amount,approved_amount,description)
-                                 VALUES (?1,?2,'other_approved',0,0,'Migrated foreign tax attachment')",
-                                params![new_entry_id, new_id_str],
-                            )
-                            .map_err(|e| e.to_string())?;
-                            entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
-                        }
-                    }
-                    continue;
-                }
-                let new_entry_id = Uuid::new_v4().to_string();
-                tx.execute(
-                    "INSERT INTO relief_entry
-                       (id,filing_id,relief_type,claimed_amount,approved_amount,
-                        wht_ref,wht_income_type,wht_date,description)
-                     SELECT ?1,?2,relief_type,claimed_amount,approved_amount,
-                        wht_ref,wht_income_type,wht_date,description
-                     FROM relief_entry WHERE id=?3",
-                    params![new_entry_id, new_id_str, old_entry_id],
-                )
-                .map_err(|e| e.to_string())?;
-                entry_id_map.push((old_entry_id, new_entry_id, "relief_entry"));
-            }
-        }
-
-        // 4. Copy attached documents to independent files under each new entry's folder
-        for (old_entry_id, new_entry_id, parent_type) in &entry_id_map {
-            let mut stmt = tx
-                .prepare(
-                    "SELECT file_path,file_name,file_type,file_size_bytes,uploaded_at
-                     FROM document WHERE parent_entry_id=?1",
-                )
-                .map_err(|e| e.to_string())?;
-            struct DocRow {
-                file_path: String,
-                file_name: String,
-                file_type: String,
-                file_size_bytes: i64,
-                uploaded_at: String,
-            }
-            let docs: Vec<DocRow> = stmt
-                .query_map(params![old_entry_id], |r| {
-                    Ok(DocRow {
-                        file_path: r.get(0)?,
-                        file_name: r.get(1)?,
-                        file_type: r.get(2)?,
-                        file_size_bytes: r.get(3)?,
-                        uploaded_at: r.get(4)?,
-                    })
-                })
-                .map_err(|e| e.to_string())?
-                .filter_map(|r| r.ok())
-                .collect();
-            drop(stmt);
-
-            for doc in docs {
-                let src = crate::db::doc_store::resolve_doc_path(dir, &doc.file_path);
-                if !src.is_file() {
-                    // Do not insert dangling document rows when the underlying file is missing.
-                    continue;
-                }
-                let suffix = if doc.file_path.ends_with(".enc") {
-                    ".enc"
-                } else {
-                    ""
-                };
-                let safe_name = crate::db::doc_store::sanitize_file_name(&doc.file_name);
-                let new_doc_id = Uuid::new_v4();
-                let new_rel = format!(
-                    "documents/{}/{}_{}{}",
-                    new_entry_id, new_doc_id, safe_name, suffix
-                );
-                let validated_rel = crate::db::doc_store::validate_safe_rel_doc_path(&new_rel)?;
-                let dest = dir.join(validated_rel);
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                }
-                std::fs::copy(&src, &dest)
-                    .map_err(|e| format!("Failed to copy attachment '{}': {}", safe_name, e))?;
-                copied_files.push(dest);
-
-                tx.execute(
-                    "INSERT INTO document
-                     (id,parent_entry_id,parent_entry_type,file_path,file_name,file_type,file_size_bytes,uploaded_at)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                    params![
-                        new_doc_id.to_string(),
-                        new_entry_id,
-                        parent_type,
-                        new_rel,
-                        safe_name,
-                        doc.file_type,
-                        doc.file_size_bytes,
-                        doc.uploaded_at,
-                    ],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
+        let mut entry_id_map: AmendEntryMap = Vec::new();
+        let copied_income = copy_income_entries(&tx, id, &new_id_str, &mut entry_id_map)?;
+        copy_capital_allowances(&tx, id, &new_id_str, &mut entry_id_map)?;
+        copy_relief_entries(&tx, id, &new_id_str, &copied_income, &mut entry_id_map)?;
+        copy_entry_documents(&tx, dir, &entry_id_map, &mut copied_files)?;
 
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
@@ -1067,7 +1102,7 @@ pub async fn list_income_entries(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
@@ -1245,7 +1280,7 @@ pub async fn list_allowances(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
@@ -1383,7 +1418,7 @@ pub async fn get_prior_year_allowances(
             }))
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .filter(|v: &serde_json::Value| v["taxWrittenDownValue"].as_f64().unwrap_or(0.0) > 0.0)
         .collect();
 
@@ -1421,7 +1456,7 @@ pub async fn list_relief_entries(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     for entry in &mut entries {
         entry.documents = load_documents(&conn, &entry.id.to_string());
@@ -1518,7 +1553,7 @@ fn collect_and_delete_entry_in_tx(
         let collected = stmt
             .query_map(params![id, pt_short, pt_long], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
+            .filter_map(Result::ok)
             .collect();
         collected
     };
@@ -1924,7 +1959,7 @@ pub fn compute_filing_with_conn(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut ca_stmt = conn
@@ -1955,7 +1990,7 @@ pub fn compute_filing_with_conn(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     let mut re_stmt = conn.prepare(
@@ -1981,7 +2016,7 @@ pub fn compute_filing_with_conn(
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
 
     ComputationEngine::compute(&income_entries, &allowances, &reliefs, &config)

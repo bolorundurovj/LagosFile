@@ -221,6 +221,7 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
         0,
         r#"[{"version":1}]"#.to_string(),
         r#"{"version":1}"#.to_string(),
+        Some(pending_file.clone()),
     )
     .expect("first bridge start");
     assert_eq!(token1.len(), 64);
@@ -256,6 +257,7 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
         port,
         r#"[{"version":2}]"#.to_string(),
         r#"{"version":2}"#.to_string(),
+        Some(pending_file.clone()),
     )
     .expect("second bridge start on same port");
     assert_eq!(port, port2);
@@ -315,8 +317,15 @@ fn test_build_all_pending_filings_returns_error_when_all_fail_no_panic() {
     conn.execute("UPDATE tax_config SET is_active=0", [])
         .unwrap();
 
-    let res = lirs::build_all_pending_filings(&conn);
+    let log_dir = std::env::temp_dir().join(format!("lagosfile-lirs-log-{}", uuid::Uuid::new_v4()));
+    let res = lirs::build_all_pending_filings(&conn, &log_dir);
     assert!(res.is_err(), "all-failing batch must return Err, not panic");
+    let log = std::fs::read_to_string(log_dir.join("automation-errors.log")).unwrap();
+    assert!(
+        log.contains(&filing.id.to_string()),
+        "failure must be logged to the given dir"
+    );
+    let _ = std::fs::remove_dir_all(&log_dir);
 }
 
 #[test]
@@ -629,7 +638,9 @@ fn test_s23_landlord_tenant_foreign_currencies_bik_paye_ftc_and_batch_partial_fa
     )
     .unwrap();
     conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
-    let batch = lirs::build_all_pending_filings_detailed(&conn).unwrap();
+    let log_dir = std::env::temp_dir().join(format!("lagosfile-lirs-log-{}", uuid::Uuid::new_v4()));
+    let batch = lirs::build_all_pending_filings_detailed(&conn, &log_dir).unwrap();
+    let _ = std::fs::remove_dir_all(&log_dir);
     assert_eq!(batch.filings.len(), 1);
     assert_eq!(batch.filings[0].filing_id, tenant_id);
     assert_eq!(batch.failures.len(), 1);
@@ -671,6 +682,7 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
         0,
         r#"[{"id":"f1"}]"#.into(),
         r#"{"id":"f1"}"#.into(),
+        None,
     )
     .unwrap();
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
