@@ -312,6 +312,23 @@ describe('SettingsComponent (security, backup and about)', () => {
     expect(openSpy).toHaveBeenCalledWith('https://example.com/r', '_blank');
   });
 
+  it('parses release-please changelog entries', async () => {
+    const md = [
+      '## [1.3.0](https://x/compare/v1.2.0...v1.3.0) (2026-11-22)',
+      '',
+      '### Features',
+      '',
+      '* add calculator ([abc1234](https://x/commit/abc1234)), refs [#7](https://x/issues/7)',
+    ].join('\r\n');
+    spyOn(window, 'fetch').and.callFake(async () => new Response(md));
+    const { comp } = create();
+
+    await comp.openChangelog();
+    expect(comp.changelogEntries()).toEqual([
+      { version: '1.3.0', date: '2026-11-22', items: ['add calculator'] },
+    ]);
+  });
+
   it('loads and parses the changelog once, skipping Unreleased and stripping commit links', async () => {
     const md = [
       '# Changelog',

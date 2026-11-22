@@ -494,18 +494,18 @@ export class SettingsComponent {
   private parseChangelog(md: string): ChangelogEntry[] {
     const entries: ChangelogEntry[] = [];
     let current: ChangelogEntry | null = null;
-    const lines = md.split('\n');
+    const lines = md.split(/\r?\n/);
     for (const line of lines) {
-      const versionMatch = line.match(/^##\s*\[([^\]]+)\]\s*-?\s*(.*)/);
+      const versionMatch = /^##\s*\[([^\]]+)\](?:\([^)]*\))?[\s(-]*([^)]*)/.exec(line);
       if (versionMatch) {
         if (versionMatch[1] === 'Unreleased') continue;
         current = { version: versionMatch[1], date: versionMatch[2].trim(), items: [] };
         entries.push(current);
         continue;
       }
-      const itemMatch = line.match(/^\s*-\s+(.+)/);
+      const itemMatch = /^\s*[-*]\s+(.+)/.exec(line);
       if (itemMatch && current) {
-        const item = itemMatch[1].replace(/\(\[`[^`]+`\].*?\)$/, '').trim();
+        const item = itemMatch[1].replace(/\(\[`?[0-9a-f]{3,40}`?\]\(.*$/, '').trim();
         if (item) current.items.push(item);
       }
     }
