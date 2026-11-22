@@ -470,14 +470,13 @@ where
     recover_interrupted_restore(dir)?;
     let raw = std::fs::read(vault::vault_path(dir)).map_err(|e| e.to_string())?;
     let legacy_salt_file = vault::legacy_salt_path(dir);
-    let decoded =
-        vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file)).map_err(|e| {
-            if e.contains(".salt") {
-                e
-            } else {
-                error_msg.to_string()
-            }
-        })?;
+    let decoded = vault::decode_with_key(&raw, &db_key, Some(&legacy_salt_file)).map_err(|e| {
+        if e.contains(".salt") {
+            e
+        } else {
+            error_msg.to_string()
+        }
+    })?;
 
     let db = AppDb::open_in_memory().map_err(|e| e.to_string())?;
     db.load_from_bytes(&decoded.plaintext)
@@ -650,8 +649,7 @@ pub fn unlock_db_in_dir_with_hook<B>(
 where
     B: FnMut(usize, &str) -> Result<(), String>,
 {
-    let (db, key, salt, taxpayer) =
-        unlock_db_sync(dir, pin, |_, _, _| {}, before_migration_file)?;
+    let (db, key, salt, taxpayer) = unlock_db_sync(dir, pin, |_, _, _| {}, before_migration_file)?;
     publish_unlocked_state(dir, state, db, key, salt, false);
     Ok(taxpayer)
 }
@@ -742,14 +740,7 @@ where
         snapshot.ok_or_else(|| "Database not unlocked".to_string())?;
 
     let new_digest = tokio::task::spawn_blocking(move || {
-        vault::write_atomic_cas_with_hook(
-            &dir,
-            &bytes,
-            &key,
-            &salt,
-            expected_digest,
-            before_rename,
-        )
+        vault::write_atomic_cas_with_hook(&dir, &bytes, &key, &salt, expected_digest, before_rename)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -996,7 +987,9 @@ where
         let digest_guard = state.vault_digest.lock().unwrap();
         let rv_guard = state.recovery_verified.lock().unwrap();
         if !*rv_guard {
-            return Err("PIN reset is only allowed immediately after account recovery.".to_string());
+            return Err(
+                "PIN reset is only allowed immediately after account recovery.".to_string(),
+            );
         }
         let db = db_guard.as_ref().ok_or("Database not unlocked")?;
         let bytes = db.serialize().map_err(|e| e.to_string())?;
@@ -1043,7 +1036,9 @@ pub async fn reset_pin(new_pin: String, state: State<'_, AppState>) -> Result<bo
         let digest_guard = state.vault_digest.lock().unwrap();
         let rv_guard = state.recovery_verified.lock().unwrap();
         if !*rv_guard {
-            return Err("PIN reset is only allowed immediately after account recovery.".to_string());
+            return Err(
+                "PIN reset is only allowed immediately after account recovery.".to_string(),
+            );
         }
         let db = db_guard.as_ref().ok_or("Database not unlocked")?;
         let bytes = db.serialize().map_err(|e| e.to_string())?;
@@ -1097,8 +1092,8 @@ where
     F: FnOnce(&Path) -> Result<(), String>,
 {
     // Canonical lock order: db -> key -> salt -> vault_digest
-    let (bytes, active_key, current_salt, expected_digest) = snapshot_vault_state(state)?
-        .ok_or_else(|| "Database not unlocked".to_string())?;
+    let (bytes, active_key, current_salt, expected_digest) =
+        snapshot_vault_state(state)?.ok_or_else(|| "Database not unlocked".to_string())?;
 
     let derived = security::derive_key(current_pin, &current_salt);
     if derived != active_key {
@@ -1139,7 +1134,14 @@ pub fn change_pin_in_dir(
     new_pin: &str,
     state: &AppState,
 ) -> Result<bool, String> {
-    change_pin_with_deps(dir, current_pin, new_pin, state, &OsKeyringStore, |_| Ok(()))
+    change_pin_with_deps(
+        dir,
+        current_pin,
+        new_pin,
+        state,
+        &OsKeyringStore,
+        |_| Ok(()),
+    )
 }
 
 pub async fn change_pin_in_dir_async(
@@ -1151,8 +1153,8 @@ pub async fn change_pin_in_dir_async(
 ) -> Result<bool, String> {
     let _io = state.vault_io_lock.lock().await;
     // Canonical lock order: db -> key -> salt -> vault_digest
-    let (bytes, active_key, current_salt, expected_digest) = snapshot_vault_state(state)?
-        .ok_or_else(|| "Database not unlocked".to_string())?;
+    let (bytes, active_key, current_salt, expected_digest) =
+        snapshot_vault_state(state)?.ok_or_else(|| "Database not unlocked".to_string())?;
 
     let (new_key, new_salt, new_digest, biometric_enabled) =
         tokio::task::spawn_blocking(move || -> Result<_, String> {

@@ -210,10 +210,9 @@ pub async fn attach_document(
         if let Ok(guard) = state.db.lock() {
             if let Some(db) = guard.as_ref() {
                 if let Ok(conn) = db.conn.lock() {
-                    if let Ok(n) = conn.execute(
-                        "DELETE FROM document WHERE id=?1",
-                        params![id.to_string()],
-                    ) {
+                    if let Ok(n) =
+                        conn.execute("DELETE FROM document WHERE id=?1", params![id.to_string()])
+                    {
                         row_deleted = n > 0;
                     }
                 }
@@ -282,11 +281,7 @@ pub fn delete_document_in_dir(dir: &Path, id: &str, state: &AppState) -> Result<
             .ok();
 
         if let Some((_, ref parent_id, ref parent_type)) = doc_meta {
-            crate::commands::filing::require_draft_for_parent_entry(
-                &tx,
-                parent_id,
-                parent_type,
-            )?;
+            crate::commands::filing::require_draft_for_parent_entry(&tx, parent_id, parent_type)?;
         }
         tx.execute("DELETE FROM document WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;
@@ -323,11 +318,7 @@ pub async fn delete_document(id: String, state: State<'_, AppState>) -> Result<(
             .ok();
 
         if let Some((_, ref parent_id, ref parent_type)) = doc_meta {
-            crate::commands::filing::require_draft_for_parent_entry(
-                &tx,
-                parent_id,
-                parent_type,
-            )?;
+            crate::commands::filing::require_draft_for_parent_entry(&tx, parent_id, parent_type)?;
         }
         tx.execute("DELETE FROM document WHERE id=?1", params![id])
             .map_err(|e| e.to_string())?;

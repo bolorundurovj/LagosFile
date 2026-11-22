@@ -290,7 +290,8 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
         );
 
         // Confirming twice must fail
-        let err_twice = confirm_filing_with_conn(&conn, &fid).expect_err("confirming twice must fail");
+        let err_twice =
+            confirm_filing_with_conn(&conn, &fid).expect_err("confirming twice must fail");
         assert!(err_twice.contains("Only Draft filings"));
 
         // Mutating entries on Confirmed filing must fail
@@ -351,8 +352,15 @@ fn test_s12_confirm_recomputes_saves_tax_payable_and_rejects_mutations() {
 
     // PDF export contains the formatted tax_payable figure (300,000.00)
     let pdf_path = dir.join("filing.pdf");
-    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
-        .unwrap();
+    export_filing_pdf_in_dir(
+        &dir,
+        &filing_id,
+        pdf_path.to_str().unwrap(),
+        false,
+        None,
+        &state,
+    )
+    .unwrap();
     let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
     let all_text: String = pdf_doc
         .get_pages()
@@ -502,7 +510,10 @@ fn test_s17_amend_copies_entries_and_attachments_independently() {
     let amended = amend_filing_in_dir(&dir, &parent_id, &state).unwrap();
     assert_eq!(amended.status, "Draft");
     assert_eq!(amended.year_of_assessment, 2024);
-    assert_eq!(amended.parent_filing_id.map(|u| u.to_string()), Some(parent_id.clone()));
+    assert_eq!(
+        amended.parent_filing_id.map(|u| u.to_string()),
+        Some(parent_id.clone())
+    );
 
     // Verify all entries and copied attachment exist on the amendment
     let (amend_doc_id, amend_doc_path, doc_key) = {
@@ -536,7 +547,10 @@ fn test_s17_amend_copies_entries_and_attachments_independently() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(wht_amt, 100_000.0, "amendment preserves same-year WHT relief");
+        assert_eq!(
+            wht_amt, 100_000.0,
+            "amendment preserves same-year WHT relief"
+        );
 
         let (doc_id, doc_path): (String, String) = conn
             .query_row(
@@ -545,7 +559,10 @@ fn test_s17_amend_copies_entries_and_attachments_independently() {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_ne!(doc_path, parent_doc_path, "amendment must not share file path with parent");
+        assert_ne!(
+            doc_path, parent_doc_path,
+            "amendment must not share file path with parent"
+        );
         assert!(doc_path.starts_with(&format!("documents/{amend_ie_id}/")));
 
         drop(conn);
@@ -639,11 +656,9 @@ fn test_s17_duplicate_year_checks_and_rfc3339_timestamps() {
     assert!(chrono::DateTime::parse_from_rfc3339(&migrated_filing_ts).is_ok());
 
     let migrated_fx_ts: String = conn
-        .query_row(
-            "SELECT fetched_at FROM fx_cache WHERE id='fx-1'",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT fetched_at FROM fx_cache WHERE id='fx-1'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(migrated_fx_ts, "2024-03-15T09:05:00Z");
     assert!(chrono::DateTime::parse_from_rfc3339(&migrated_fx_ts).is_ok());

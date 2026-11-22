@@ -792,7 +792,10 @@ fn test_s25_batch_saves_execute_one_vault_write_per_step_and_rollback_on_invalid
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "rollback must leave only the original seeded entry");
+        assert_eq!(
+            count, 1,
+            "rollback must leave only the original seeded entry"
+        );
         let still_exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM income_entry WHERE id=?1",
@@ -908,13 +911,25 @@ fn test_s25_batch_saves_execute_one_vault_write_per_step_and_rollback_on_invalid
     let guard = reloaded.db.lock().unwrap();
     let conn = guard.as_ref().unwrap().conn.lock().unwrap();
     let inc_cnt: i64 = conn
-        .query_row("SELECT COUNT(*) FROM income_entry WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM income_entry WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
         .unwrap();
     let ca_cnt: i64 = conn
-        .query_row("SELECT COUNT(*) FROM capital_allowance WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM capital_allowance WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
         .unwrap();
     let rel_cnt: i64 = conn
-        .query_row("SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1", rusqlite::params![filing_id], |r| r.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(inc_cnt, 4);
     assert_eq!(ca_cnt, 2);
@@ -1013,7 +1028,10 @@ fn test_cross_table_and_cross_filing_delete_bypass_blocked() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(doc_count, 1, "Confirmed filing's relief document must remain intact");
+        assert_eq!(
+            doc_count, 1,
+            "Confirmed filing's relief document must remain intact"
+        );
     }
 
     // 2. Cross-filing batch delete: saving Draft A with Draft B's income ID in delete_ids MUST reject the whole batch!
@@ -1033,10 +1051,18 @@ fn test_cross_table_and_cross_filing_delete_bypass_blocked() {
         let guard = state.db.lock().unwrap();
         let conn = guard.as_ref().unwrap().conn.lock().unwrap();
         let a_amt: f64 = conn
-            .query_row("SELECT gross_amount_ngn FROM income_entry WHERE id=?1", rusqlite::params![inc_a], |r| r.get(0))
+            .query_row(
+                "SELECT gross_amount_ngn FROM income_entry WHERE id=?1",
+                rusqlite::params![inc_a],
+                |r| r.get(0),
+            )
             .unwrap();
         let b_exists: i64 = conn
-            .query_row("SELECT COUNT(*) FROM income_entry WHERE id=?1", rusqlite::params![inc_b], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE id=?1",
+                rusqlite::params![inc_b],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(a_amt, 1_000_000.0);
         assert_eq!(b_exists, 1);

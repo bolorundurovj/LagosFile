@@ -347,7 +347,10 @@ fn test_s20_invalid_bands_rejected_and_previous_config_stays_active() {
         );
         assert!(res.is_err(), "expected invalid band case '{name}' to fail");
         let active = ConfigService::get_active(&db).unwrap();
-        assert_eq!(active.id, initial.id, "previous config must stay active after '{name}'");
+        assert_eq!(
+            active.id, initial.id,
+            "previous config must stay active after '{name}'"
+        );
     }
 }
 
@@ -401,7 +404,10 @@ fn test_s20_exported_config_imports_again() {
     assert!(reimported.is_active);
     assert_eq!(reimported.bands.len(), active.bands.len());
     assert_eq!(reimported.minimum_tax_rate, active.minimum_tax_rate);
-    assert_eq!(reimported.relief_caps.rent_relief_cap, active.relief_caps.rent_relief_cap);
+    assert_eq!(
+        reimported.relief_caps.rent_relief_cap,
+        active.relief_caps.rent_relief_cap
+    );
 }
 
 #[test]

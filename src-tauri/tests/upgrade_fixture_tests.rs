@@ -350,9 +350,18 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
                 "22222222-2222-4222-8222-222222222202",
             )
             .unwrap();
-            assert_eq!(payload_after.computation.total_gross_income, payload_before.computation.total_gross_income);
-            assert_eq!(payload_after.computation.chargeable_income, payload_before.computation.chargeable_income);
-            assert_eq!(payload_after.computation.graduated_tax, payload_before.computation.graduated_tax);
+            assert_eq!(
+                payload_after.computation.total_gross_income,
+                payload_before.computation.total_gross_income
+            );
+            assert_eq!(
+                payload_after.computation.chargeable_income,
+                payload_before.computation.chargeable_income
+            );
+            assert_eq!(
+                payload_after.computation.graduated_tax,
+                payload_before.computation.graduated_tax
+            );
             assert_eq!(payload_after.computation.final_tax_payable, 628_000.0);
         }
     }
@@ -411,7 +420,8 @@ fn test_legacy_v1_2_vault_opens_and_preserves_filed_returns() {
             let rel = format!("documents/{}/{}", parent_id, fname);
             let raw = std::fs::read(tmp.join(&rel)).unwrap();
             assert!(lagosfile_lib::db::doc_store::is_encrypted_doc(&raw));
-            let dec = lagosfile_lib::db::doc_store::read_decrypted_doc(&tmp, &rel, &doc_key).unwrap();
+            let dec =
+                lagosfile_lib::db::doc_store::read_decrypted_doc(&tmp, &rel, &doc_key).unwrap();
             assert_eq!(dec.as_slice(), expected);
         }
     }

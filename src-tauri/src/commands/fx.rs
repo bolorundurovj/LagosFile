@@ -87,7 +87,15 @@ pub async fn resolve_fx_rate(
     state: State<'_, AppState>,
 ) -> Result<FxResult, String> {
     let fetcher = LiveFxFetcher::new().map_err(|e| e.to_string())?;
-    resolve_fx_rate_in_dir(&db::app_dir(), &base, &quote, &target_date, &state, &fetcher).await
+    resolve_fx_rate_in_dir(
+        &db::app_dir(),
+        &base,
+        &quote,
+        &target_date,
+        &state,
+        &fetcher,
+    )
+    .await
 }
 
 #[tauri::command]

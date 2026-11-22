@@ -141,8 +141,16 @@ fn test_nta_s30_rent_relief_below_at_and_above_cap() {
     // Below cap: 20% of ₦2,000,000 = ₦400,000 -> chargeable ₦4,600,000 -> tax ₦618,000
     let r_below =
         ComputationEngine::compute(&salary, &[], &[relief("rent", 2_000_000.0)], &cfg).unwrap();
-    assert_ngn_eq(r_below.rent_relief_applied, 400_000.0, "rent relief below cap");
-    assert_ngn_eq(r_below.chargeable_income, 4_600_000.0, "chargeable below cap");
+    assert_ngn_eq(
+        r_below.rent_relief_applied,
+        400_000.0,
+        "rent relief below cap",
+    );
+    assert_ngn_eq(
+        r_below.chargeable_income,
+        4_600_000.0,
+        "chargeable below cap",
+    );
     assert_ngn_eq(r_below.final_tax_payable, 618_000.0, "tax below cap");
 
     // Exactly at cap: 20% of ₦2,500,000 = ₦500,000 -> chargeable ₦4,500,000 -> tax ₦600,000
@@ -155,7 +163,11 @@ fn test_nta_s30_rent_relief_below_at_and_above_cap() {
     // Above cap: 20% of ₦4,000,000 = ₦800,000, capped at ₦500,000 -> tax ₦600,000
     let r_above =
         ComputationEngine::compute(&salary, &[], &[relief("rent", 4_000_000.0)], &cfg).unwrap();
-    assert_ngn_eq(r_above.rent_relief_applied, 500_000.0, "rent relief above cap");
+    assert_ngn_eq(
+        r_above.rent_relief_applied,
+        500_000.0,
+        "rent relief above cap",
+    );
     assert_ngn_eq(r_above.final_tax_payable, 600_000.0, "tax above cap");
 }
 
@@ -172,7 +184,11 @@ fn test_nta_share_gains_around_150m_proceeds_and_10m_gain_thresholds() {
         ..Default::default()
     };
     let r_exempt = ComputationEngine::compute(&[exempt_entry], &[], &[], &cfg).unwrap();
-    assert_ngn_eq(r_exempt.cgt_exempt_amount, 10_000_000.0, "exempt share gain");
+    assert_ngn_eq(
+        r_exempt.cgt_exempt_amount,
+        10_000_000.0,
+        "exempt share gain",
+    );
     assert_ngn_eq(r_exempt.total_gross_income, 0.0, "exempt gross income");
     assert_ngn_eq(r_exempt.final_tax_payable, 0.0, "exempt final tax");
 
@@ -198,7 +214,11 @@ fn test_nta_share_gains_around_150m_proceeds_and_10m_gain_thresholds() {
     };
     let r_gain = ComputationEngine::compute(&[taxable_gain], &[], &[], &cfg).unwrap();
     assert_ngn_eq(r_gain.cgt_exempt_amount, 0.0, "non-exempt gain");
-    assert_ngn_eq(r_gain.final_tax_payable, 1_590_000.18, "tax on ₦10,000,001 share gain");
+    assert_ngn_eq(
+        r_gain.final_tax_payable,
+        1_590_000.18,
+        "tax on ₦10,000,001 share gain",
+    );
 }
 
 #[test]
@@ -231,17 +251,18 @@ fn test_minimum_tax_floor_applies_before_wht_credits() {
         &cfg,
     )
     .unwrap();
-    assert_ngn_eq(r_paid.final_tax_payable, 0.0, "full WHT wipes out liability");
+    assert_ngn_eq(
+        r_paid.final_tax_payable,
+        0.0,
+        "full WHT wipes out liability",
+    );
 
     // Case 2: Deductions bring graduated tax to ₦0; minimum tax floor is ₦50,000;
     // WHT of ₦30,000 applies AFTER the floor -> final tax = max(50,000 - 30,000, 0) = ₦20,000.
     let r_floor = ComputationEngine::compute(
         &[employment_entry(5_000_000.0)],
         &[],
-        &[
-            relief("pension", 4_200_000.0),
-            relief("wht", 30_000.0),
-        ],
+        &[relief("pension", 4_200_000.0), relief("wht", 30_000.0)],
         &cfg,
     )
     .unwrap();
@@ -364,7 +385,11 @@ fn test_s9_untouched_seed_upgrades_to_nta_2025_and_picks_config_by_income_year()
     let conn = db.conn.lock().unwrap();
     // Old confirmed filing stayed pinned to v1 seed and recomputes identically (306,000)
     let old_comp = compute_filing_with_conn(&conn, "f-old").unwrap();
-    assert_ngn_eq(old_comp.final_tax_payable, 306_000.0, "old filing unchanged");
+    assert_ngn_eq(
+        old_comp.final_tax_payable,
+        306_000.0,
+        "old filing unchanged",
+    );
 
     // Per D1: draft for <= 2025 gets PITA config (1% min tax); get_for_income_year(2026) gets NTA 2025
     let draft_2025 = create_draft_filing_with_conn(&conn, 2025).unwrap();
@@ -435,7 +460,11 @@ fn test_s11_paye_and_per_entry_foreign_tax_credits() {
         &cfg,
     )
     .unwrap();
-    assert_ngn_eq(r_floor.final_tax_payable, 0.0, "combined credits floor at zero");
+    assert_ngn_eq(
+        r_floor.final_tax_payable,
+        0.0,
+        "combined credits floor at zero",
+    );
 }
 
 #[test]
@@ -445,8 +474,8 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
             auth::setup_pin_in_dir,
             export::{export_filing_json_with_conn, export_filing_pdf_in_dir},
             filing::{
-                confirm_filing_with_conn, copy_entries_to_next_year,
-                upsert_income_entry_with_conn, upsert_relief_entry_with_conn,
+                confirm_filing_with_conn, copy_entries_to_next_year, upsert_income_entry_with_conn,
+                upsert_relief_entry_with_conn,
             },
         },
         services::{filing::FilingService, profile::ProfileService},
@@ -461,11 +490,8 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
     let filing_id = {
         let guard = state.db.lock().unwrap();
         let db = guard.as_ref().unwrap();
-        let tp = ProfileService::create(
-            db,
-            json!({ "fullName": "Bola Ade", "tin": "1234567890" }),
-        )
-        .unwrap();
+        let tp = ProfileService::create(db, json!({ "fullName": "Bola Ade", "tin": "1234567890" }))
+            .unwrap();
         let f1 = FilingService::create_draft(db, tp.id, 2024, "NTA 2025").unwrap();
         let f2 = FilingService::create_draft(db, tp.id, 2025, "NTA 2025").unwrap();
         let fid1 = f1.id.to_string();
@@ -511,7 +537,10 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(copied_ft_count, 0, "foreign_tax_paid_ngn must be NULL after copy");
+        assert_eq!(
+            copied_ft_count, 0,
+            "foreign_tax_paid_ngn must be NULL after copy"
+        );
         let copied_credit_reliefs: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1 AND relief_type IN ('wht','paye','foreign_tax')",
@@ -519,7 +548,10 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(copied_credit_reliefs, 0, "credit reliefs must not be copied to next year");
+        assert_eq!(
+            copied_credit_reliefs, 0,
+            "credit reliefs must not be copied to next year"
+        );
 
         // Confirm f1: 1,950,000 - 200,000 WHT - 300,000 PAYE - 325,000 FTC = 1,125,000
         let confirmed = confirm_filing_with_conn(&conn, &fid1).unwrap();
@@ -537,15 +569,28 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
         assert_eq!(exported["filing"]["taxPayable"].as_f64(), Some(1_950_000.0));
         assert_eq!(exported["filing"]["whtCredit"].as_f64(), Some(200_000.0));
         assert_eq!(exported["filing"]["payeCredit"].as_f64(), Some(300_000.0));
-        assert_eq!(exported["filing"]["foreignTaxCredit"].as_f64(), Some(325_000.0));
-        assert_eq!(exported["filing"]["finalTaxPayable"].as_f64(), Some(1_125_000.0));
+        assert_eq!(
+            exported["filing"]["foreignTaxCredit"].as_f64(),
+            Some(325_000.0)
+        );
+        assert_eq!(
+            exported["filing"]["finalTaxPayable"].as_f64(),
+            Some(1_125_000.0)
+        );
         fid1
     };
 
     // PDF export renders all credits and final tax payable cleanly
     let pdf_path = dir.join("s11.pdf");
-    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
-        .unwrap();
+    export_filing_pdf_in_dir(
+        &dir,
+        &filing_id,
+        pdf_path.to_str().unwrap(),
+        false,
+        None,
+        &state,
+    )
+    .unwrap();
     let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
     let text: String = pdf_doc
         .get_pages()
@@ -553,11 +598,23 @@ fn test_s11_duplicating_carries_no_credits_and_exports_show_all_credits() {
         .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("1,950,000.00"), "PDF missing gross tax: {text}");
-    assert!(text.contains("200,000.00"), "PDF missing WHT credit: {text}");
-    assert!(text.contains("300,000.00"), "PDF missing PAYE credit: {text}");
+    assert!(
+        text.contains("1,950,000.00"),
+        "PDF missing gross tax: {text}"
+    );
+    assert!(
+        text.contains("200,000.00"),
+        "PDF missing WHT credit: {text}"
+    );
+    assert!(
+        text.contains("300,000.00"),
+        "PDF missing PAYE credit: {text}"
+    );
     assert!(text.contains("325,000.00"), "PDF missing FTC: {text}");
-    assert!(text.contains("1,125,000.00"), "PDF missing final tax: {text}");
+    assert!(
+        text.contains("1,125,000.00"),
+        "PDF missing final tax: {text}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -574,7 +631,11 @@ fn test_s13_non_exempt_share_gain_taxes_gain_not_gross_proceeds() {
 
     let res = ComputationEngine::compute(&[entry], &[], &[], &cfg).unwrap();
     assert_ngn_eq(res.total_gross_income, 15_000_000.0, "taxable share gain");
-    assert_ngn_eq(res.cgt_exempt_amount, 0.0, "not exempt above ₦150m proceeds");
+    assert_ngn_eq(
+        res.cgt_exempt_amount,
+        0.0,
+        "not exempt above ₦150m proceeds",
+    );
     // Tax on ₦15m under NTA 2025: 0 + 330,000 + 1,620,000 + (3m * 21% = 630,000) = ₦2,580,000
     assert_ngn_eq(res.final_tax_payable, 2_580_000.0, "tax on ₦15m share gain");
 }
@@ -633,7 +694,11 @@ fn test_s13_share_gain_migration_fixes_drafts_and_notifies_filed() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_ngn_eq(draft_gross, 15_000_000.0, "Draft share-gain row fixed to cgt_gain");
+    assert_ngn_eq(
+        draft_gross,
+        15_000_000.0,
+        "Draft share-gain row fixed to cgt_gain",
+    );
 
     let sub_gross: f64 = conn
         .query_row(
@@ -642,7 +707,11 @@ fn test_s13_share_gain_migration_fixes_drafts_and_notifies_filed() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_ngn_eq(sub_gross, 200_000_000.0, "Submitted share-gain row must remain untouched");
+    assert_ngn_eq(
+        sub_gross,
+        200_000_000.0,
+        "Submitted share-gain row must remain untouched",
+    );
 
     let notices = get_migration_notices(&conn);
     assert!(
@@ -664,7 +733,11 @@ fn test_s14_bik_valuation_all_categories_and_accommodation_cap_recalc() {
         ..Default::default()
     };
     let r_owned = ComputationEngine::compute(&[owned], &[], &[], &cfg).unwrap();
-    assert_ngn_eq(r_owned.total_gross_income, 1_000_000.0, "employer-owned asset 5%");
+    assert_ngn_eq(
+        r_owned.total_gross_income,
+        1_000_000.0,
+        "employer-owned asset 5%",
+    );
 
     // 2. Rented/hired asset: 100% of ₦2m = ₦2,000,000 (s.14(1)(b))
     let rented = IncomeEntry {
@@ -674,7 +747,11 @@ fn test_s14_bik_valuation_all_categories_and_accommodation_cap_recalc() {
         ..Default::default()
     };
     let r_rented = ComputationEngine::compute(&[rented], &[], &[], &cfg).unwrap();
-    assert_ngn_eq(r_rented.total_gross_income, 2_000_000.0, "rented asset 100%");
+    assert_ngn_eq(
+        r_rented.total_gross_income,
+        2_000_000.0,
+        "rented asset 100%",
+    );
 
     // 3. Other BIK: 100% of ₦600k = ₦600,000 (s.14(1)(c))
     let other = IncomeEntry {
@@ -694,9 +771,13 @@ fn test_s14_bik_valuation_all_categories_and_accommodation_cap_recalc() {
         gross_amount_ngn: 3_000_000.0,
         ..Default::default()
     };
-    let r_capped =
-        ComputationEngine::compute(&[employment_entry(10_000_000.0), accom.clone()], &[], &[], &cfg)
-            .unwrap();
+    let r_capped = ComputationEngine::compute(
+        &[employment_entry(10_000_000.0), accom.clone()],
+        &[],
+        &[],
+        &cfg,
+    )
+    .unwrap();
     assert_ngn_eq(
         r_capped.total_gross_income,
         12_000_000.0,
@@ -788,8 +869,16 @@ fn test_s14_bik_persists_duplicates_exports_and_maps_in_lirs_payload() {
 
     // LIRS payload maps BIK to benefits_in_kind (₦2m), not other (₦0)
     let pending = build_pending_filing(&conn, &f1.id.to_string()).unwrap();
-    assert_ngn_eq(pending.income.benefits_in_kind, 2_000_000.0, "LIRS payload BIK");
-    assert_ngn_eq(pending.income.other, 0.0, "LIRS payload other should not receive BIK");
+    assert_ngn_eq(
+        pending.income.benefits_in_kind,
+        2_000_000.0,
+        "LIRS payload BIK",
+    );
+    assert_ngn_eq(
+        pending.income.other,
+        0.0,
+        "LIRS payload other should not receive BIK",
+    );
 
     // JSON export includes bikCategory and bikCost
     let tmp = std::env::temp_dir().join(format!("lagosfile_s14_{}.json", uuid::Uuid::new_v4()));
@@ -809,7 +898,9 @@ fn test_s14_bik_persists_duplicates_exports_and_maps_in_lirs_payload() {
 
 #[test]
 fn test_pita_2025_applies_consolidated_relief_allowance_and_zero_rent_relief() {
-    use lagosfile_lib::commands::filing::{estimate_tax_for_year_with_conn, EstimateIncome, EstimateRelief};
+    use lagosfile_lib::commands::filing::{
+        estimate_tax_for_year_with_conn, EstimateIncome, EstimateRelief,
+    };
     use lagosfile_lib::db::AppDb;
 
     let db = AppDb::open_in_memory().unwrap();
@@ -832,9 +923,21 @@ fn test_pita_2025_applies_consolidated_relief_allowance_and_zero_rent_relief() {
         Some(2025),
     )
     .unwrap();
-    assert_ngn_eq(res_no_rent.consolidated_relief_allowance, 1_200_000.0, "PITA CRA on 5m");
-    assert_ngn_eq(res_no_rent.rent_relief_applied, 0.0, "PITA must have 0 rent relief");
-    assert_ngn_eq(res_no_rent.chargeable_income, 3_800_000.0, "PITA chargeable on 5m");
+    assert_ngn_eq(
+        res_no_rent.consolidated_relief_allowance,
+        1_200_000.0,
+        "PITA CRA on 5m",
+    );
+    assert_ngn_eq(
+        res_no_rent.rent_relief_applied,
+        0.0,
+        "PITA must have 0 rent relief",
+    );
+    assert_ngn_eq(
+        res_no_rent.chargeable_income,
+        3_800_000.0,
+        "PITA chargeable on 5m",
+    );
     assert_ngn_eq(res_no_rent.final_tax_payable, 704_000.0, "PITA tax on 5m");
 
     // Entering annual rent under PITA must NOT grant NTA 2025 rent relief (tax stays ₦704,000).
@@ -853,8 +956,16 @@ fn test_pita_2025_applies_consolidated_relief_allowance_and_zero_rent_relief() {
         Some(2025),
     )
     .unwrap();
-    assert_ngn_eq(res_with_rent.rent_relief_applied, 0.0, "PITA ignores NTA rent relief");
-    assert_ngn_eq(res_with_rent.final_tax_payable, 704_000.0, "PITA tax unchanged by rent");
+    assert_ngn_eq(
+        res_with_rent.rent_relief_applied,
+        0.0,
+        "PITA ignores NTA rent relief",
+    );
+    assert_ngn_eq(
+        res_with_rent.final_tax_payable,
+        704_000.0,
+        "PITA tax unchanged by rent",
+    );
 
     // Same ₦5m + ₦2.5m rent under income year 2026 uses NTA 2025 (no CRA, ₦500k rent relief -> ₦4.5m chargeable -> ₦600k tax).
     let res_nta = estimate_tax_for_year_with_conn(
@@ -872,9 +983,21 @@ fn test_pita_2025_applies_consolidated_relief_allowance_and_zero_rent_relief() {
         Some(2026),
     )
     .unwrap();
-    assert_ngn_eq(res_nta.consolidated_relief_allowance, 0.0, "NTA 2025 has no CRA");
-    assert_ngn_eq(res_nta.rent_relief_applied, 500_000.0, "NTA 2025 caps rent relief at 500k");
-    assert_ngn_eq(res_nta.final_tax_payable, 600_000.0, "NTA 2025 tax on 4.5m chargeable");
+    assert_ngn_eq(
+        res_nta.consolidated_relief_allowance,
+        0.0,
+        "NTA 2025 has no CRA",
+    );
+    assert_ngn_eq(
+        res_nta.rent_relief_applied,
+        500_000.0,
+        "NTA 2025 caps rent relief at 500k",
+    );
+    assert_ngn_eq(
+        res_nta.final_tax_payable,
+        600_000.0,
+        "NTA 2025 tax on 4.5m chargeable",
+    );
 }
 
 #[test]
@@ -898,7 +1021,11 @@ fn test_ftc_netted_digital_assets_multiple_accommodation_biks_and_negative_cgt_g
         ..Default::default()
     };
     let r_dig = ComputationEngine::compute(&[salary, dig_gain, dig_loss], &[], &[], &cfg).unwrap();
-    assert_ngn_eq(r_dig.total_gross_income, 12_000_000.0, "total gross with netted digital gain");
+    assert_ngn_eq(
+        r_dig.total_gross_income,
+        12_000_000.0,
+        "total gross with netted digital gain",
+    );
     let expected_cap = r_dig.graduated_tax * (2_000_000.0 / 12_000_000.0);
     assert_ngn_eq(
         r_dig.foreign_tax_credits,
@@ -931,7 +1058,11 @@ fn test_ftc_netted_digital_assets_multiple_accommodation_biks_and_negative_cgt_g
         &cfg,
     )
     .unwrap();
-    assert_ngn_eq(r_bik.total_gross_income, 12_000_000.0, "total gross with 2 accommodation BIKs");
+    assert_ngn_eq(
+        r_bik.total_gross_income,
+        12_000_000.0,
+        "total gross with 2 accommodation BIKs",
+    );
     assert_ngn_eq(
         r_bik.foreign_tax_credits,
         0.0,
@@ -949,8 +1080,16 @@ fn test_ftc_netted_digital_assets_multiple_accommodation_biks_and_negative_cgt_g
     let r_loss =
         ComputationEngine::compute(&[employment_entry(5_000_000.0), share_loss], &[], &[], &cfg)
             .unwrap();
-    assert_ngn_eq(r_loss.cgt_exempt_amount, 0.0, "negative share gain must not produce negative exempt amount");
-    assert_ngn_eq(r_loss.total_gross_income, 5_000_000.0, "share loss must not reduce salary");
+    assert_ngn_eq(
+        r_loss.cgt_exempt_amount,
+        0.0,
+        "negative share gain must not produce negative exempt amount",
+    );
+    assert_ngn_eq(
+        r_loss.total_gross_income,
+        5_000_000.0,
+        "share loss must not reduce salary",
+    );
 }
 
 #[test]
@@ -958,7 +1097,8 @@ fn test_migrations_backfill_unique_label_repin_seed_drafts_and_distribute_foreig
     use lagosfile_lib::db::{AppDb, PITA_CONFIG_ID, SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL};
     use rusqlite::{params, Connection};
 
-    let tmp_db = std::env::temp_dir().join(format!("lagosfile-mig-test-{}.db", uuid::Uuid::new_v4()));
+    let tmp_db =
+        std::env::temp_dir().join(format!("lagosfile-mig-test-{}.db", uuid::Uuid::new_v4()));
     let raw = Connection::open(&tmp_db).unwrap();
     raw.execute_batch(
         "CREATE TABLE taxpayer (id TEXT PRIMARY KEY, full_name TEXT NOT NULL, tin TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -1010,7 +1150,8 @@ fn test_migrations_backfill_unique_label_repin_seed_drafts_and_distribute_foreig
     )
     .unwrap();
     // Seed v1 (active, system) + one unique historical config 'Custom-2023' (inactive)
-    let bands = r#"[{"lower":0,"upper":800000,"rate":0.0},{"lower":800000,"upper":null,"rate":0.15}]"#;
+    let bands =
+        r#"[{"lower":0,"upper":800000,"rate":0.0},{"lower":800000,"upper":null,"rate":0.15}]"#;
     raw.execute(
         "INSERT INTO tax_config VALUES (?1,?2,'NTA',?3,'{}','{}','{}',0.01,1,'2025-01-01T00:00:00Z','system')",
         params![SEED_V1_CONFIG_ID, SEED_V1_CONFIG_LABEL, bands],
@@ -1066,26 +1207,55 @@ fn test_migrations_backfill_unique_label_repin_seed_drafts_and_distribute_foreig
     let conn = db.conn.lock().unwrap();
 
     let draft_cfg: String = conn
-        .query_row("SELECT tax_config_id FROM filing WHERE id='f-draft-2025'", [], |r| r.get(0))
+        .query_row(
+            "SELECT tax_config_id FROM filing WHERE id='f-draft-2025'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(draft_cfg, PITA_CONFIG_ID, "Draft 2025 on SEED_V1 must re-pin to PITA_CONFIG_ID");
+    assert_eq!(
+        draft_cfg, PITA_CONFIG_ID,
+        "Draft 2025 on SEED_V1 must re-pin to PITA_CONFIG_ID"
+    );
 
     let conf_cfg: String = conn
-        .query_row("SELECT tax_config_id FROM filing WHERE id='f-conf-2024'", [], |r| r.get(0))
+        .query_row(
+            "SELECT tax_config_id FROM filing WHERE id='f-conf-2024'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(conf_cfg, SEED_V1_CONFIG_ID, "Confirmed 2024 must remain pinned to SEED_V1_CONFIG_ID");
+    assert_eq!(
+        conf_cfg, SEED_V1_CONFIG_ID,
+        "Confirmed 2024 must remain pinned to SEED_V1_CONFIG_ID"
+    );
 
     let hist_cfg: String = conn
-        .query_row("SELECT tax_config_id FROM filing WHERE id='f-hist-2023'", [], |r| r.get(0))
+        .query_row(
+            "SELECT tax_config_id FROM filing WHERE id='f-hist-2023'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(hist_cfg, "hist-cfg-2023", "Uniquely-labelled filing must backfill to its matching config");
+    assert_eq!(
+        hist_cfg, "hist-cfg-2023",
+        "Uniquely-labelled filing must backfill to its matching config"
+    );
 
     // Foreign tax relief ₦1,000,000 must be distributed 60/40 across ie-f1 (₦600k) and ie-f2 (₦400k).
     let ft1: f64 = conn
-        .query_row("SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f1'", [], |r| r.get(0))
+        .query_row(
+            "SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f1'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     let ft2: f64 = conn
-        .query_row("SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f2'", [], |r| r.get(0))
+        .query_row(
+            "SELECT foreign_tax_paid_ngn FROM income_entry WHERE id='ie-f2'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_ngn_eq(ft1, 600_000.0, "proportional foreign tax on 6M entry");
     assert_ngn_eq(ft2, 400_000.0, "proportional foreign tax on 4M entry");
@@ -1115,10 +1285,22 @@ fn test_pita_cra_with_statutory_deductions_no_rent_double_dip_and_cgt_fallback()
     pita.relief_caps.rent_relief_cap = 500_000.0;
 
     let res = ComputationEngine::compute(&entries, &[], &reliefs, &pita).unwrap();
-    assert_ngn_eq(res.consolidated_relief_allowance, 1_120_000.0, "PITA CRA with ₦400k pension");
-    assert_ngn_eq(res.rent_relief_applied, 0.0, "rent relief disabled when CRA enabled");
+    assert_ngn_eq(
+        res.consolidated_relief_allowance,
+        1_120_000.0,
+        "PITA CRA with ₦400k pension",
+    );
+    assert_ngn_eq(
+        res.rent_relief_applied,
+        0.0,
+        "rent relief disabled when CRA enabled",
+    );
     assert_ngn_eq(res.chargeable_income, 3_480_000.0, "PITA chargeable income");
-    assert_ngn_eq(res.final_tax_payable, 627_200.0, "PITA tax with pension + CRA");
+    assert_ngn_eq(
+        res.final_tax_payable,
+        627_200.0,
+        "PITA tax with pension + CRA",
+    );
 
     // cgt_shares_exempt must fall back to gross_amount_ngn when cgt_gain is None
     // (a ₦15M gain with cgt_gain=None exceeds the ₦10M threshold and must NOT be exempt).
@@ -1131,8 +1313,16 @@ fn test_pita_cra_with_statutory_deductions_no_rent_double_dip_and_cgt_fallback()
         ..Default::default()
     };
     let res_shares = ComputationEngine::compute(&[shares], &[], &[], &nta).unwrap();
-    assert_ngn_eq(res_shares.cgt_exempt_amount, 0.0, "₦15M share gain with cgt_gain=None must not be exempt");
-    assert_ngn_eq(res_shares.total_gross_income, 15_000_000.0, "taxable share gain included in gross");
+    assert_ngn_eq(
+        res_shares.cgt_exempt_amount,
+        0.0,
+        "₦15M share gain with cgt_gain=None must not be exempt",
+    );
+    assert_ngn_eq(
+        res_shares.total_gross_income,
+        15_000_000.0,
+        "taxable share gain included in gross",
+    );
 }
 
 #[test]
@@ -1183,7 +1373,8 @@ fn test_amend_upgrades_obsolete_seed_and_migrates_foreign_tax_while_preserving_p
             "INSERT INTO relief_entry (id, filing_id, relief_type, claimed_amount, approved_amount)
              VALUES ('rel-ft-old', 'f-seed-old', 'foreign_tax', 350000, 350000)",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Re-run migrate() via serialize/load_from_bytes -> PITA_LEGACY_CONFIG_ID must stay immutable!
@@ -1222,7 +1413,10 @@ fn test_amend_upgrades_obsolete_seed_and_migrates_foreign_tax_while_preserving_p
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(ft_relief_count, 0, "amended draft must not contain hidden foreign_tax relief rows");
+    assert_eq!(
+        ft_relief_count, 0,
+        "amended draft must not contain hidden foreign_tax relief rows"
+    );
     let copied_ft: f64 = conn
         .query_row(
             "SELECT foreign_tax_paid_ngn FROM income_entry WHERE filing_id=?1",
@@ -1230,7 +1424,11 @@ fn test_amend_upgrades_obsolete_seed_and_migrates_foreign_tax_while_preserving_p
             |r| r.get(0),
         )
         .unwrap();
-    assert_ngn_eq(copied_ft, 350_000.0, "migrated foreign_tax_paid_ngn on amended draft");
+    assert_ngn_eq(
+        copied_ft,
+        350_000.0,
+        "migrated foreign_tax_paid_ngn on amended draft",
+    );
 
     // Single-entry upsert rejects negative salary and replaces empty id with a generated UUID.
     let neg_err = upsert_income_entry_with_conn(

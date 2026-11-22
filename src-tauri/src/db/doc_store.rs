@@ -34,7 +34,8 @@ pub fn get_doc_key(db: &AppDb) -> Result<Option<[u8; 32]>, String> {
         .ok();
     match hex_str {
         Some(h) => {
-            let bytes = hex::decode(&h).map_err(|_| "Corrupt document key in database".to_string())?;
+            let bytes =
+                hex::decode(&h).map_err(|_| "Corrupt document key in database".to_string())?;
             if bytes.len() != 32 {
                 return Err("Corrupt document key length in database".to_string());
             }
@@ -108,20 +109,11 @@ fn looks_like_any_os_absolute(stored_path: &str) -> bool {
 /// (stripping directory components, path separators, `..`, and forbidden characters).
 pub fn sanitize_file_name(file_name: &str) -> String {
     // Take only the leaf segment after any `/` or `\`.
-    let leaf = file_name
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or("")
-        .trim();
+    let leaf = file_name.rsplit(['/', '\\']).next().unwrap_or("").trim();
 
     let mut cleaned = String::with_capacity(leaf.len());
     for ch in leaf.chars() {
-        if ch.is_control()
-            || matches!(
-                ch,
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
-            )
-        {
+        if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
             cleaned.push('_');
         } else {
             cleaned.push(ch);
@@ -281,7 +273,9 @@ where
     let rows: Vec<(String, String, String)> = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT id, file_path, file_name FROM document ORDER BY uploaded_at ASC, id ASC")
+            .prepare(
+                "SELECT id, file_path, file_name FROM document ORDER BY uploaded_at ASC, id ASC",
+            )
             .map_err(|e| e.to_string())?;
         let mapped = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -514,7 +508,10 @@ pub fn sweep_orphan_doc_files(dir: &Path, conn: &rusqlite::Connection) -> usize 
     removed
 }
 
-pub fn migrate_plaintext_documents(dir: &Path, state: &AppState) -> Result<MigrationReport, String> {
+pub fn migrate_plaintext_documents(
+    dir: &Path,
+    state: &AppState,
+) -> Result<MigrationReport, String> {
     migrate_plaintext_documents_with_hook(dir, state, |_, _, _| {}, |_, _| Ok(()))
 }
 
@@ -612,10 +609,7 @@ pub fn read_backup_documents_from_refs(
 
 /// Collects all referenced document files for inclusion in a backup archive.
 /// Ensures every bundled document is encrypted with `doc_key` (never writes plaintext into a backup).
-pub fn collect_backup_documents(
-    dir: &Path,
-    db: &AppDb,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub fn collect_backup_documents(dir: &Path, db: &AppDb) -> Result<Vec<(String, Vec<u8>)>, String> {
     let (doc_key, rows) = collect_backup_doc_refs(db)?;
     read_backup_documents_from_refs(dir, doc_key, &rows)
 }

@@ -181,10 +181,7 @@ fn csv_row(fields: &[&str]) -> String {
     out
 }
 
-fn unique_companion_name(
-    used: &mut std::collections::HashSet<String>,
-    file_name: &str,
-) -> String {
+fn unique_companion_name(used: &mut std::collections::HashSet<String>, file_name: &str) -> String {
     let base = Path::new(file_name)
         .file_name()
         .and_then(|s| s.to_str())
@@ -442,10 +439,8 @@ fn add_attachments_appendix(
     };
 
     let mut page_num = 1usize;
-    let (mut layer, mut y) = start_appendix_page(
-        "APPENDIX — SUPPORTING DOCUMENTS",
-        "Supporting Documents",
-    );
+    let (mut layer, mut y) =
+        start_appendix_page("APPENDIX — SUPPORTING DOCUMENTS", "Supporting Documents");
     layer.use_text(
         format!("{} document(s) submitted with this filing.", records.len()),
         9.0,
@@ -599,8 +594,7 @@ fn inspect_safe_dct_jpeg(bytes: &[u8]) -> Option<(u32, u32, ColorSpace)> {
 
     // Check EXIF orientation via image's JpegDecoder; reject rotated OR unreadable EXIF so fallback normalizes.
     use ::image::ImageDecoder;
-    let mut decoder =
-        ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut decoder = ::image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
     let orientation = decoder.orientation().ok()?;
     if orientation != ::image::metadata::Orientation::NoTransforms {
         return None;
@@ -1048,16 +1042,14 @@ fn render_filing_pdf(
                 .clone()
                 .unwrap_or_else(|| "—".to_string()),
         ),
-        (
-            "Confirmed At",
-            date_prefix(summary.confirmed_at.as_deref()),
-        ),
+        ("Confirmed At", date_prefix(summary.confirmed_at.as_deref())),
     ];
-    if summary.submitted_at.as_deref().is_some_and(|s| !s.is_empty()) {
-        details.push((
-            "Submitted At",
-            date_prefix(summary.submitted_at.as_deref()),
-        ));
+    if summary
+        .submitted_at
+        .as_deref()
+        .is_some_and(|s| !s.is_empty())
+    {
+        details.push(("Submitted At", date_prefix(summary.submitted_at.as_deref())));
     }
     details.push(("Tax Config", summary.tax_config_version.clone()));
     for (label, value) in &details {
@@ -1079,9 +1071,8 @@ fn render_filing_pdf(
     layer.use_text("COMPUTATION SUMMARY", 11.0, left, y, &font_bold);
     y -= line_h;
 
-    let mut rows: Vec<(&str, String)> = vec![
-        ("Total Gross Income", naira(summary.total_income_ngn)),
-    ];
+    let mut rows: Vec<(&str, String)> =
+        vec![("Total Gross Income", naira(summary.total_income_ngn))];
     if summary.consolidated_relief_allowance > 0.0 {
         rows.push((
             "Less: Consolidated Relief Allowance (CRA)",
@@ -1188,7 +1179,8 @@ fn render_filing_pdf(
         _temp_pdf_dir = if !pdfs.is_empty() {
             let guard = doc_store::TempDirGuard::new("lagosfile-pdf-merge")?;
             for (idx, rec) in pdfs.iter().enumerate() {
-                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key) {
+                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key)
+                {
                     let tmp_file = guard.path().join(format!("{}_{}", idx, rec.file_name));
                     if std::fs::write(&tmp_file, plain).is_ok() {
                         pdf_att_paths.push(tmp_file.to_string_lossy().to_string());
@@ -1212,7 +1204,8 @@ fn render_filing_pdf(
             let dir = parent.join(format!("{}_attachments", stem));
             let _ = std::fs::create_dir_all(&dir);
             for rec in pdfs.iter().chain(others.iter()) {
-                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key) {
+                if let Ok(plain) = doc_store::read_decrypted_doc(app_dir, &rec.file_path, &doc_key)
+                {
                     let unique = unique_companion_name(&mut used_companion_names, &rec.file_name);
                     let _ = std::fs::write(dir.join(unique), plain);
                 }
@@ -1411,7 +1404,11 @@ pub fn export_filing_csv_with_conn(
             let income_type: String = row.get(0)?;
             let description: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
             let gross = format!("{:.2}", row.get::<_, f64>(2)?);
-            let is_foreign = if row.get::<_, i32>(3)? == 1 { "true" } else { "false" };
+            let is_foreign = if row.get::<_, i32>(3)? == 1 {
+                "true"
+            } else {
+                "false"
+            };
             let foreign_currency: String = row.get::<_, Option<String>>(4)?.unwrap_or_default();
             let foreign_amount = row
                 .get::<_, Option<f64>>(5)?
@@ -1955,11 +1952,18 @@ mod tests {
 
         let csv_text = std::fs::read_to_string(&csv_path).unwrap();
         let rows = parse_rfc4180(&csv_text);
-        assert!(rows.len() >= 19, "expected header + summary + income + allowance + relief rows");
+        assert!(
+            rows.len() >= 19,
+            "expected header + summary + income + allowance + relief rows"
+        );
         let header_cols = rows[0].len();
         assert_eq!(header_cols, 12);
         for (idx, r) in rows.iter().enumerate() {
-            assert_eq!(r.len(), header_cols, "row {idx} column count mismatch: {r:?}");
+            assert_eq!(
+                r.len(),
+                header_cols,
+                "row {idx} column count mismatch: {r:?}"
+            );
         }
 
         let inc = rows.iter().find(|r| r[0] == "income").expect("income row");
@@ -2084,15 +2088,30 @@ mod tests {
             .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(all_text.contains("CONFIRMED"), "cover must show CONFIRMED status");
-        assert!(!all_text.contains("LIRS  ·  DRAFT"), "confirmed cover must not show DRAFT");
-        assert!(all_text.contains("1. receipt.txt"), "appendix missing doc #1");
-        assert!(all_text.contains("30. doc_30.txt"), "appendix missing doc #30");
+        assert!(
+            all_text.contains("CONFIRMED"),
+            "cover must show CONFIRMED status"
+        );
+        assert!(
+            !all_text.contains("LIRS  ·  DRAFT"),
+            "confirmed cover must not show DRAFT"
+        );
+        assert!(
+            all_text.contains("1. receipt.txt"),
+            "appendix missing doc #1"
+        );
+        assert!(
+            all_text.contains("30. doc_30.txt"),
+            "appendix missing doc #30"
+        );
 
         // Companion attachments folder must contain all 30 files without overwriting duplicates
         let att_dir = dir.join("return_attachments");
         let copied_count = std::fs::read_dir(&att_dir).unwrap().count();
-        assert_eq!(copied_count, 30, "duplicate filenames must not overwrite each other");
+        assert_eq!(
+            copied_count, 30,
+            "duplicate filenames must not overwrite each other"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2136,7 +2155,9 @@ mod tests {
         let mut raw_rgb = vec![0u8; (w * h * 3) as usize];
         let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
         for b in raw_rgb.iter_mut() {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             *b = (seed >> 56) as u8;
         }
         let mut jpeg_bytes = Vec::new();
@@ -2188,7 +2209,10 @@ mod tests {
             }
             false
         });
-        assert!(has_dct, "JPEG attachment must be embedded with DCTDecode filter");
+        assert!(
+            has_dct,
+            "JPEG attachment must be embedded with DCTDecode filter"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2210,17 +2234,15 @@ mod tests {
             0x00, 0x10, // height=16
             0x00, 0x10, // width=16
             0x04, // 4 components (CMYK!)
-            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0,
-            0xFF, 0xD9,
+            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0, 0xFF, 0xD9,
         ];
         assert!(
             inspect_safe_dct_jpeg(&fake_cmyk_jpeg).is_none(),
             "4-channel CMYK JPEG must never take raw DCTDecode /DeviceRGB fast path"
         );
         let truncated_jpeg: Vec<u8> = vec![
-            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
-            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
-            0xFF, 0xDA, // SOS with missing entropy data
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 1, 0x11, 0, 2,
+            0x11, 0, 3, 0x11, 0, 0xFF, 0xDA, // SOS with missing entropy data
         ];
         assert!(
             inspect_safe_dct_jpeg(&truncated_jpeg).is_none(),
@@ -2281,23 +2303,22 @@ mod tests {
     fn test_pita_exports_include_cra_submitted_at_dynamic_act_and_strict_dct_guards() {
         // 1. inspect_safe_dct_jpeg rejects 12-bit precision, lossless SOF3 (0xC3), and Adobe APP14 transform=0.
         let sof_12bit: Vec<u8> = vec![
-            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x0C, 0x00, 0x10, 0x00, 0x10, 0x03,
-            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x0C, 0x00, 0x10, 0x00, 0x10, 0x03, 1, 0x11, 0, 2,
+            0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
         ];
         assert!(inspect_safe_dct_jpeg(&sof_12bit).is_none());
 
         let sof_lossless: Vec<u8> = vec![
-            0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
-            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
+            0xFF, 0xD8, 0xFF, 0xC3, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 1, 0x11, 0, 2,
+            0x11, 0, 3, 0x11, 0, 0xFF, 0xD9,
         ];
         assert!(inspect_safe_dct_jpeg(&sof_lossless).is_none());
 
         let app14_rgb: Vec<u8> = vec![
-            0xFF, 0xD8,
-            0xFF, 0xEE, 0x00, 0x0E, b'A', b'd', b'o', b'b', b'e', 0, 100, 0, 0, 0, 0, 0, // transform=0
-            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03,
-            1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
-            0xFF, 0xD9,
+            0xFF, 0xD8, 0xFF, 0xEE, 0x00, 0x0E, b'A', b'd', b'o', b'b', b'e', 0, 100, 0, 0, 0, 0,
+            0, // transform=0
+            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 1, 0x11, 0, 2, 0x11, 0, 3,
+            0x11, 0, 0xFF, 0xD9,
         ];
         assert!(inspect_safe_dct_jpeg(&app14_rgb).is_none());
 
@@ -2320,7 +2341,8 @@ mod tests {
                 "description": "Salary",
                 "grossAmountNgn": 5_000_000.0
             }),
-        ).unwrap();
+        )
+        .unwrap();
         crate::commands::filing::confirm_filing_with_conn(&conn, &fid).unwrap();
         conn.execute(
             "UPDATE filing SET status = 'Submitted', submitted_at = '2026-03-15T10:00:00Z' WHERE id = ?1",
@@ -2347,24 +2369,51 @@ mod tests {
         .unwrap();
 
         let csv_text = std::fs::read_to_string(&csv_path).unwrap();
-        assert!(csv_text.contains("consolidated_relief_allowance,,1200000.00"), "CSV must include CRA: {csv_text}");
-        assert!(csv_text.contains("submitted_at,2026-03-15T10:00:00Z"), "CSV must include submitted_at");
-        assert!(csv_text.contains("Personal Income Tax Act (PITA)"), "CSV must use dynamic PITA legislation");
+        assert!(
+            csv_text.contains("consolidated_relief_allowance,,1200000.00"),
+            "CSV must include CRA: {csv_text}"
+        );
+        assert!(
+            csv_text.contains("submitted_at,2026-03-15T10:00:00Z"),
+            "CSV must include submitted_at"
+        );
+        assert!(
+            csv_text.contains("Personal Income Tax Act (PITA)"),
+            "CSV must use dynamic PITA legislation"
+        );
 
         let json_val: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
-        assert_eq!(json_val["export"]["legislation"], "Personal Income Tax Act (PITA)");
-        assert_eq!(json_val["filing"]["consolidatedReliefAllowance"], 1_200_000.0);
+        assert_eq!(
+            json_val["export"]["legislation"],
+            "Personal Income Tax Act (PITA)"
+        );
+        assert_eq!(
+            json_val["filing"]["consolidatedReliefAllowance"],
+            1_200_000.0
+        );
         assert_eq!(json_val["filing"]["submittedAt"], "2026-03-15T10:00:00Z");
 
         let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
         assert!(pdf_doc.get_pages().len() >= 2);
         let p1_text = pdf_doc.extract_text(&[1]).unwrap_or_default();
         let p2_text = pdf_doc.extract_text(&[2]).unwrap_or_default();
-        assert!(p1_text.contains("PITA") && !p1_text.contains("NTA 2025"), "PDF cover should say PITA: {p1_text}");
-        assert!(p2_text.contains("Consolidated Relief Allowance"), "PDF statement should include CRA: {p2_text}");
-        assert!(p2_text.contains("Submitted At"), "PDF statement should include Submitted At: {p2_text}");
-        assert!(p2_text.contains("Governed by PITA") && !p2_text.contains("NTA 2025"), "PDF page 2 should say Governed by PITA: {p2_text}");
+        assert!(
+            p1_text.contains("PITA") && !p1_text.contains("NTA 2025"),
+            "PDF cover should say PITA: {p1_text}"
+        );
+        assert!(
+            p2_text.contains("Consolidated Relief Allowance"),
+            "PDF statement should include CRA: {p2_text}"
+        );
+        assert!(
+            p2_text.contains("Submitted At"),
+            "PDF statement should include Submitted At: {p2_text}"
+        );
+        assert!(
+            p2_text.contains("Governed by PITA") && !p2_text.contains("NTA 2025"),
+            "PDF page 2 should say Governed by PITA: {p2_text}"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

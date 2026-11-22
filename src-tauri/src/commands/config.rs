@@ -1,10 +1,4 @@
-use crate::{
-    commands::auth::persist_db,
-    db,
-    models::*,
-    services::config::ConfigService,
-    AppState,
-};
+use crate::{commands::auth::persist_db, db, models::*, services::config::ConfigService, AppState};
 use chrono::Utc;
 use rusqlite::params;
 use tauri::State;

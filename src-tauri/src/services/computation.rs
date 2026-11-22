@@ -256,8 +256,7 @@ impl ComputationEngine {
                     match (entry.bik_category.as_deref(), entry.bik_cost) {
                         (Some("accommodation"), Some(cost)) => {
                             let capped = cost.max(0.0).min(ftc_remaining_accomm_cap);
-                            ftc_remaining_accomm_cap =
-                                (ftc_remaining_accomm_cap - capped).max(0.0);
+                            ftc_remaining_accomm_cap = (ftc_remaining_accomm_cap - capped).max(0.0);
                             capped
                         }
                         _ => bik_taxable_value(entry, total_employment_income),
@@ -268,8 +267,7 @@ impl ComputationEngine {
 
                 if let Some(ft_paid) = entry.foreign_tax_paid_ngn {
                     if ft_paid > 0.0 && entry_amount > 0.0 {
-                        let attributable_tax =
-                            tax_before_credits * (entry_amount / total_gross);
+                        let attributable_tax = tax_before_credits * (entry_amount / total_gross);
                         foreign_tax_credits += ft_paid.min(attributable_tax).max(0.0);
                     }
                 }

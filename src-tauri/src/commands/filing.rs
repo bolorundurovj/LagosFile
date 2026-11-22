@@ -158,8 +158,8 @@ pub fn require_draft_for_parent_entry(
             })
     };
 
-    let filing_id = filing_id
-        .ok_or_else(|| format!("Parent entry '{parent_entry_id}' not found."))?;
+    let filing_id =
+        filing_id.ok_or_else(|| format!("Parent entry '{parent_entry_id}' not found."))?;
     require_draft_filing(conn, &filing_id)
 }
 
@@ -601,10 +601,7 @@ pub fn copy_entries_to_next_year(
     Ok(())
 }
 
-pub fn duplicate_filing_with_conn(
-    conn: &rusqlite::Connection,
-    id: &str,
-) -> Result<Filing, String> {
+pub fn duplicate_filing_with_conn(conn: &rusqlite::Connection, id: &str) -> Result<Filing, String> {
     let (taxpayer_id, yoa): (String, i32) = conn
         .query_row(
             "SELECT taxpayer_id,year_of_assessment FROM filing WHERE id=?1",
@@ -705,9 +702,7 @@ pub fn amend_filing_with_conn(
     // actually recomputes under updated PITA+CRA / NTA 2025 rules.
     let is_obsolete_seed = match config_id.as_deref() {
         None => true,
-        Some(cid) => {
-            cid == crate::db::SEED_V1_CONFIG_ID || cid == crate::db::PITA_LEGACY_CONFIG_ID
-        }
+        Some(cid) => cid == crate::db::SEED_V1_CONFIG_ID || cid == crate::db::PITA_LEGACY_CONFIG_ID,
     };
     let (target_config_ver, target_config_id) = if is_obsolete_seed {
         match ConfigService::get_for_income_year(conn, yoa) {
@@ -744,11 +739,17 @@ pub fn amend_filing_with_conn(
         // 1. Copy income entries as-is
         {
             let mut stmt = tx
-                .prepare("SELECT id, gross_amount_ngn, is_foreign FROM income_entry WHERE filing_id=?1")
+                .prepare(
+                    "SELECT id, gross_amount_ngn, is_foreign FROM income_entry WHERE filing_id=?1",
+                )
                 .map_err(|e| e.to_string())?;
             let old_rows: Vec<(String, f64, bool)> = stmt
                 .query_map(params![id], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, i32>(2)? != 0))
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, f64>(1)?,
+                        r.get::<_, i32>(2)? != 0,
+                    ))
                 })
                 .map_err(|e| e.to_string())?
                 .filter_map(|r| r.ok())
@@ -806,7 +807,9 @@ pub fn amend_filing_with_conn(
                 .prepare("SELECT id, relief_type, claimed_amount, approved_amount FROM relief_entry WHERE filing_id=?1")
                 .map_err(|e| e.to_string())?;
             let old_reliefs: Vec<(String, String, f64, f64)> = stmt
-                .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .query_map(params![id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })
                 .map_err(|e| e.to_string())?
                 .filter_map(|r| r.ok())
                 .collect();
@@ -953,9 +956,8 @@ pub fn amend_filing_with_conn(
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
-                std::fs::copy(&src, &dest).map_err(|e| {
-                    format!("Failed to copy attachment '{}': {}", safe_name, e)
-                })?;
+                std::fs::copy(&src, &dest)
+                    .map_err(|e| format!("Failed to copy attachment '{}': {}", safe_name, e))?;
                 copied_files.push(dest);
 
                 tx.execute(
@@ -1584,7 +1586,9 @@ fn validate_allowance_entry(entry: &serde_json::Value) -> Result<(), String> {
     let wdv = entry["taxWrittenDownValue"].as_f64().unwrap_or(0.0);
     let rate = entry["annualAllowanceRate"].as_f64().unwrap_or(0.0);
     if !cost.is_finite() || cost < 0.0 {
-        return Err("Capital allowance assetCost must be a non-negative finite number.".to_string());
+        return Err(
+            "Capital allowance assetCost must be a non-negative finite number.".to_string(),
+        );
     }
     if !wdv.is_finite() || wdv < 0.0 {
         return Err(
@@ -1612,7 +1616,9 @@ fn validate_relief_entry(entry: &serde_json::Value) -> Result<(), String> {
         return Err("Relief entry claimedAmount must be a non-negative finite number.".to_string());
     }
     if !approved.is_finite() || approved < 0.0 {
-        return Err("Relief entry approvedAmount must be a non-negative finite number.".to_string());
+        return Err(
+            "Relief entry approvedAmount must be a non-negative finite number.".to_string(),
+        );
     }
     Ok(())
 }
@@ -1722,8 +1728,9 @@ where
     U: Fn(&rusqlite::Connection, &serde_json::Value) -> Result<String, String>,
 {
     let dir = crate::db::app_dir();
-    let (saved_ids, candidate_paths) =
-        save_batch_db_tx(table, filing_id, upserts, delete_ids, state, validate, upsert)?;
+    let (saved_ids, candidate_paths) = save_batch_db_tx(
+        table, filing_id, upserts, delete_ids, state, validate, upsert,
+    )?;
 
     persist_db(state).await?;
 
@@ -2046,7 +2053,13 @@ pub fn estimate_tax_with_conn(
     capital_allowances: Vec<EstimateAllowance>,
     relief_entries: Vec<EstimateRelief>,
 ) -> Result<ComputationResult, String> {
-    estimate_tax_for_year_with_conn(conn, income_entries, capital_allowances, relief_entries, None)
+    estimate_tax_for_year_with_conn(
+        conn,
+        income_entries,
+        capital_allowances,
+        relief_entries,
+        None,
+    )
 }
 
 #[tauri::command]

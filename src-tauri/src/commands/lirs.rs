@@ -88,7 +88,10 @@ fn lirs_data_dir() -> std::path::PathBuf {
     home.join("LagosFile")
 }
 
-pub fn build_pending_filing(conn: &rusqlite::Connection, id: &str) -> Result<PendingFiling, String> {
+pub fn build_pending_filing(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<PendingFiling, String> {
     let filing = conn
         .query_row(
             "SELECT id,taxpayer_id,parent_filing_id,year_of_assessment,status,
@@ -671,7 +674,10 @@ pub fn handle_bridge_request(
 
     // Preflight OPTIONS does not carry the custom token and must NOT reset the idle timer.
     if method == "OPTIONS" {
-        return (build_http_response(200, "text/plain", "", cors_origin), false);
+        return (
+            build_http_response(200, "text/plain", "", cors_origin),
+            false,
+        );
     }
 
     // Every data/health request must present the current session token.
@@ -682,7 +688,10 @@ pub fn handle_bridge_request(
         _ => false,
     };
     if !token_valid {
-        return (build_http_response(403, "text/plain", "", cors_origin), false);
+        return (
+            build_http_response(403, "text/plain", "", cors_origin),
+            false,
+        );
     }
 
     let (response, reset_idle) = match (method, path) {
@@ -877,7 +886,9 @@ pub fn build_all_pending_filings_detailed(
     Ok(PendingFilingBatch { filings, failures })
 }
 
-pub fn build_all_pending_filings(conn: &rusqlite::Connection) -> Result<Vec<PendingFiling>, String> {
+pub fn build_all_pending_filings(
+    conn: &rusqlite::Connection,
+) -> Result<Vec<PendingFiling>, String> {
     build_all_pending_filings_detailed(conn).map(|b| b.filings)
 }
 
@@ -946,12 +957,13 @@ pub async fn open_lirs_portal(
 
     // Start the new bridge (which stops any previous bridge first) BEFORE writing
     // pending_filing.json, so a port-bind failure never leaves pending_filing.json on disk.
-    let (_port, token) = start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) =
+        start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
     let data_dir = lirs_data_dir();
     let path = data_dir.join("pending_filing.json");
-    if let Err(e) = std::fs::create_dir_all(&data_dir)
-        .and_then(|_| std::fs::write(&path, &file_json))
+    if let Err(e) =
+        std::fs::create_dir_all(&data_dir).and_then(|_| std::fs::write(&path, &file_json))
     {
         stop_bridge(&state);
         return Err(e.to_string());
@@ -1007,7 +1019,8 @@ pub async fn open_lirs_portal_all(
     let primary_json = serde_json::to_string(&batch.filings[0]).map_err(|e| e.to_string())?;
     let filings_json = serde_json::to_string(&batch.filings).map_err(|e| e.to_string())?;
 
-    let (_port, token) = start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
+    let (_port, token) =
+        start_bridge_on_port(&state, LIRS_BRIDGE_PORT, filings_json, primary_json)?;
 
     let portal_url = format!(
         "https://etax.lirs.net/user/assessments/tax-calculator#lagosfile={}",

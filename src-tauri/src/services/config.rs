@@ -54,10 +54,7 @@ impl ConfigService {
     /// Selects the appropriate tax configuration for a newly created draft of `income_year`.
     /// Per D1: if the active config is system-managed, income years <= 2025 use PITA and >= 2026 use NTA 2025.
     /// If the user has saved a custom active config, that custom config is respected.
-    pub fn get_for_income_year(
-        conn: &rusqlite::Connection,
-        income_year: i32,
-    ) -> Result<TaxConfig> {
+    pub fn get_for_income_year(conn: &rusqlite::Connection, income_year: i32) -> Result<TaxConfig> {
         let active = Self::get_active_conn(conn)?;
         if active.modified_by == "user" {
             return Ok(active);
@@ -178,9 +175,7 @@ impl ConfigService {
         if !relief_caps.rent_relief_rate.is_finite()
             || !(0.0..=1.0).contains(&relief_caps.rent_relief_rate)
         {
-            return Err(anyhow::anyhow!(
-                "Rent relief rate must be between 0 and 1."
-            ));
+            return Err(anyhow::anyhow!("Rent relief rate must be between 0 and 1."));
         }
         for (name, cap_opt) in [
             ("pensionCap", relief_caps.pension_cap),
@@ -198,10 +193,8 @@ impl ConfigService {
         }
 
         let cgt_thresholds: CgtThresholds = match &config["cgtThresholds"] {
-            serde_json::Value::Object(_) => {
-                serde_json::from_value(config["cgtThresholds"].clone())
-                    .map_err(|e| anyhow::anyhow!("Invalid cgtThresholds: {}", e))?
-            }
+            serde_json::Value::Object(_) => serde_json::from_value(config["cgtThresholds"].clone())
+                .map_err(|e| anyhow::anyhow!("Invalid cgtThresholds: {}", e))?,
             serde_json::Value::String(s) => serde_json::from_str(s)
                 .map_err(|e| anyhow::anyhow!("Invalid cgtThresholds JSON: {}", e))?,
             _ => {
@@ -246,10 +239,10 @@ impl ConfigService {
 
         let min_tax = match config.get("minimumTaxRate") {
             None | Some(serde_json::Value::Null) => 0.0,
-            Some(v) => v.as_f64().ok_or_else(|| {
-                "Minimum tax rate must be a number between 0 and 1.".to_string()
-            })
-            .map_err(anyhow::Error::msg)?,
+            Some(v) => v
+                .as_f64()
+                .ok_or_else(|| "Minimum tax rate must be a number between 0 and 1.".to_string())
+                .map_err(anyhow::Error::msg)?,
         };
         if !min_tax.is_finite() || !(0.0..=1.0).contains(&min_tax) {
             return Err(anyhow::anyhow!(

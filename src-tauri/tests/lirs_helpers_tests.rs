@@ -259,7 +259,10 @@ fn test_bridge_restart_serves_new_data_and_lock_stops_bridge_and_deletes_file() 
     )
     .expect("second bridge start on same port");
     assert_eq!(port, port2);
-    assert_ne!(token1, token2, "each bridge start must generate a fresh token");
+    assert_ne!(
+        token1, token2,
+        "each bridge start must generate a fresh token"
+    );
 
     // Old token is rejected
     let stale_tok = fetch(port, Some(&token1)).expect("fetch with old token");
@@ -322,7 +325,10 @@ fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_i
         commands::{
             auth::setup_pin_in_dir,
             export::{export_filing_json_with_conn, export_filing_pdf_in_dir},
-            filing::{confirm_filing_with_conn, create_draft_filing_with_conn, upsert_income_entry_with_conn},
+            filing::{
+                confirm_filing_with_conn, create_draft_filing_with_conn,
+                upsert_income_entry_with_conn,
+            },
         },
         services::profile::ProfileService,
         AppState,
@@ -336,11 +342,8 @@ fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_i
     let filing_id = {
         let guard = state.db.lock().unwrap();
         let db = guard.as_ref().unwrap();
-        ProfileService::create(
-            db,
-            json!({ "fullName": "Ngozi Obi", "tin": "1234567890" }),
-        )
-        .unwrap();
+        ProfileService::create(db, json!({ "fullName": "Ngozi Obi", "tin": "1234567890" }))
+            .unwrap();
         let conn = db.conn.lock().unwrap();
         let draft = create_draft_filing_with_conn(&conn, 2025).unwrap();
         let fid = draft.id.to_string();
@@ -369,8 +372,15 @@ fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_i
 
     // PDF export must show both Income Year 2025 and LIRS Year of Assessment 2026
     let pdf_path = dir.join("out.pdf");
-    export_filing_pdf_in_dir(&dir, &filing_id, pdf_path.to_str().unwrap(), false, None, &state)
-        .unwrap();
+    export_filing_pdf_in_dir(
+        &dir,
+        &filing_id,
+        pdf_path.to_str().unwrap(),
+        false,
+        None,
+        &state,
+    )
+    .unwrap();
     let pdf_doc = lopdf::Document::load(&pdf_path).unwrap();
     let text: String = pdf_doc
         .get_pages()
@@ -378,8 +388,14 @@ fn test_s10_lirs_yoa_is_income_year_plus_one_while_accommodation_dates_stay_on_i
         .filter_map(|p| pdf_doc.extract_text(&[*p]).ok())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("Income Year") && text.contains("2025"), "PDF missing income year 2025: {text}");
-    assert!(text.contains("LIRS Year of Assessment") && text.contains("2026"), "PDF missing LIRS YOA 2026: {text}");
+    assert!(
+        text.contains("Income Year") && text.contains("2025"),
+        "PDF missing income year 2025: {text}"
+    );
+    assert!(
+        text.contains("LIRS Year of Assessment") && text.contains("2026"),
+        "PDF missing LIRS YOA 2026: {text}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -428,7 +444,11 @@ fn test_s23_landlord_tenant_foreign_currencies_bik_paye_ftc_and_batch_partial_fa
     // 2. Tenant (2024) with rent relief, capped pension, other_approved, BIK, PAYE, FTC, and 2 foreign currencies
     // Add a pension cap on the active config so we verify capped approved values in payload
     let active_cfg_id: String = conn
-        .query_row("SELECT id FROM tax_config WHERE is_active = 1 LIMIT 1", [], |r| r.get(0))
+        .query_row(
+            "SELECT id FROM tax_config WHERE is_active = 1 LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
     conn.execute(
         "UPDATE tax_config SET relief_caps_json = ?1 WHERE id = ?2",
@@ -646,9 +666,13 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
 
     // 2. Real TCP bridge handles fragmented HTTP request across multiple writes (verifies blocking stream + loop).
     let state = AppState::default();
-    let (port, token) =
-        lirs::start_bridge_on_port(&state, 0, r#"[{"id":"f1"}]"#.into(), r#"{"id":"f1"}"#.into())
-            .unwrap();
+    let (port, token) = lirs::start_bridge_on_port(
+        &state,
+        0,
+        r#"[{"id":"f1"}]"#.into(),
+        r#"{"id":"f1"}"#.into(),
+    )
+    .unwrap();
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
     stream
         .write_all(format!("GET /filings HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n").as_bytes())
@@ -724,12 +748,30 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
     .unwrap();
 
     let payload = lirs::build_pending_filing(&conn, &fid).unwrap();
-    assert_eq!(payload.income.capital_gain, 0.0, "exempt share gain must not be sent as taxable capitalGain");
-    assert_eq!(payload.income.digital_asset, 0.0, "negative digital loss must clamp to 0");
-    assert_eq!(payload.computation.final_tax_payable, 123456.78, "Confirmed filing must send stored figure to LIRS");
-    assert_eq!(payload.computation.paye_credits, 55555.0, "Confirmed filing must preserve stored paye_credit");
-    assert_eq!(payload.computation.foreign_tax_credits, 22222.0, "Confirmed filing must preserve stored foreign_tax_credit");
-    assert_eq!(payload.deductions.consolidated_relief_allowance, 1_200_000.0, "2025 PITA payload must include CRA");
+    assert_eq!(
+        payload.income.capital_gain, 0.0,
+        "exempt share gain must not be sent as taxable capitalGain"
+    );
+    assert_eq!(
+        payload.income.digital_asset, 0.0,
+        "negative digital loss must clamp to 0"
+    );
+    assert_eq!(
+        payload.computation.final_tax_payable, 123456.78,
+        "Confirmed filing must send stored figure to LIRS"
+    );
+    assert_eq!(
+        payload.computation.paye_credits, 55555.0,
+        "Confirmed filing must preserve stored paye_credit"
+    );
+    assert_eq!(
+        payload.computation.foreign_tax_credits, 22222.0,
+        "Confirmed filing must preserve stored foreign_tax_credit"
+    );
+    assert_eq!(
+        payload.deductions.consolidated_relief_allowance, 1_200_000.0,
+        "2025 PITA payload must include CRA"
+    );
 
     // Strict route matching: /filing-extra must return 404, not match /filing
     let (resp_404, _) = lirs::handle_bridge_request(
@@ -739,7 +781,13 @@ fn test_bridge_fragmented_request_duplicate_headers_and_immutable_cgt_payload() 
         "[]",
         "{}",
     );
-    assert!(resp_404.starts_with("HTTP/1.1 404"), "unexpected response: {resp_404}");
+    assert!(
+        resp_404.starts_with("HTTP/1.1 404"),
+        "unexpected response: {resp_404}"
+    );
     let resp_400 = lirs::build_http_response(400, "text/plain", "bad request", None);
-    assert!(resp_400.starts_with("HTTP/1.1 400 Bad Request"), "unexpected response: {resp_400}");
+    assert!(
+        resp_400.starts_with("HTTP/1.1 400 Bad Request"),
+        "unexpected response: {resp_400}"
+    );
 }

@@ -300,7 +300,10 @@ fn test_setup_pin_allows_retry_with_leftover_salt_file() {
 
     let enc = std::fs::read(dir.join("lagosfile.db.enc")).unwrap();
     assert!(vault::has_vault_header(&enc));
-    assert!(!dir.join(".salt").exists(), "stale .salt should be cleaned up");
+    assert!(
+        !dir.join(".salt").exists(),
+        "stale .salt should be cleaned up"
+    );
     assert!(vault::decode_with_pin(&enc, "4321", None, None).is_ok());
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -348,8 +351,11 @@ fn mutate_taxpayer_name(state: &lagosfile_lib::AppState, new_name: &str) {
     let guard = state.db.lock().unwrap();
     let db = guard.as_ref().unwrap();
     let conn = db.conn.lock().unwrap();
-    conn.execute("UPDATE taxpayer SET full_name = ?1", rusqlite::params![new_name])
-        .unwrap();
+    conn.execute(
+        "UPDATE taxpayer SET full_name = ?1",
+        rusqlite::params![new_name],
+    )
+    .unwrap();
 }
 
 #[tokio::test]
@@ -367,7 +373,9 @@ async fn test_s2_legacy_vault_upgrade_via_pin_biometric_and_recovery() {
     {
         let dir = std::env::temp_dir().join(format!("lagosfile-s2-pin-{}", uuid::Uuid::new_v4()));
         let orig_key = create_legacy_vault_dir(&dir, "1234");
-        assert!(!vault::has_vault_header(&std::fs::read(dir.join("lagosfile.db.enc")).unwrap()));
+        assert!(!vault::has_vault_header(
+            &std::fs::read(dir.join("lagosfile.db.enc")).unwrap()
+        ));
 
         let state = AppState::default();
         let tp = unlock_db_in_dir(&dir, "1234", &state).unwrap().unwrap();
@@ -379,8 +387,14 @@ async fn test_s2_legacy_vault_upgrade_via_pin_biometric_and_recovery() {
         lock_db_in_dir(&dir, &state).await.unwrap();
 
         let raw_after = std::fs::read(dir.join("lagosfile.db.enc")).unwrap();
-        assert!(vault::has_vault_header(&raw_after), "vault must have v1 header after first save");
-        assert!(!dir.join(".salt").exists(), "legacy .salt must be removed after upgrade");
+        assert!(
+            vault::has_vault_header(&raw_after),
+            "vault must have v1 header after first save"
+        );
+        assert!(
+            !dir.join(".salt").exists(),
+            "legacy .salt must be removed after upgrade"
+        );
 
         let state2 = AppState::default();
         let tp2 = unlock_db_in_dir(&dir, "1234", &state2).unwrap().unwrap();
@@ -388,17 +402,16 @@ async fn test_s2_legacy_vault_upgrade_via_pin_biometric_and_recovery() {
 
         // Same key still works for biometric and recovery after upgrade!
         let state3 = AppState::default();
-        let tp3 = unlock_with_biometric_key_in_dir(&dir, orig_key, &state3).unwrap().unwrap();
+        let tp3 = unlock_with_biometric_key_in_dir(&dir, orig_key, &state3)
+            .unwrap()
+            .unwrap();
         assert_eq!(tp3.full_name, "Edited Via PIN");
 
         let state4 = AppState::default();
-        let tp4 = recover_with_answers_in_dir(
-            &dir,
-            &["a1".into(), "a2".into(), "a3".into()],
-            &state4,
-        )
-        .unwrap()
-        .unwrap();
+        let tp4 =
+            recover_with_answers_in_dir(&dir, &["a1".into(), "a2".into(), "a3".into()], &state4)
+                .unwrap()
+                .unwrap();
         assert_eq!(tp4.full_name, "Edited Via PIN");
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -410,17 +423,23 @@ async fn test_s2_legacy_vault_upgrade_via_pin_biometric_and_recovery() {
         let orig_key = create_legacy_vault_dir(&dir, "2468");
 
         let state = AppState::default();
-        let tp = unlock_with_biometric_key_in_dir(&dir, orig_key, &state).unwrap().unwrap();
+        let tp = unlock_with_biometric_key_in_dir(&dir, orig_key, &state)
+            .unwrap()
+            .unwrap();
         assert_eq!(tp.full_name, "Legacy User");
 
         mutate_taxpayer_name(&state, "Edited Via Bio");
         lock_db_in_dir(&dir, &state).await.unwrap();
 
-        assert!(vault::has_vault_header(&std::fs::read(dir.join("lagosfile.db.enc")).unwrap()));
+        assert!(vault::has_vault_header(
+            &std::fs::read(dir.join("lagosfile.db.enc")).unwrap()
+        ));
         assert!(!dir.join(".salt").exists());
 
         let state2 = AppState::default();
-        let tp2 = unlock_with_biometric_key_in_dir(&dir, orig_key, &state2).unwrap().unwrap();
+        let tp2 = unlock_with_biometric_key_in_dir(&dir, orig_key, &state2)
+            .unwrap()
+            .unwrap();
         assert_eq!(tp2.full_name, "Edited Via Bio");
 
         let state3 = AppState::default();
@@ -436,29 +455,25 @@ async fn test_s2_legacy_vault_upgrade_via_pin_biometric_and_recovery() {
         let _orig_key = create_legacy_vault_dir(&dir, "1357");
 
         let state = AppState::default();
-        let tp = recover_with_answers_in_dir(
-            &dir,
-            &["a1".into(), "a2".into(), "a3".into()],
-            &state,
-        )
-        .unwrap()
-        .unwrap();
+        let tp =
+            recover_with_answers_in_dir(&dir, &["a1".into(), "a2".into(), "a3".into()], &state)
+                .unwrap()
+                .unwrap();
         assert_eq!(tp.full_name, "Legacy User");
 
         mutate_taxpayer_name(&state, "Edited Via Recovery");
         lock_db_in_dir(&dir, &state).await.unwrap();
 
-        assert!(vault::has_vault_header(&std::fs::read(dir.join("lagosfile.db.enc")).unwrap()));
+        assert!(vault::has_vault_header(
+            &std::fs::read(dir.join("lagosfile.db.enc")).unwrap()
+        ));
         assert!(!dir.join(".salt").exists());
 
         let state2 = AppState::default();
-        let tp2 = recover_with_answers_in_dir(
-            &dir,
-            &["a1".into(), "a2".into(), "a3".into()],
-            &state2,
-        )
-        .unwrap()
-        .unwrap();
+        let tp2 =
+            recover_with_answers_in_dir(&dir, &["a1".into(), "a2".into(), "a3".into()], &state2)
+                .unwrap()
+                .unwrap();
         assert_eq!(tp2.full_name, "Edited Via Recovery");
 
         let state3 = AppState::default();
@@ -480,9 +495,12 @@ async fn test_s2_fresh_install_restore_and_settings_restore_different_pin() {
     };
 
     let src_dir = std::env::temp_dir().join(format!("lagosfile-s2-src-{}", uuid::Uuid::new_v4()));
-    let backup_file = std::env::temp_dir().join(format!("lagosfile-s2-bak-{}.lf.enc", uuid::Uuid::new_v4()));
-    let fresh_dir = std::env::temp_dir().join(format!("lagosfile-s2-fresh-{}", uuid::Uuid::new_v4()));
-    let settings_dir = std::env::temp_dir().join(format!("lagosfile-s2-settings-{}", uuid::Uuid::new_v4()));
+    let backup_file =
+        std::env::temp_dir().join(format!("lagosfile-s2-bak-{}.lf.enc", uuid::Uuid::new_v4()));
+    let fresh_dir =
+        std::env::temp_dir().join(format!("lagosfile-s2-fresh-{}", uuid::Uuid::new_v4()));
+    let settings_dir =
+        std::env::temp_dir().join(format!("lagosfile-s2-settings-{}", uuid::Uuid::new_v4()));
 
     // Create source vault with PIN "1111", insert taxpayer, and create backup
     let src_state = AppState::default();
@@ -514,7 +532,9 @@ async fn test_s2_fresh_install_restore_and_settings_restore_different_pin() {
 
     // Fresh vault now opens with backup's PIN "1111"
     let reopen_state = AppState::default();
-    let tp2 = unlock_db_in_dir(&fresh_dir, "1111", &reopen_state).unwrap().unwrap();
+    let tp2 = unlock_db_in_dir(&fresh_dir, "1111", &reopen_state)
+        .unwrap()
+        .unwrap();
     assert_eq!(tp2.full_name, "Backed Up Taxpayer");
 
     // Settings restore: create a separate vault with DIFFERENT PIN "9999" and different taxpayer
@@ -558,7 +578,9 @@ async fn test_s2_fresh_install_restore_and_settings_restore_different_pin() {
     // Live vault still unlocks with its own PIN "9999" (not backup's "1111")
     let verify_state = AppState::default();
     assert!(unlock_db_in_dir(&settings_dir, "1111", &verify_state).is_err());
-    let tp_live = unlock_db_in_dir(&settings_dir, "9999", &verify_state).unwrap().unwrap();
+    let tp_live = unlock_db_in_dir(&settings_dir, "9999", &verify_state)
+        .unwrap()
+        .unwrap();
     assert_eq!(tp_live.full_name, "Backed Up Taxpayer");
 
     let _ = std::fs::remove_dir_all(&src_dir);
@@ -618,7 +640,10 @@ fn test_s3_change_pin_injected_failure_leaves_old_pin_working() {
 
     // Inject failure after encrypted temp file is written, right before rename
     let err = change_pin_with_deps(&dir, "1111", "2222", &state, &keyring, |tmp_path| {
-        assert!(tmp_path.exists(), "encrypted temp file should exist before rename");
+        assert!(
+            tmp_path.exists(),
+            "encrypted temp file should exist before rename"
+        );
         Err("simulated disk failure".to_string())
     })
     .expect_err("injected failure must abort PIN change");
@@ -653,7 +678,10 @@ fn test_s3_change_pin_updates_keyring_so_biometric_unlock_still_works() {
 
     let bio_still_on =
         change_pin_with_deps(&dir, "1111", "2222", &state, &keyring, |_| Ok(())).unwrap();
-    assert!(bio_still_on, "biometric should stay enabled after keyring sync");
+    assert!(
+        bio_still_on,
+        "biometric should stay enabled after keyring sync"
+    );
 
     let new_key_hex = keyring.current().expect("keyring must contain updated key");
     assert_ne!(new_key_hex, hex::encode(old_key));
@@ -673,10 +701,18 @@ fn test_s3_change_pin_updates_keyring_so_biometric_unlock_still_works() {
     // When keyring update fails, stale entry is deleted and biometric is disabled
     let failing_keyring = MockKeyring::new(Some(new_key_hex), true);
     let bio_after_fail =
-        change_pin_with_deps(&dir, "2222", "3333", &pin_state, &failing_keyring, |_| Ok(()))
-            .unwrap();
-    assert!(!bio_after_fail, "biometric must be turned off if keyring update fails");
-    assert!(failing_keyring.current().is_none(), "stale keyring key must be deleted");
+        change_pin_with_deps(&dir, "2222", "3333", &pin_state, &failing_keyring, |_| {
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        !bio_after_fail,
+        "biometric must be turned off if keyring update fails"
+    );
+    assert!(
+        failing_keyring.current().is_none(),
+        "stale keyring key must be deleted"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -700,7 +736,10 @@ fn test_s3_reset_pin_requires_prior_recovery_and_syncs_keyring() {
     unlock_db_in_dir(&dir, "1234", &normal_state).unwrap();
     let err = reset_pin_with_deps(&dir, "9999", &normal_state, &keyring, |_| Ok(()))
         .expect_err("reset_pin without prior recovery must be rejected");
-    assert!(err.contains("after account recovery"), "unexpected error: {err}");
+    assert!(
+        err.contains("after account recovery"),
+        "unexpected error: {err}"
+    );
 
     // Recover with answers -> reset_pin is now permitted once and syncs keyring
     let rec_state = AppState::default();
@@ -797,7 +836,9 @@ async fn test_concurrent_persist_and_change_pin_are_strictly_serialized() {
 #[tokio::test]
 async fn test_lock_db_waits_for_inflight_change_pin_and_leaves_no_key_leak() {
     use lagosfile_lib::{
-        commands::auth::{change_pin_in_dir_async, lock_db_in_dir, setup_pin_in_dir, unlock_db_in_dir},
+        commands::auth::{
+            change_pin_in_dir_async, lock_db_in_dir, setup_pin_in_dir, unlock_db_in_dir,
+        },
         AppState,
     };
     use std::sync::Arc;
@@ -823,13 +864,23 @@ async fn test_lock_db_waits_for_inflight_change_pin_and_leaves_no_key_leak() {
 
     // After both finish, if lock ran second, state MUST be completely locked (no leaked key or db).
     // Even if lock ran first (making change_pin return "Database not unlocked"), state MUST be locked.
-    assert!(state.db.lock().unwrap().is_none(), "db must be None after lock");
-    assert!(state.key.lock().unwrap().is_none(), "key must be None after lock");
-    assert!(state.salt.lock().unwrap().is_none(), "salt must be None after lock");
+    assert!(
+        state.db.lock().unwrap().is_none(),
+        "db must be None after lock"
+    );
+    assert!(
+        state.key.lock().unwrap().is_none(),
+        "key must be None after lock"
+    );
+    assert!(
+        state.salt.lock().unwrap().is_none(),
+        "salt must be None after lock"
+    );
 
     let expected_pin = if change_res.is_ok() { "5678" } else { "1234" };
     let reopened = AppState::default();
-    unlock_db_in_dir(&dir, expected_pin, &reopened).expect("vault must reopen cleanly with consistent PIN");
+    unlock_db_in_dir(&dir, expected_pin, &reopened)
+        .expect("vault must reopen cleanly with consistent PIN");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -874,14 +925,35 @@ fn test_failed_restore_on_second_attachment_preserves_original_vault_and_documen
     let tmp_b = src_dir.join("b.txt");
     std::fs::write(&tmp_a, b"backup doc A").unwrap();
     std::fs::write(&tmp_b, b"backup doc B").unwrap();
-    attach_document_in_dir(&src_dir, "inc-b", "income", tmp_a.to_str().unwrap(), "a.txt", "text/plain", 12, &src_state).unwrap();
-    attach_document_in_dir(&src_dir, "inc-b", "income", tmp_b.to_str().unwrap(), "b.txt", "text/plain", 12, &src_state).unwrap();
+    attach_document_in_dir(
+        &src_dir,
+        "inc-b",
+        "income",
+        tmp_a.to_str().unwrap(),
+        "a.txt",
+        "text/plain",
+        12,
+        &src_state,
+    )
+    .unwrap();
+    attach_document_in_dir(
+        &src_dir,
+        "inc-b",
+        "income",
+        tmp_b.to_str().unwrap(),
+        "b.txt",
+        "text/plain",
+        12,
+        &src_state,
+    )
+    .unwrap();
 
     let backup_path = src_dir.join("backup.lgfa");
     backup_db_to_path_in_dir(&src_dir, &backup_path, &src_state).unwrap();
 
     // 2. Create a live target vault with its own taxpayer + original attachment.
-    let live_dir = std::env::temp_dir().join(format!("lagosfile-res-live-{}", uuid::Uuid::new_v4()));
+    let live_dir =
+        std::env::temp_dir().join(format!("lagosfile-res-live-{}", uuid::Uuid::new_v4()));
     let live_state = AppState::default();
     setup_pin_in_dir(&live_dir, "1111", &live_state).unwrap();
     {
@@ -904,23 +976,39 @@ fn test_failed_restore_on_second_attachment_preserves_original_vault_and_documen
     }
     let orig_src = live_dir.join("orig.txt");
     std::fs::write(&orig_src, b"original secret doc").unwrap();
-    let orig_doc = attach_document_in_dir(&live_dir, "inc-orig", "income", orig_src.to_str().unwrap(), "orig.txt", "text/plain", 19, &live_state).unwrap();
+    let orig_doc = attach_document_in_dir(
+        &live_dir,
+        "inc-orig",
+        "income",
+        orig_src.to_str().unwrap(),
+        "orig.txt",
+        "text/plain",
+        19,
+        &live_state,
+    )
+    .unwrap();
     let orig_rel = orig_doc["filePath"].as_str().unwrap().to_string();
 
     // 3. Inject failure on 2nd attachment during Settings restore -> original vault & doc MUST survive restart!
-    let err = restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &live_state, |idx, _| {
-        if idx == 1 {
-            Err("simulated disk full on 2nd attachment".to_string())
-        } else {
-            Ok(())
-        }
-    })
-    .expect_err("restore must fail on injected 2nd-attachment error");
+    let err =
+        restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &live_state, |idx, _| {
+            if idx == 1 {
+                Err("simulated disk full on 2nd attachment".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .expect_err("restore must fail on injected 2nd-attachment error");
     assert!(err.contains("simulated disk full"));
 
     let restarted = AppState::default();
-    let tp = unlock_db_in_dir(&live_dir, "1111", &restarted).unwrap().unwrap();
-    assert_eq!(tp.full_name, "Original User", "original DB must remain untouched on disk");
+    let tp = unlock_db_in_dir(&live_dir, "1111", &restarted)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        tp.full_name, "Original User",
+        "original DB must remain untouched on disk"
+    );
     let orig_bytes = {
         let guard = restarted.db.lock().unwrap();
         let db = guard.as_ref().unwrap();
@@ -931,30 +1019,47 @@ fn test_failed_restore_on_second_attachment_preserves_original_vault_and_documen
     assert_eq!(orig_bytes, b"original secret doc");
 
     // 4. Successful Settings restore sweeps prior vault's documents cleanly.
-    restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &restarted, |_, _| Ok(())).unwrap();
+    restore_db_in_dir_with_hook(&live_dir, &backup_path, "9999", &restarted, |_, _| Ok(()))
+        .unwrap();
     assert!(
         !doc_store::resolve_doc_path(&live_dir, &orig_rel).exists(),
         "prior vault's document must be swept after successful restore"
     );
 
     // 5. Fresh restore failing on 2nd attachment must NOT leave lagosfile.db.enc blocking retry.
-    let fresh_dir = std::env::temp_dir().join(format!("lagosfile-res-fresh-{}", uuid::Uuid::new_v4()));
+    let fresh_dir =
+        std::env::temp_dir().join(format!("lagosfile-res-fresh-{}", uuid::Uuid::new_v4()));
     let fresh_state = AppState::default();
-    let fresh_err = restore_backup_fresh_in_dir_with_hook(&fresh_dir, &backup_path, "9999", &fresh_state, |idx, _| {
-        if idx == 1 {
-            Err("simulated fresh failure".to_string())
-        } else {
-            Ok(())
-        }
-    })
+    let fresh_err = restore_backup_fresh_in_dir_with_hook(
+        &fresh_dir,
+        &backup_path,
+        "9999",
+        &fresh_state,
+        |idx, _| {
+            if idx == 1 {
+                Err("simulated fresh failure".to_string())
+            } else {
+                Ok(())
+            }
+        },
+    )
     .expect_err("fresh restore must fail");
     assert!(fresh_err.contains("simulated fresh failure"));
-    assert!(!fresh_dir.join("lagosfile.db.enc").exists(), "failed fresh restore must not leave vault file");
+    assert!(
+        !fresh_dir.join("lagosfile.db.enc").exists(),
+        "failed fresh restore must not leave vault file"
+    );
 
     // Retry succeeds cleanly.
-    let tp_fresh = restore_backup_fresh_in_dir_with_hook(&fresh_dir, &backup_path, "9999", &fresh_state, |_, _| Ok(()))
-        .unwrap()
-        .unwrap();
+    let tp_fresh = restore_backup_fresh_in_dir_with_hook(
+        &fresh_dir,
+        &backup_path,
+        "9999",
+        &fresh_state,
+        |_, _| Ok(()),
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(tp_fresh.full_name, "Backup User");
 
     let _ = std::fs::remove_dir_all(&src_dir);
@@ -989,7 +1094,10 @@ fn test_vault_safety_guards_missing_salt_exclusive_abort_oom_and_unlock_migratio
     let _ = vault::write_new_exclusive_with_hook(&setup_dir, b"hello", &key, &salt, |_| {
         Err("simulated crash before claim".to_string())
     });
-    assert!(!setup_dir.join("lagosfile.db.enc").exists(), "failed exclusive write must not leave vault file");
+    assert!(
+        !setup_dir.join("lagosfile.db.enc").exists(),
+        "failed exclusive write must not leave vault file"
+    );
     vault::write_new_exclusive(&setup_dir, b"hello", &key, &salt).expect("retry must succeed");
 
     // 3. Corrupt 20-byte LGFA archive with u32::MAX doc_count is rejected cleanly without OOM abort.
@@ -1029,9 +1137,18 @@ fn test_vault_safety_guards_missing_salt_exclusive_abort_oom_and_unlock_migratio
     })
     .expect_err("unlock must fail when migration fails");
     assert!(mig_err.contains("simulated migration failure"));
-    assert!(locked_state.db.lock().unwrap().is_none(), "AppState.db must remain None on migration error");
-    assert!(locked_state.key.lock().unwrap().is_none(), "AppState.key must remain None on migration error");
-    assert!(locked_state.salt.lock().unwrap().is_none(), "AppState.salt must remain None on migration error");
+    assert!(
+        locked_state.db.lock().unwrap().is_none(),
+        "AppState.db must remain None on migration error"
+    );
+    assert!(
+        locked_state.key.lock().unwrap().is_none(),
+        "AppState.key must remain None on migration error"
+    );
+    assert!(
+        locked_state.salt.lock().unwrap().is_none(),
+        "AppState.salt must remain None on migration error"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&setup_dir);
@@ -1121,7 +1238,8 @@ fn test_database_only_backup_restore_preserves_local_receipts_and_rejects_missin
     assert_eq!(decrypted, b"%PDF-1.4 receipt payload");
 
     // Restoring the same database-only backup into another directory that lacks the receipt must fail cleanly.
-    let other_dir = std::env::temp_dir().join(format!("lagosfile-dbonly-miss-{}", uuid::Uuid::new_v4()));
+    let other_dir =
+        std::env::temp_dir().join(format!("lagosfile-dbonly-miss-{}", uuid::Uuid::new_v4()));
     let other_state = AppState::default();
     setup_pin_in_dir(&other_dir, "5678", &other_state).unwrap();
     let err = restore_db_in_dir(&other_dir, &db_only_backup, "1234", &other_state)
@@ -1182,9 +1300,8 @@ async fn test_concurrent_edit_overlapping_lock_cannot_report_ok_and_lose_data() 
 
     let persist_state = Arc::clone(&state);
     let persist_dir = dir.clone();
-    let persist_handle = tokio::spawn(async move {
-        persist_db_in_dir_async(persist_dir, &persist_state).await
-    });
+    let persist_handle =
+        tokio::spawn(async move { persist_db_in_dir_async(persist_dir, &persist_state).await });
 
     // Release lock_db so both tasks complete.
     let _ = release_tx.send(());
@@ -1218,7 +1335,8 @@ fn test_restore_crash_recovery_at_every_rename_boundary() {
     };
 
     // Build source backup archive ("Backup B" + receipt B).
-    let src_dir = std::env::temp_dir().join(format!("lagosfile-crash-src-{}", uuid::Uuid::new_v4()));
+    let src_dir =
+        std::env::temp_dir().join(format!("lagosfile-crash-src-{}", uuid::Uuid::new_v4()));
     let src_state = AppState::default();
     setup_pin_in_dir(&src_dir, "9999", &src_state).unwrap();
     {
@@ -1339,11 +1457,19 @@ fn test_restore_crash_recovery_at_every_rename_boundary() {
         let doc_key = doc_store::get_doc_key(db).unwrap().unwrap();
 
         if expect_new_backup {
-            assert_eq!(tp.full_name, "Backup B User", "phase {} should roll forward", crash_phase);
+            assert_eq!(
+                tp.full_name, "Backup B User",
+                "phase {} should roll forward",
+                crash_phase
+            );
             let bytes = doc_store::read_decrypted_doc(&live_dir, &rel_b, &doc_key).unwrap();
             assert_eq!(bytes, b"RECEIPT-FROM-BACKUP-B");
         } else {
-            assert_eq!(tp.full_name, "Original A User", "phase {} should roll back", crash_phase);
+            assert_eq!(
+                tp.full_name, "Original A User",
+                "phase {} should roll back",
+                crash_phase
+            );
             let bytes = doc_store::read_decrypted_doc(&live_dir, &rel_a, &doc_key).unwrap();
             assert_eq!(bytes, b"RECEIPT-FROM-ORIGINAL-A");
         }
@@ -1358,7 +1484,9 @@ fn test_restore_crash_recovery_at_every_rename_boundary() {
 fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_external_paths() {
     use lagosfile_lib::{
         commands::{
-            auth::{backup_db_to_path_in_dir, persist_db_in_dir, restore_db_in_dir, setup_pin_in_dir},
+            auth::{
+                backup_db_to_path_in_dir, persist_db_in_dir, restore_db_in_dir, setup_pin_in_dir,
+            },
             document::attach_document_in_dir,
         },
         db::doc_store,
@@ -1422,7 +1550,11 @@ fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_extern
 
     let restore_err = restore_db_in_dir(&dir, &bad_backup, "1234", &state)
         .expect_err("restore must reject corrupt attachment even with valid LGFD header");
-    assert!(restore_err.contains("unreadable/corrupt"), "got: {}", restore_err);
+    assert!(
+        restore_err.contains("unreadable/corrupt"),
+        "got: {}",
+        restore_err
+    );
 
     // 2. Delete the live receipt -> backup must fail explicitly instead of silently skipping it.
     std::fs::remove_file(dir.join(&rel)).unwrap();
@@ -1432,7 +1564,8 @@ fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_extern
 
     // 3. extract_documents_rel uses rfind when ancestor folder is named 'documents'.
     assert_eq!(
-        doc_store::extract_documents_rel("/Users/ada/documents/LagosFile/documents/e1/r.enc").as_deref(),
+        doc_store::extract_documents_rel("/Users/ada/documents/LagosFile/documents/e1/r.enc")
+            .as_deref(),
         Some("documents/e1/r.enc")
     );
 
@@ -1443,9 +1576,16 @@ fn test_backup_and_restore_reject_missing_or_corrupt_receipts_and_protect_extern
         let guard = state.db.lock().unwrap();
         let db = guard.as_ref().unwrap();
         let conn = db.conn.lock().unwrap();
-        doc_store::remove_unreferenced_doc_files(&dir, &conn, &[outside.to_string_lossy().to_string()]);
+        doc_store::remove_unreferenced_doc_files(
+            &dir,
+            &conn,
+            &[outside.to_string_lossy().to_string()],
+        );
     }
-    assert!(outside.exists(), "files outside documents/ must never be removed");
+    assert!(
+        outside.exists(),
+        "files outside documents/ must never be removed"
+    );
 
     // 5. Truncated or wrong-version LGFD files are recognized as encrypted (never treated as plaintext).
     assert!(doc_store::is_encrypted_doc(b"LGFD\x01"));
@@ -1503,8 +1643,8 @@ async fn test_two_instances_reject_stale_save_and_lock_without_overwriting_newer
     persist_db_in_dir(&dir, &state_a).expect("Instance A save must succeed");
 
     // Instance B attempts a stale save -> must be rejected.
-    let stale_save_err = persist_db_in_dir(&dir, &state_b)
-        .expect_err("Instance B stale save must be rejected");
+    let stale_save_err =
+        persist_db_in_dir(&dir, &state_b).expect_err("Instance B stale save must be rejected");
     assert!(
         stale_save_err.contains("another LagosFile instance"),
         "unexpected error: {}",
@@ -1539,7 +1679,10 @@ async fn test_two_instances_reject_stale_save_and_lock_without_overwriting_newer
         )
         .unwrap()
     };
-    assert_eq!(count, 1, "Instance A's saved filing must survive Instance B locking");
+    assert_eq!(
+        count, 1,
+        "Instance A's saved filing must survive Instance B locking"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1606,8 +1749,10 @@ async fn test_post_commit_restore_error_rolls_forward_consistently_in_memory_and
     backup_db_to_path_in_dir(&src_dir, &backup_path, &src_state).unwrap();
 
     // Live vault starts with "Original Taxpayer".
-    let live_dir =
-        std::env::temp_dir().join(format!("lagosfile-postcommit-live-{}", uuid::Uuid::new_v4()));
+    let live_dir = std::env::temp_dir().join(format!(
+        "lagosfile-postcommit-live-{}",
+        uuid::Uuid::new_v4()
+    ));
     let live_state = AppState::default();
     setup_pin_in_dir(&live_dir, "1111", &live_state).unwrap();
     {
@@ -1626,21 +1771,16 @@ async fn test_post_commit_restore_error_rolls_forward_consistently_in_memory_and
 
     // Inject an ordinary (non-crash) filesystem error AFTER committing journal is written,
     // let recovery roll forward while the app stays open, then lock and reopen.
-    let restored_tp = restore_db_in_dir_with_phase_hook(
-        &live_dir,
-        &backup_path,
-        "9999",
-        &live_state,
-        |phase| {
+    let restored_tp =
+        restore_db_in_dir_with_phase_hook(&live_dir, &backup_path, "9999", &live_state, |phase| {
             if phase == "after_committing_journal" {
                 Err("transient filesystem error after committing".to_string())
             } else {
                 Ok(())
             }
-        },
-    )
-    .expect("post-commit ordinary error must succeed once recovery rolls forward")
-    .unwrap();
+        })
+        .expect("post-commit ordinary error must succeed once recovery rolls forward")
+        .unwrap();
 
     assert_eq!(restored_tp.full_name, "Restored Taxpayer");
 
@@ -1665,7 +1805,10 @@ async fn test_post_commit_restore_error_rolls_forward_consistently_in_memory_and
         )
         .unwrap()
     };
-    assert_eq!(filing_count, 1, "restored filing must survive lock and reopen");
+    assert_eq!(
+        filing_count, 1,
+        "restored filing must survive lock and reopen"
+    );
     let doc_key = doc_store::get_doc_key(db).unwrap().unwrap();
     let receipt_bytes = doc_store::read_decrypted_doc(&live_dir, &rel_b, &doc_key).unwrap();
     assert_eq!(receipt_bytes, b"RESTORED-RECEIPT-BYTES");

@@ -242,7 +242,10 @@ fn test_s6_plaintext_migration_survives_interruption_and_completes_on_retry() {
     for (fname, expected) in files {
         let rel = format!("documents/{}/{}", entry_id, fname);
         let raw = std::fs::read(dir.join(&rel)).unwrap();
-        assert!(doc_store::is_encrypted_doc(&raw), "{fname} must be encrypted");
+        assert!(
+            doc_store::is_encrypted_doc(&raw),
+            "{fname} must be encrypted"
+        );
         assert!(!raw.windows(expected.len()).any(|w| w == expected));
         let plain = doc_store::read_decrypted_doc(&dir, &rel, &doc_key).unwrap();
         assert_eq!(plain.as_slice(), expected);
@@ -253,11 +256,14 @@ fn test_s6_plaintext_migration_survives_interruption_and_completes_on_retry() {
 
 #[test]
 fn test_s6_backup_bundles_encrypted_documents_and_fresh_install_restore_opens_them() {
-    let src_dir = std::env::temp_dir().join(format!("lagosfile-s6-baksrc-{}", uuid::Uuid::new_v4()));
+    let src_dir =
+        std::env::temp_dir().join(format!("lagosfile-s6-baksrc-{}", uuid::Uuid::new_v4()));
     let fresh_dir =
         std::env::temp_dir().join(format!("lagosfile-s6-bakdst-{}", uuid::Uuid::new_v4()));
-    let backup_file =
-        std::env::temp_dir().join(format!("lagosfile-s6-archive-{}.lf.enc", uuid::Uuid::new_v4()));
+    let backup_file = std::env::temp_dir().join(format!(
+        "lagosfile-s6-archive-{}.lf.enc",
+        uuid::Uuid::new_v4()
+    ));
 
     let src_state = AppState::default();
     setup_pin_in_dir(&src_dir, "5555", &src_state).unwrap();
@@ -300,7 +306,10 @@ fn test_s6_backup_bundles_encrypted_documents_and_fresh_install_restore_opens_th
 
     // Restored attachment must exist encrypted on disk and decrypt cleanly
     let restored_full = doc_store::resolve_doc_path(&fresh_dir, &rel_path);
-    assert!(restored_full.exists(), "restored attachment file must exist");
+    assert!(
+        restored_full.exists(),
+        "restored attachment file must exist"
+    );
     assert!(doc_store::is_encrypted_doc(
         &std::fs::read(&restored_full).unwrap()
     ));
@@ -381,8 +390,14 @@ fn test_s18_deleting_draft_cleans_up_folder_and_allows_deleting_duplicated_paren
 
     // Delete Draft 1 even though Draft 2 references it via parent_filing_id!
     delete_filing_in_dir(&dir, &draft1_id, &state).expect("deleting duplicated Draft must succeed");
-    assert!(!att1_path.exists(), "deleted draft attachment file must be removed");
-    assert!(!att1_folder.exists(), "deleted draft entry folder must be removed");
+    assert!(
+        !att1_path.exists(),
+        "deleted draft attachment file must be removed"
+    );
+    assert!(
+        !att1_folder.exists(),
+        "deleted draft entry folder must be removed"
+    );
 
     // Draft 2's parent_filing_id is now NULL, and no document rows remain for entry1
     {
@@ -422,7 +437,10 @@ fn test_s18_deleting_draft_cleans_up_folder_and_allows_deleting_duplicated_paren
     let att2_path = doc_store::resolve_doc_path(&dir, att2["filePath"].as_str().unwrap());
     assert!(att2_path.exists());
     delete_income_entry_in_dir(&dir, &entry2_id, &state).unwrap();
-    assert!(!att2_path.exists(), "deleted entry attachment file must be removed");
+    assert!(
+        !att2_path.exists(),
+        "deleted entry attachment file must be removed"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -471,11 +489,17 @@ fn test_s18_shared_file_survives_single_row_delete_and_orphan_sweep_removes_stra
 
     // Deleting row 1 must NOT delete the file while row 2 still references it
     delete_document_in_dir(&dir, &doc1_id, &state).unwrap();
-    assert!(full_path.exists(), "file referenced by two rows must survive deleting one");
+    assert!(
+        full_path.exists(),
+        "file referenced by two rows must survive deleting one"
+    );
 
     // Deleting row 2 now leaves zero references, so the file is removed
     delete_document_in_dir(&dir, &doc2_id, &state).unwrap();
-    assert!(!full_path.exists(), "file must be removed once last reference is deleted");
+    assert!(
+        !full_path.exists(),
+        "file must be removed once last reference is deleted"
+    );
 
     // Drop an orphaned stray file under documents/ and unlock to verify startup sweep removes it
     let orphan_dir = dir.join("documents").join("orphan-entry-id");
@@ -486,8 +510,14 @@ fn test_s18_shared_file_survives_single_row_delete_and_orphan_sweep_removes_stra
 
     let restarted_state = AppState::default();
     unlock_db_in_dir(&dir, "654321", &restarted_state).unwrap();
-    assert!(!orphan_file.exists(), "startup orphan sweep must delete unreferenced file");
-    assert!(!orphan_dir.exists(), "startup orphan sweep must prune empty orphan folder");
+    assert!(
+        !orphan_file.exists(),
+        "startup orphan sweep must delete unreferenced file"
+    );
+    assert!(
+        !orphan_dir.exists(),
+        "startup orphan sweep must prune empty orphan folder"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -515,13 +545,22 @@ fn test_attach_sanitizes_path_traversal_and_cross_os_resolve_preserves_docs() {
     )
     .expect("attach with untrusted filename must sanitize safely");
     let rel = att["filePath"].as_str().unwrap();
-    assert!(rel.starts_with(&format!("documents/{}/", entry_id)), "unexpected rel path: {rel}");
-    assert!(!rel.contains(".."), "path must not contain traversal: {rel}");
+    assert!(
+        rel.starts_with(&format!("documents/{}/", entry_id)),
+        "unexpected rel path: {rel}"
+    );
+    assert!(
+        !rel.contains(".."),
+        "path must not contain traversal: {rel}"
+    );
     assert!(doc_store::validate_safe_rel_doc_path(rel).is_ok());
 
     // 2. Cross-OS legacy absolute paths (POSIX path on Windows, Windows path on POSIX) resolve to app_dir/documents/...
     let posix_stored = format!("/Users/alice/LagosFile/documents/{}/unix_doc.enc", entry_id);
-    let win_stored = format!("C:\\Users\\alice\\LagosFile\\documents\\{}\\win_doc.enc", entry_id);
+    let win_stored = format!(
+        "C:\\Users\\alice\\LagosFile\\documents\\{}\\win_doc.enc",
+        entry_id
+    );
     assert_eq!(
         doc_store::resolve_doc_path(&dir, &posix_stored),
         dir.join(format!("documents/{}/unix_doc.enc", entry_id))
@@ -535,7 +574,9 @@ fn test_attach_sanitizes_path_traversal_and_cross_os_resolve_preserves_docs() {
     //    their paths and orphan sweep does NOT delete them!
     let doc_key = {
         let guard = state.db.lock().unwrap();
-        doc_store::get_or_create_doc_key(guard.as_ref().unwrap()).unwrap().0
+        doc_store::get_or_create_doc_key(guard.as_ref().unwrap())
+            .unwrap()
+            .0
     };
     let unix_file = dir.join(format!("documents/{}/unix_doc.enc", entry_id));
     let win_file = dir.join(format!("documents/{}/win_doc.enc", entry_id));
@@ -559,18 +600,32 @@ fn test_attach_sanitizes_path_traversal_and_cross_os_resolve_preserves_docs() {
 
     let restarted = AppState::default();
     unlock_db_in_dir(&dir, "1234", &restarted).unwrap();
-    assert!(unix_file.exists(), "cross-OS POSIX-pathed doc must not be swept as orphan");
-    assert!(win_file.exists(), "cross-OS Windows-pathed doc must not be swept as orphan");
+    assert!(
+        unix_file.exists(),
+        "cross-OS POSIX-pathed doc must not be swept as orphan"
+    );
+    assert!(
+        win_file.exists(),
+        "cross-OS Windows-pathed doc must not be swept as orphan"
+    );
 
     // Verify paths were normalized to portable relative paths even though files were already encrypted.
     {
         let guard = restarted.db.lock().unwrap();
         let conn = guard.as_ref().unwrap().conn.lock().unwrap();
         let u_path: String = conn
-            .query_row("SELECT file_path FROM document WHERE id='doc-unix'", [], |r| r.get(0))
+            .query_row(
+                "SELECT file_path FROM document WHERE id='doc-unix'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let w_path: String = conn
-            .query_row("SELECT file_path FROM document WHERE id='doc-win'", [], |r| r.get(0))
+            .query_row(
+                "SELECT file_path FROM document WHERE id='doc-win'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(u_path, format!("documents/{}/unix_doc.enc", entry_id));
         assert_eq!(w_path, format!("documents/{}/win_doc.enc", entry_id));

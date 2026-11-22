@@ -188,8 +188,7 @@ fn backfill_filing_tax_config_ids(conn: &Connection) -> Result<()> {
 
         // First check whether `version_label` uniquely identifies a single saved configuration.
         let matching_ids: Vec<String> = {
-            let mut mstmt =
-                conn.prepare("SELECT id FROM tax_config WHERE version_label = ?1")?;
+            let mut mstmt = conn.prepare("SELECT id FROM tax_config WHERE version_label = ?1")?;
             let collected = mstmt
                 .query_map(rusqlite::params![version_label], |r| r.get::<_, String>(0))?
                 .filter_map(|r| r.ok())
@@ -203,9 +202,7 @@ fn backfill_filing_tax_config_ids(conn: &Connection) -> Result<()> {
                 rusqlite::params![matching_ids[0], filing_id],
             )?;
         } else {
-            let fallback_id = active_id
-                .as_deref()
-                .unwrap_or(NTA_2025_CONFIG_ID);
+            let fallback_id = active_id.as_deref().unwrap_or(NTA_2025_CONFIG_ID);
             conn.execute(
                 "UPDATE filing SET tax_config_id = ?1 WHERE id = ?2",
                 rusqlite::params![fallback_id, filing_id],
@@ -296,9 +293,7 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
                 rusqlite::params![META_NTA_MIGRATED],
             )?;
         }
-        Some((ref id, ref modified_by))
-            if id != NTA_2025_CONFIG_ID && modified_by != "system" =>
-        {
+        Some((ref id, ref modified_by)) if id != NTA_2025_CONFIG_ID && modified_by != "system" => {
             // User-edited config stays active; emit a one-time notice.
             let already_notified: bool = conn
                 .query_row(
@@ -339,20 +334,26 @@ fn ensure_nta_and_pita_configs(conn: &Connection) -> Result<()> {
                AND (tax_config_id IN (?1, ?2) OR tax_config_id IS NULL)",
         )?;
         let rows = stmt
-            .query_map(rusqlite::params![SEED_V1_CONFIG_ID, PITA_LEGACY_CONFIG_ID], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?))
-            })?
+            .query_map(
+                rusqlite::params![SEED_V1_CONFIG_ID, PITA_LEGACY_CONFIG_ID],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i32>(1)?)),
+            )?
             .filter_map(|r| r.ok())
             .collect();
         rows
     };
 
     for (draft_id, yoa) in draft_seed_rows {
-        if let Ok(target_cfg) = crate::services::config::ConfigService::get_for_income_year(conn, yoa)
+        if let Ok(target_cfg) =
+            crate::services::config::ConfigService::get_for_income_year(conn, yoa)
         {
             conn.execute(
                 "UPDATE filing SET tax_config_id = ?1, tax_config_version = ?2 WHERE id = ?3",
-                rusqlite::params![target_cfg.id.to_string(), target_cfg.version_label, draft_id],
+                rusqlite::params![
+                    target_cfg.id.to_string(),
+                    target_cfg.version_label,
+                    draft_id
+                ],
             )?;
         }
     }
@@ -480,7 +481,11 @@ fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
                     )?;
                     let list = estmt
                         .query_map(rusqlite::params![filing_id], |r| {
-                            Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, i32>(2)? != 0))
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, f64>(1)?,
+                                r.get::<_, i32>(2)? != 0,
+                            ))
                         })?
                         .filter_map(|r| r.ok())
                         .collect();
@@ -493,7 +498,10 @@ fn migrate_foreign_tax_reliefs(conn: &Connection) -> Result<()> {
                         .filter(|(_, g, is_f)| *is_f && *g > 0.0)
                         .collect();
                     let targets: Vec<(String, f64)> = if !foreign_pos.is_empty() {
-                        foreign_pos.into_iter().map(|(id, g, _)| (id.clone(), *g)).collect()
+                        foreign_pos
+                            .into_iter()
+                            .map(|(id, g, _)| (id.clone(), *g))
+                            .collect()
                     } else {
                         let any_pos: Vec<(String, f64)> = candidates
                             .iter()

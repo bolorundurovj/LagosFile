@@ -164,9 +164,10 @@ async fn test_cached_date_makes_zero_network_calls_and_persists_vault() {
     let reloaded_state = AppState::default();
     unlock_db_in_dir(&dir, "1234", &reloaded_state).unwrap();
     let zero_net = StubFxFetcher::new(None, None);
-    let persisted = resolve_fx_rate_in_dir(&dir, "USD", "NGN", "2025-03-15", &reloaded_state, &zero_net)
-        .await
-        .unwrap();
+    let persisted =
+        resolve_fx_rate_in_dir(&dir, "USD", "NGN", "2025-03-15", &reloaded_state, &zero_net)
+            .await
+            .unwrap();
     assert_eq!(persisted.rate, Some(1520.0));
     assert!(persisted.is_cached);
     assert_eq!(zero_net.historical_calls.load(Ordering::SeqCst), 0);
@@ -218,7 +219,11 @@ async fn test_bad_date_returns_error_and_clear_cache_persists() {
     let err = resolve_fx_rate_in_dir(&dir, "USD", "NGN", "not-a-date", &state, &fetcher)
         .await
         .unwrap_err();
-    assert!(err.contains("Invalid FX target date"), "unexpected error: {}", err);
+    assert!(
+        err.contains("Invalid FX target date"),
+        "unexpected error: {}",
+        err
+    );
     assert_eq!(fetcher.historical_calls.load(Ordering::SeqCst), 0);
     assert_eq!(fetcher.latest_calls.load(Ordering::SeqCst), 0);
 
