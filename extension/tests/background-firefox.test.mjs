@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createBrowserMock, loadScript, dispatch, sendSync, jsonResponse } from './helpers/ext-mocks.mjs';
+import manifest from '../firefox/manifest.json';
 
+const VERSION = manifest.version;
 const TOKEN = 'abcdef0123456789abcdef0123456789';
 
 let browser;
@@ -27,7 +29,7 @@ describe('firefox background: lifecycle', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     load();
     browser.runtime.onInstalled.fire();
-    expect(console.log).toHaveBeenCalledWith('[LagosFile] v1.3.0 installed.');
+    expect(console.log).toHaveBeenCalledWith(`[LagosFile] v${VERSION} installed.`);
     expect(browser.storage.local.remove).toHaveBeenCalledWith(['filingsData', 'filingData', 'bridgeToken']);
 
     browser.storage.local.remove.mockImplementationOnce(() => Promise.reject(new Error('denied')));
@@ -61,7 +63,7 @@ describe('firefox background: in-memory state', () => {
       [{ type: 'GET_FILINGS_DATA' }, []],
       [{ type: 'SET_FILING_DATA' }, { ok: true }],
       [{ type: 'GET_FILING_DATA' }, null],
-      [{ type: 'PING' }, { pong: true, v: '1.3.0' }],
+      [{ type: 'PING' }, { pong: true, v: VERSION }],
       [{ type: 'NOPE' }, { ok: false }],
     ];
     cases.forEach(([msg, expected]) => {

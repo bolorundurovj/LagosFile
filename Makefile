@@ -1,4 +1,4 @@
-.PHONY: setup dev lint lint-fix check build test test-fe test-be test-coverage sync-version help
+.PHONY: setup dev lint lint-fix check build test test-fe test-be test-coverage help
 
 # Default goal
 help:
@@ -16,7 +16,6 @@ help:
 	@echo "  make test-fe        Run frontend unit tests"
 	@echo "  make test-be        Run backend unit tests"
 	@echo "  make test-coverage  Run tests with code coverage reports"
-	@echo "  make sync-version   Sync version from VERSION.ini to all manifests"
 	@echo ""
 
 setup:
@@ -43,8 +42,6 @@ build:
 build-tauri:
 	npm run tauri:build
 
-sync-version:
-	npm run sync:version
 
 test: test-fe test-be
 

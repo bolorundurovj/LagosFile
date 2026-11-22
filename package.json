@@ -24,7 +24,6 @@
     "pack:ext:chrome": "node scripts/pack-extensions.mjs chrome",
     "pack:ext:firefox": "node scripts/pack-extensions.mjs firefox",
     "pack:ext": "node scripts/pack-extensions.mjs",
-    "sync:version": "node scripts/sync-version.mjs",
     "lint": "ng lint",
     "lint:fix": "ng lint --fix",
     "lint:rust": "cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings",

@@ -13,8 +13,9 @@ Thank you for taking an interest in contributing. This guide covers how to set u
 5. [Branch Strategy](#branch-strategy)
 6. [Commit Conventions](#commit-conventions)
 7. [Pull Request Process](#pull-request-process)
-8. [Code Style](#code-style)
-9. [Testing](#testing)
+8. [Releases](#releases)
+9. [Code Style](#code-style)
+10. [Testing](#testing)
 
 ---
 
@@ -139,13 +140,14 @@ npm run pack:ext:firefox
 
 | Branch pattern | Purpose |
 |---|---|
-| `master` | Stable, release-ready code |
+| `master` | Stable releases |
+| `develop` | Integration branch and beta releases |
 | `feat/<short-description>` | New features |
 | `fix/<short-description>` | Bug fixes |
 | `chore/<short-description>` | Tooling, deps, refactors with no user-facing change |
 | `docs/<short-description>` | Documentation-only changes |
 
-Keep branches short-lived. Open a PR into `master` when the work is ready for review.
+Keep branches short-lived. Open a PR into `develop` when the work is ready for review.
 
 ---
 
@@ -200,11 +202,45 @@ git commit -m "feat(lirs): implement multi-filing bridge" -m "- Serves /filings 
 
 1. Make sure `npm run tauri:dev` builds and runs without errors
 2. Run `npm test` and confirm all tests pass
-3. Open a PR against `master` with a clear title following the commit convention
+3. Open a PR against `develop` with a clear title following the commit convention
 4. Include a short description of what changed and why
 5. Link any relevant issue or task
 
 PRs that only touch documentation or the extension do not need a full Tauri build verification, but Angular must still compile cleanly (`npm run build`).
+
+---
+
+## Releases
+
+[release-please](https://github.com/googleapis/release-please) sets versions from commit types: `fix` is a patch, `feat` a minor, `!` or `BREAKING CHANGE` a major. Do not edit versions by hand.
+
+1. **Beta:** pushes to `develop` open or update a release PR. Merge it to publish a beta such as `v1.3.0-beta.1`.
+2. **Promote:** merge `develop` into `master` with a merge commit.
+3. **Stable:** the push to `master` opens or updates a release PR. Merge it to publish, for example `v1.3.0`.
+4. **Back-merge:** a `master` to `develop` PR opens after each stable release. Merge it with a merge commit before the next beta.
+
+### Choosing a version
+
+To pick the version yourself, land a commit on `develop` whose last paragraph is a `Release-As` footer:
+
+```bash
+git commit --allow-empty -m "chore: plan 1.5.0" -m "Release-As: 1.5.0"
+```
+
+- Give the plain version. `develop` releases it as `1.5.0-beta.1` (or the next beta number if it is already on 1.5.0) and `master` as `1.5.0`.
+- It must be higher than the last stable and no lower than the current beta. Otherwise the Release PR job fails until a newer footer corrects it.
+- If later betas move past it, for example after a breaking change, stable follows the betas.
+- Footers in merge commit messages are ignored. Put it in an ordinary or squashed commit.
+
+### Branch rules
+
+Never squash or rebase between `develop` and `master`: both branches need the release tags in their history.
+
+Extension versions and `CHANGELOG.md` only change on stable releases, because browsers reject versions such as `1.3.0-beta.1`. Beta notes are on the GitHub release.
+
+If publishing fails, re-run the failed jobs, or run the Release workflow with the existing tag.
+
+`RELEASE_TOKEN` needs read and write access to Contents, Pull requests and Issues on this repository.
 
 ---
 

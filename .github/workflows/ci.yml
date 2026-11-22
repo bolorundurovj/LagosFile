@@ -8,103 +8,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Detect VERSION.ini change (master push only)
-  check-version:
-    name: Check VERSION.ini
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.diff.outputs.changed }}
-      version: ${{ steps.read.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Check if VERSION.ini changed
-        id: diff
-        run: |
-          if git diff HEAD^ HEAD -- VERSION.ini | grep -qE '^\+[^+]'; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
-
-      - uses: actions/setup-node@v4
-        if: steps.diff.outputs.changed == 'true'
-        with:
-          node-version: 24
-
-      - name: Assemble version from VERSION.ini
-        id: read
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          VERSION=$(node -e "
-            const fs = require('fs');
-            const src = fs.readFileSync('VERSION.ini', 'utf8');
-            const fields = {};
-            for (const line of src.split('\n')) {
-              const t = line.trim();
-              if (!t || t.startsWith('#')) continue;
-              const eq = t.indexOf('=');
-              if (eq === -1) continue;
-              fields[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
-            }
-            const { MAJOR, MINOR, PATCH, PRE_RELEASE } = fields;
-            const base = MAJOR + '.' + MINOR + '.' + PATCH;
-            console.log(PRE_RELEASE ? base + '-' + PRE_RELEASE : base);
-          ")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-  # Sync all version files and cut tag
-  cut-release:
-    name: Sync versions and cut tag
-    needs: check-version
-    if: needs.check-version.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.RELEASE_TOKEN }}
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Sync version across all files
-        run: node scripts/sync-version.mjs
-
-      - name: Commit synced versions and cut tag
-        run: |
-          set -e
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/${{ github.repository }}
-
-          # Only commit if the sync script actually changed files
-          if ! git diff --quiet; then
-            git add \
-              package.json \
-              src-tauri/tauri.conf.json \
-              src-tauri/Cargo.toml \
-              src-tauri/Cargo.lock \
-              extension/chrome/manifest.json \
-              extension/firefox/manifest.json
-            git commit -m 'chore(release): sync version files to ${{ needs.check-version.outputs.version }}'
-            git push origin HEAD:master
-          fi
-
-          # Tag the current HEAD (guaranteed to include the synced versions)
-          git tag "v${{ needs.check-version.outputs.version }}"
-          git push origin "v${{ needs.check-version.outputs.version }}"
-
   # Angular lint & build
   angular:
     name: Angular lint & build
@@ -268,3 +175,61 @@ jobs:
 
       - name: Pack extensions
         run: npm run pack:ext
+
+  # Release PRs: betas on develop, stable on master
+  release-please:
+    name: Release PR
+    needs: [angular, angular-test, rust, rust-test, extension]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install release-please
+        run: npm install --prefix "$RUNNER_TEMP/release-please" --ignore-scripts --no-audit --no-fund release-please@17.11.2
+
+      - name: Update release PR or create release
+        id: release
+        run: node scripts/release-please.cjs
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_PLEASE_DIR: ${{ runner.temp }}/release-please
+
+  publish:
+    name: Publish release
+    needs: release-please
+    if: ${{ !cancelled() && needs.release-please.outputs.tag != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
+
+  # develop needs each stable version to pick the next beta number
+  back-merge:
+    name: Open master to develop PR
+    needs: release-please
+    if: ${{ !cancelled() && github.ref == 'refs/heads/master' && needs.release-please.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Open back-merge PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          open=$(gh pr list --base develop --head master --state open --json number --jq length)
+          if [ "$open" = "0" ]; then
+            gh pr create --base develop --head master --title "chore: merge $TAG back into develop" --body "Merge with a merge commit. Squashing or rebasing hides the release tag from develop."
+          fi

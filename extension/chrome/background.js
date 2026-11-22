@@ -1,4 +1,4 @@
-const EXT_VERSION = '1.3.0';
+const EXT_VERSION = '1.3.0'; // x-release-please-version
 const BRIDGE_URL = 'http://127.0.0.1:19876';
 let cachedFilings = [];
 let currentFiling = null;
