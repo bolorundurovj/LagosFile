@@ -38,6 +38,9 @@ jobs:
       - name: Generate Frontend Coverage
         run: npm run test:coverage
 
+      - name: Generate Extension Coverage
+        run: npm run test:ext:coverage
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
