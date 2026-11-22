@@ -355,8 +355,8 @@ export class StepReviewComponent implements OnInit {
     return false;
   }
 
-  async save(): Promise<boolean> {
-    return true;
+  save(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   // Validation — list of human-readable issues before user can confirm
@@ -462,7 +462,7 @@ export class StepReviewComponent implements OnInit {
     return palette[Math.min(index, palette.length - 1)];
   }
 
-  async saveDraft(): Promise<void> {
+  saveDraft(): void {
     this.back.emit();
   }
 

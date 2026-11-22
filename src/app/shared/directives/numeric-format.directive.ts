@@ -50,7 +50,7 @@ export class NumericFormatDirective implements OnInit {
   onInput(event: Event): void {
     const raw = (event.target as HTMLInputElement | null)?.value ?? '';
     // Strip commas and anything that isn't a digit, minus or decimal point
-    const cleaned = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '');
+    const cleaned = raw.replaceAll(',', '').replace(/[^0-9.-]/g, '');
     const num     = cleaned === '' || cleaned === '-' ? null : Number.parseFloat(cleaned);
     const value   = num == null || Number.isNaN(num) ? null : num;
     this.model?.control?.setValue(value, { emitModelToViewChange: false });

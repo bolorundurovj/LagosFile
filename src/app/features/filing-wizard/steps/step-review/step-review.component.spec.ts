@@ -163,7 +163,7 @@ describe('StepReviewComponent', () => {
     comp.confirmed.subscribe(() => { confirmedEmitted = true; });
     comp.back.subscribe(() => { backEmitted = true; });
 
-    await comp.saveDraft();
+    comp.saveDraft();
     expect(backEmitted).toBeTrue();
 
     await comp.confirm();
