@@ -631,7 +631,7 @@ fn test_migration_adds_columns_to_existing_database() {
             .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
             .unwrap();
         assert!(
-            stmt.column_names().contains(&column),
+            stmt.column_names().any(|c| c == column),
             "{table}.{column} missing"
         );
     }

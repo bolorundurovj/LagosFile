@@ -818,7 +818,7 @@ fn migrate(conn: &Connection) -> Result<()> {
         let exists = conn
             .prepare(&format!("SELECT * FROM {table} LIMIT 0"))?
             .column_names()
-            .contains(column);
+            .any(|c| c == *column);
         if !exists {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))?;
         }
