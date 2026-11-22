@@ -262,7 +262,7 @@
     groups.forEach(function (f) {
       const row = document.createElement('div');
       row.className = 'copy-field';
-      const raw = String(f.value).replace(/,/g, '');
+      const raw = String(f.value).replaceAll(',', '');
       row.innerHTML =
         '<span class="copy-field-label">' + esc(f.label) + '</span>' +
         '<span class="copy-field-value">' + esc(f.value) + '</span>' +

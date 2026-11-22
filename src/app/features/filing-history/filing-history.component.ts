@@ -1077,7 +1077,7 @@ export class FilingHistoryComponent implements OnInit {
     try {
       const ref = f.filingReference ?? `YOA${f.yearOfAssessment}`;
       const ext = this.exportFormat === 'pdf' ? 'pdf' : this.exportFormat === 'csv' ? 'csv' : 'json';
-      const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const datePart = new Date().toISOString().slice(0, 10).replaceAll('-', '');
       const safeRef = ref.replace(/[^a-zA-Z0-9_-]/g, '_');
       const fileName = `LagosFile_TaxReturn_${f.yearOfAssessment}_${safeRef}_${f.status}_${datePart}.${ext}`;
       const home = await homeDir();

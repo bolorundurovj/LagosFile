@@ -257,7 +257,7 @@ export class StepAllowancesComponent implements OnInit {
       }
       this.entries.set(existing);
       for (const e of existing) {
-        const acqYear = e.acquisitionDate ? Number(e.acquisitionDate.slice(0, 4)) : NaN;
+        const acqYear = e.acquisitionDate ? Number(e.acquisitionDate.slice(0, 4)) : Number.NaN;
         if (
           (e.taxWrittenDownValue > 0 && e.taxWrittenDownValue < e.assetCost) ||
           (Number.isFinite(acqYear) && acqYear > 1970 && acqYear < this.yearOfAssessment())

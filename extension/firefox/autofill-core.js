@@ -116,13 +116,13 @@
   }
 
   function normalizeLabel(text) {
-    return String(text || '')
-      .replace(/\u00a0/g, ' ')
+    const label = String(text || '')
+      .replaceAll('\u00a0', ' ')
       .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/[:*]+$/, '')
-      .trim()
-      .toLowerCase();
+      .trim();
+    let end = label.length;
+    while (end > 0 && ':*'.includes(label[end - 1])) end--;
+    return label.slice(0, end).trim().toLowerCase();
   }
 
   function failsNativeVisibilityCheck(el) {
@@ -278,7 +278,7 @@
   function setFieldValue(el, value, win) {
     if (!el) return false;
     const view = win || (el.ownerDocument?.defaultView) || (typeof window !== 'undefined' ? window : null);
-    const clean = String(value).replace(/,/g, '').trim();
+    const clean = String(value).replaceAll(',', '').trim();
     if (typeof el.focus === 'function') {
       try { el.focus(); } catch (_) {}
     }

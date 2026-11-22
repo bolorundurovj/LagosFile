@@ -19,14 +19,17 @@
       <h2 class="title-md">Income</h2>
       @for (line of income; track $index; let i = $index) {
         <div class="calc__row">
-          <select class="form-input" [(ngModel)]="line.incomeType" [name]="'t' + i" (change)="recompute()">
+          <span class="sr-only" id="income-type-label-{{ i }}">Income type, line {{ i + 1 }}</span>
+          <select class="form-input" [(ngModel)]="line.incomeType" [name]="'t' + i" (change)="recompute()"
+            aria-labelledby="income-type-label-{{ i }}">
             @for (t of incomeTypes; track t.value) { <option [value]="t.value">{{ t.label }}</option> }
           </select>
           <input type="number" class="form-input" min="0" [(ngModel)]="line.grossAmountNgn" [name]="'a' + i"
-            (input)="recompute()" [placeholder]="line.incomeType === 'capital_gain_shares' ? 'Gain (₦)' : 'Amount (₦)'" />
+            (input)="recompute()" [placeholder]="line.incomeType === 'capital_gain_shares' ? 'Gain (₦)' : 'Amount (₦)'"
+            aria-label="{{ line.incomeType === 'capital_gain_shares' ? 'Gain' : 'Amount' }} in naira, line {{ i + 1 }}" />
           @if (line.incomeType === 'capital_gain_shares') {
             <input type="number" class="form-input" min="0" [(ngModel)]="line.cgtProceeds" [name]="'p' + i"
-              (input)="recompute()" placeholder="Proceeds (₦)" />
+              (input)="recompute()" placeholder="Proceeds (₦)" aria-label="Proceeds in naira, line {{ i + 1 }}" />
           }
           @if (income.length > 1) {
             <button class="btn btn--ghost btn--sm" (click)="removeIncome(i)" aria-label="Remove income line">

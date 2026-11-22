@@ -796,6 +796,7 @@ async fn test_concurrent_persist_and_change_pin_are_strictly_serialized() {
 
     // Start save 1 and pause inside its before_rename hook while change_pin queues behind vault_io_lock.
     let (entered_tx, entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let state1 = Arc::clone(&state);
     let dir1 = dir.clone();
 
@@ -803,8 +804,7 @@ async fn test_concurrent_persist_and_change_pin_are_strictly_serialized() {
     let t1 = tokio::spawn(async move {
         persist_db_in_dir_async_with_hook(dir1, &state1, move |_| {
             let _ = entered_tx.send(());
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            Ok(())
+            release_rx.recv().map_err(|e| e.to_string())
         })
         .await
     });
@@ -812,13 +812,17 @@ async fn test_concurrent_persist_and_change_pin_are_strictly_serialized() {
     // Await (non-blocking) until t1 is actively inside spawn_blocking (holding vault_io_lock).
     entered_rx.await.unwrap();
 
-    // Mutate DB to newer state and trigger change_pin concurrently; it MUST serialize after t1.
-    mutate_taxpayer_name(&state, "Newer Write");
+    // Trigger change_pin while t1 holds the lock; it MUST serialize after t1.
     let state2 = Arc::clone(&state);
     let dir2 = dir.clone();
     let t2 = tokio::spawn(async move {
         change_pin_in_dir_async(dir2, "1111".to_string(), "2222".to_string(), &state2, false).await
     });
+
+    // Let t2 run up to the lock before mutating: without the lock its snapshot would miss this write.
+    tokio::task::yield_now().await;
+    mutate_taxpayer_name(&state, "Newer Write");
+    release_tx.send(()).unwrap();
 
     t1.await.unwrap().unwrap();
     t2.await.unwrap().unwrap();
