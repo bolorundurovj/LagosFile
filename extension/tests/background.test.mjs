@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createChromeMock, loadScript, dispatch, sendSync, jsonResponse } from './helpers/ext-mocks.mjs';
+import manifest from '../chrome/manifest.json';
 
+const VERSION = manifest.version;
 const TOKEN = 'abcdef0123456789abcdef0123456789';
 
 let chrome;
@@ -33,7 +35,7 @@ describe('chrome background: lifecycle', () => {
       ['filingsData', 'filingData', 'bridgeToken'],
       expect.any(Function)
     );
-    expect(console.log).toHaveBeenCalledWith('[LagosFile] v1.3.0 installed.');
+    expect(console.log).toHaveBeenCalledWith(`[LagosFile] v${VERSION} installed.`);
     chrome.storage.session.get.mockClear();
 
     expect((await send({ type: 'GET_FILINGS_DATA' })).resp).toEqual([{ filingId: 'a' }]);
@@ -148,7 +150,7 @@ describe('chrome background: token and filing state', () => {
       [{ type: 'GET_FILINGS_DATA' }, [{ filingId: 'm' }]],
       [{ type: 'SET_FILING_DATA', data: { filingId: 'm' } }, { ok: true }],
       [{ type: 'GET_FILING_DATA' }, { filingId: 'm' }],
-      [{ type: 'PING' }, { pong: true, v: '1.3.0' }],
+      [{ type: 'PING' }, { pong: true, v: VERSION }],
       [{ type: 'UNKNOWN' }, { ok: false }],
     ];
     cases.forEach(([msg, expected]) => {

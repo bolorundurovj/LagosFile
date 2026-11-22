@@ -2,7 +2,7 @@
 // Keeps filing data and the per-session bridge token strictly in memory (never written
 // to storage.local on disk), proxies authenticated bridge fetches, and relays INJECT_* messages.
 
-const EXT_VERSION = '1.3.0';
+const EXT_VERSION = '1.3.0'; // x-release-please-version
 const BRIDGE_URL = 'http://127.0.0.1:19876';
 let cachedFilings = [];
 let currentFiling = null;

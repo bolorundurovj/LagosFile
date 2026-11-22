@@ -1,70 +1,33 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'   # pre-release tags e.g. v1.1.0-beta.1
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Tag to release (e.g. v1.2.0). Tag must already exist on master.'
+      tag:
+        description: 'Existing tag to rebuild and publish (e.g. v1.3.0)'
         required: true
         type: string
 
 permissions:
   contents: write
-  pull-requests: read
 
 env:
-  VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  VERSION: ${{ inputs.tag }}
 
 jobs:
-  # ── 1. Generate changelog ──────────────────────────────────────
-  changelog:
-    name: Generate changelog
-    runs-on: ubuntu-latest
-    outputs:
-      release_body: ${{ steps.cliff.outputs.content }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install git-cliff
-        uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
-
-      - name: Generate release notes
-        id: cliff
-        run: |
-          git-cliff --config cliff.toml --latest --strip header -o CHANGELOG_RELEASE.md
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          cat CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload release notes artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: CHANGELOG_RELEASE.md
-
-      - name: Generate full CHANGELOG.md (for artifact only)
-        run: git-cliff --config cliff.toml -o CHANGELOG.md
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ── 2. Build browser extensions ───────────────────────────────
+  # ── 1. Build browser extensions ───────────────────────────────
   build-extensions:
     name: Build browser extensions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -92,10 +55,9 @@ jobs:
           name: ext-firefox
           path: dist-ext/firefox-lagosfile-lirs.xpi
 
-  # ── 3. Build Tauri app (matrix: all platforms) ─────────────────
+  # ── 2. Build Tauri app (matrix: all platforms) ─────────────────
   build-tauri:
     name: Build Tauri (${{ matrix.name }})
-    needs: changelog
     strategy:
       fail-fast: false
       matrix:
@@ -103,9 +65,11 @@ jobs:
           - name: Windows
             os: windows-latest
             args: '--target x86_64-pc-windows-msvc'
+            # MSI rejects versions like 1.3.0-beta.1
+            beta_args: '--bundles nsis'
 
           - name: macOS (Intel)
-            os: macos-13
+            os: macos-15-intel
             args: '--target x86_64-apple-darwin'
 
           - name: macOS (Apple Silicon)
@@ -120,6 +84,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -163,12 +129,7 @@ jobs:
           # TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ env.VERSION }}
-          releaseName: LagosFile ${{ env.VERSION }}
-          releaseBody: ''
-          releaseDraft: true
-          prerelease: ${{ contains(env.VERSION, '-') }}
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} ${{ contains(inputs.tag, '-') && matrix.beta_args || '' }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -182,12 +143,14 @@ jobs:
             src-tauri/target/**/release/bundle/**/*.AppImage
           if-no-files-found: warn
 
-  # ── 4. Build custom Windows installer (PolyInstall) ────────────
+  # ── 3. Build custom Windows installer (PolyInstall) ────────────
   build-installer:
     name: Build Windows installer (PolyInstall)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
 
       - uses: actions/setup-node@v4
         with:
@@ -249,34 +212,20 @@ jobs:
           path: ${{ steps.rename.outputs.asset }}
           if-no-files-found: error
 
-  # ── 5. Publish GitHub Release ──────────────────────────────────
+  # ── 4. Publish GitHub Release ──────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: [changelog, build-tauri, build-extensions, build-installer]
+    needs: [build-tauri, build-extensions, build-installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: refs/tags/${{ inputs.tag }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts/
-
-      - name: Read release notes
-        id: notes
-        run: |
-          # Get previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 ${{ env.VERSION }}^ 2>/dev/null || echo "")
-          
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat artifacts/release-notes/CHANGELOG_RELEASE.md >> $GITHUB_OUTPUT
-          
-          if [ -n "$PREV_TAG" ]; then
-            echo -e "\n\n---\n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...${{ env.VERSION }}" >> $GITHUB_OUTPUT
-          fi
-          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Set up Node for notice generation
         uses: actions/setup-node@v4
@@ -298,9 +247,9 @@ jobs:
         with:
           tag_name: ${{ env.VERSION }}
           name: LagosFile ${{ env.VERSION }}
-          body: ${{ steps.notes.outputs.body }}
           draft: false
           prerelease: ${{ contains(env.VERSION, '-') }}
+          make_latest: ${{ !contains(env.VERSION, '-') }}
           files: |
             artifacts/tauri-*/**/*.msi
             artifacts/tauri-*/**/*.exe
