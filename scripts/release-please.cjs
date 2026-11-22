@@ -105,7 +105,7 @@ async function run() {
     git(cwd, 'fetch', '--tags', 'origin');
   }
 
-  // A newer push has its own run, and only that run has tested the branch tip.
+  // A newer push has its own run to update the release PR from the current branch tip.
   git(cwd, 'fetch', 'origin', GITHUB_REF_NAME);
   if (git(cwd, 'rev-parse', 'FETCH_HEAD') !== GITHUB_SHA) return;
 

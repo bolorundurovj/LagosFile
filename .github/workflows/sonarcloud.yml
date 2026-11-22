@@ -9,6 +9,10 @@ on:
 
 jobs:
   sonarcloud:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !(startsWith(github.head_ref, 'release-please--') || startsWith(github.head_ref, 'release/'))
     name: SonarCloud Scan
     runs-on: ubuntu-latest
     steps:

@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [master, develop]
   pull_request:
     branches: [master, develop]
   workflow_dispatch:
@@ -14,6 +12,10 @@ concurrency:
 jobs:
   # Angular lint & build
   angular:
+    if: &run_ci >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !(startsWith(github.head_ref, 'release-please--') || startsWith(github.head_ref, 'release/'))
     name: Angular lint & build
     runs-on: ubuntu-latest
     steps:
@@ -41,6 +43,7 @@ jobs:
 
   # Angular tests
   angular-test:
+    if: *run_ci
     name: Angular tests
     runs-on: ubuntu-latest
     steps:
@@ -65,6 +68,7 @@ jobs:
 
   # Rust lint & check
   rust:
+    if: *run_ci
     name: Rust lint & check
     runs-on: ubuntu-latest
     steps:
@@ -106,6 +110,7 @@ jobs:
 
   # Rust tests
   rust-test:
+    if: *run_ci
     name: Rust tests
     runs-on: ubuntu-latest
     steps:
@@ -157,6 +162,7 @@ jobs:
 
   # Extension pack check
   extension:
+    if: *run_ci
     name: Extension pack check
     runs-on: ubuntu-latest
     steps:
@@ -175,61 +181,3 @@ jobs:
 
       - name: Pack extensions
         run: npm run pack:ext
-
-  # Release PRs: betas on develop, stable on master
-  release-please:
-    name: Release PR
-    needs: [angular, angular-test, rust, rust-test, extension]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Install release-please
-        run: npm install --prefix "$RUNNER_TEMP/release-please" --ignore-scripts --no-audit --no-fund release-please@17.11.2
-
-      - name: Update release PR or create release
-        id: release
-        run: node scripts/release-please.cjs
-        env:
-          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          RELEASE_PLEASE_DIR: ${{ runner.temp }}/release-please
-
-  publish:
-    name: Publish release
-    needs: release-please
-    if: ${{ !cancelled() && needs.release-please.outputs.tag != '' }}
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release.yml
-    with:
-      tag: ${{ needs.release-please.outputs.tag }}
-
-  # develop needs each stable version to pick the next beta number
-  back-merge:
-    name: Open master to develop PR
-    needs: release-please
-    if: ${{ !cancelled() && github.ref == 'refs/heads/master' && needs.release-please.outputs.tag != '' }}
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Open back-merge PR
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag }}
-        run: |
-          open=$(gh pr list --base develop --head master --state open --json number --jq length)
-          if [ "$open" = "0" ]; then
-            gh pr create --base develop --head master --title "chore: merge $TAG back into develop" --body "Merge with a merge commit. Squashing or rebasing hides the release tag from develop."
-          fi
