@@ -14,7 +14,7 @@ export interface FxCacheEntry {
 
 @Injectable({ providedIn: 'root' })
 export class FxService {
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async resolveRate(base: string, quote: string, date: string): Promise<FxResult> {
     return this.tauri.invoke<FxResult>('resolve_fx_rate', { base, quote, targetDate: date });

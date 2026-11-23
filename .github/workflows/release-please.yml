@@ -1,0 +1,65 @@
+name: Release Please
+
+on:
+  push:
+    branches: [master, develop]
+
+jobs:
+  # Release PRs: betas on develop, stable on master
+  release-please:
+    name: Release PR
+    concurrency:
+      group: release-please-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install release-please
+        run: npm install --prefix "$RUNNER_TEMP/release-please" --ignore-scripts --no-audit --no-fund release-please@17.11.2
+
+      - name: Update release PR or create release
+        id: release
+        run: node scripts/release-please.cjs
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_PLEASE_DIR: ${{ runner.temp }}/release-please
+
+  publish:
+    name: Publish release
+    needs: release-please
+    if: ${{ !cancelled() && needs.release-please.outputs.tag != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag }}
+
+  # develop needs each stable version to pick the next beta number
+  back-merge:
+    name: Open master to develop PR
+    needs: release-please
+    if: ${{ !cancelled() && github.ref == 'refs/heads/master' && needs.release-please.outputs.tag != '' }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Open back-merge PR
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          open=$(gh pr list --base develop --head master --state open --json number --jq length)
+          if [ "$open" = "0" ]; then
+            gh pr create --base develop --head master --title "chore: merge $TAG back into develop" --body "Merge with a merge commit. Squashing or rebasing hides the release tag from develop."
+          fi

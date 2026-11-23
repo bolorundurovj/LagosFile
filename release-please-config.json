@@ -1,0 +1,121 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "include-component-in-tag": false,
+  "bootstrap-sha": "f923ca619086748950a1dfc4f35ebf673d03866a",
+  "draft": true,
+  "force-tag-creation": true,
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Features"
+    },
+    {
+      "type": "fix",
+      "section": "Bug Fixes"
+    },
+    {
+      "type": "perf",
+      "section": "Performance"
+    },
+    {
+      "type": "revert",
+      "section": "Reverts"
+    },
+    {
+      "type": "refactor",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "docs",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "test",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "build",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "ci",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "style",
+      "section": "Other",
+      "hidden": true
+    },
+    {
+      "type": "chore",
+      "section": "Other",
+      "hidden": true
+    }
+  ],
+  "packages": {
+    ".": {
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "src-tauri/tauri.conf.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "src-tauri/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "src-tauri/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='lagosfile')].version"
+        },
+        {
+          "type": "json",
+          "path": "extension/chrome/manifest.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "extension/chrome/autofill-core.js"
+        },
+        {
+          "type": "generic",
+          "path": "extension/chrome/background.js"
+        },
+        {
+          "type": "generic",
+          "path": "extension/chrome/popup.html"
+        },
+        {
+          "type": "json",
+          "path": "extension/firefox/manifest.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "extension/firefox/autofill-core.js"
+        },
+        {
+          "type": "generic",
+          "path": "extension/firefox/background.js"
+        },
+        {
+          "type": "generic",
+          "path": "extension/firefox/popup.html"
+        },
+        {
+          "type": "json",
+          "path": ".release-please-manifest.beta.json",
+          "jsonpath": "$['.']"
+        }
+      ]
+    }
+  }
+}

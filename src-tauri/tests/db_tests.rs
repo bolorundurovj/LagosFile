@@ -59,3 +59,61 @@ fn test_db_serialization_roundtrip() {
         assert_eq!(name, "John Doe");
     }
 }
+
+#[test]
+fn test_s26_explain_query_plan_uses_indexes_on_fresh_and_migrated_db() {
+    let check_plans = |conn: &rusqlite::Connection| {
+        for (sql, expected_idx) in [
+            (
+                "EXPLAIN QUERY PLAN SELECT * FROM income_entry WHERE filing_id = 'f1'",
+                "idx_income_entry_filing_id",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT * FROM capital_allowance WHERE filing_id = 'f1'",
+                "idx_capital_allowance_filing_id",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT * FROM relief_entry WHERE filing_id = 'f1'",
+                "idx_relief_entry_filing_id",
+            ),
+            (
+                "EXPLAIN QUERY PLAN SELECT * FROM document WHERE parent_entry_id = 'e1'",
+                "idx_document_parent_entry_id",
+            ),
+        ] {
+            let mut stmt = conn.prepare(sql).unwrap();
+            let details: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            let joined = details.join(" | ");
+            assert!(
+                joined.contains(expected_idx),
+                "expected query plan for `{sql}` to use `{expected_idx}`, got: `{joined}`"
+            );
+        }
+    };
+
+    // 1. Fresh DB via schema.sql
+    let db1 = AppDb::open_in_memory().unwrap();
+    {
+        let conn = db1.conn.lock().unwrap();
+        check_plans(&conn);
+        // Simulate a legacy DB without these indexes
+        conn.execute_batch(
+            "DROP INDEX idx_income_entry_filing_id;
+             DROP INDEX idx_capital_allowance_filing_id;
+             DROP INDEX idx_relief_entry_filing_id;
+             DROP INDEX idx_document_parent_entry_id;",
+        )
+        .unwrap();
+    }
+
+    // 2. Reload via load_from_bytes -> migrate() must recreate all 4 indexes
+    let legacy_bytes = db1.serialize().unwrap();
+    let db2 = AppDb::open_in_memory().unwrap();
+    db2.load_from_bytes(&legacy_bytes).unwrap();
+    let conn2 = db2.conn.lock().unwrap();
+    check_plans(&conn2);
+}

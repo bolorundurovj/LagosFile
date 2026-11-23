@@ -5,9 +5,28 @@ pub mod services;
 
 use db::AppDb;
 use std::sync::Mutex;
+
+#[derive(Default)]
 pub struct AppState {
     pub db: Mutex<Option<AppDb>>,
     pub key: Mutex<Option<[u8; 32]>>,
+    pub salt: Mutex<Option<[u8; 16]>>,
+    /// SHA-256 digest of the on-disk `lagosfile.db.enc` last read or written by this session.
+    /// Used to detect and reject stale writes if another LagosFile process modified the vault.
+    pub vault_digest: Mutex<Option<[u8; 32]>>,
+    pub recovery_verified: Mutex<bool>,
+    pub bridge: Mutex<Option<commands::lirs::BridgeHandle>>,
+    pub temp_preview_files: Mutex<Vec<std::path::PathBuf>>,
+    /// Serializes all async vault persistence and lifecycle transitions
+    /// (`persist_db`, `lock_db`, `unlock_*`, `change_pin`, `reset_pin`, `restore_*`, `setup_pin`)
+    /// so `spawn_blocking` writes cannot reorder or race with PIN changes or lock.
+    pub vault_io_lock: tokio::sync::Mutex<()>,
+}
+
+pub fn cleanup_session_artifacts(dir: &std::path::Path, state: &AppState) {
+    commands::lirs::stop_bridge(state);
+    db::doc_store::cleanup_temp_previews(state);
+    let _ = std::fs::remove_file(dir.join("pending_filing.json"));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,10 +38,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .manage(AppState {
-            db: Mutex::new(None),
-            key: Mutex::new(None),
-        })
+        .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             // Auth
             commands::auth::check_app_status,
@@ -43,6 +59,7 @@ pub fn run() {
             // Backup / Restore
             commands::auth::backup_db,
             commands::auth::restore_db,
+            commands::auth::restore_backup_fresh,
             // Profile
             commands::profile::create_profile,
             commands::profile::get_profile,
@@ -61,24 +78,30 @@ pub fn run() {
             commands::filing::list_income_entries,
             commands::filing::upsert_income_entry,
             commands::filing::delete_income_entry,
+            commands::filing::save_income_entries,
             // Capital allowances
             commands::filing::list_allowances,
             commands::filing::upsert_allowance,
             commands::filing::delete_allowance,
+            commands::filing::save_allowances,
             commands::filing::get_prior_year_allowances,
             // Relief entries
             commands::filing::list_relief_entries,
             commands::filing::upsert_relief_entry,
             commands::filing::delete_relief_entry,
+            commands::filing::save_relief_entries,
             // Computation
             commands::filing::compute_filing,
             commands::filing::estimate_tax,
             // Config
             commands::config::get_active_config,
+            commands::config::get_config_for_filing,
             commands::config::list_configs,
             commands::config::save_config,
             commands::config::export_config_json,
             commands::config::import_config_json,
+            commands::config::get_migration_notices,
+            commands::config::dismiss_migration_notices,
             // FX
             commands::fx::resolve_fx_rate,
             commands::fx::list_fx_cache,
@@ -97,6 +120,14 @@ pub fn run() {
             commands::export::open_file,
             commands::export::print_file,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    cleanup_session_artifacts(&db::app_dir(), &state);
+                }
+            }
+        });
 }

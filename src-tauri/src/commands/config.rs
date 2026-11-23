@@ -1,4 +1,4 @@
-use crate::{commands::auth::persist_db, models::*, AppState};
+use crate::{commands::auth::persist_db, db, models::*, services::config::ConfigService, AppState};
 use chrono::Utc;
 use rusqlite::params;
 use tauri::State;
@@ -48,6 +48,17 @@ pub async fn get_active_config(state: State<'_, AppState>) -> Result<TaxConfig, 
 }
 
 #[tauri::command]
+pub async fn get_config_for_filing(
+    filing_id: String,
+    state: State<'_, AppState>,
+) -> Result<TaxConfig, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    ConfigService::get_for_filing(&conn, &filing_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn list_configs(state: State<'_, AppState>) -> Result<Vec<TaxConfig>, String> {
     let guard = state.db.lock().map_err(|e| e.to_string())?;
     let db = guard.as_ref().ok_or("Database not unlocked")?;
@@ -63,7 +74,7 @@ pub async fn list_configs(state: State<'_, AppState>) -> Result<Vec<TaxConfig>, 
     let configs = stmt
         .query_map([], row_to_config)
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
+        .filter_map(Result::ok)
         .collect();
     Ok(configs)
 }
@@ -73,44 +84,39 @@ pub async fn save_config(
     config: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<TaxConfig, String> {
-    let id = Uuid::new_v4();
-    let now = Utc::now();
+    let saved = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        ConfigService::save_with_conn(&conn, &config).map_err(|e| e.to_string())?
+    };
+    persist_db(&state).await?;
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn get_migration_notices(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    Ok(db::get_migration_notices(&conn))
+}
+
+#[tauri::command]
+pub async fn dismiss_migration_notices(state: State<'_, AppState>) -> Result<(), String> {
     {
         let guard = state.db.lock().map_err(|e| e.to_string())?;
         let db = guard.as_ref().ok_or("Database not unlocked")?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        // Deactivate all existing configs
-        conn.execute("UPDATE tax_config SET is_active=0", [])
-            .map_err(|e| e.to_string())?;
-        conn.execute(
-            "INSERT INTO tax_config
-             (id,version_label,governed_by,bands_json,relief_caps_json,
-              cgt_thresholds_json,allowance_rates_json,minimum_tax_rate,
-              is_active,last_modified,modified_by)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,'user')",
-            params![
-                id.to_string(),
-                config["versionLabel"].as_str().unwrap_or("Tax Config"),
-                config["governedBy"].as_str().unwrap_or("NTA 2025"),
-                config["bands"].to_string(),
-                config["reliefCaps"].to_string(),
-                config["cgtThresholds"].to_string(),
-                config["allowanceRates"].to_string(),
-                config["minimumTaxRate"].as_f64().unwrap_or(0.01),
-                now.to_rfc3339(),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
+        db::clear_migration_notices(&conn).map_err(|e| e.to_string())?;
     }
-    persist_db(&state).await?;
-    get_active_config(state).await
+    persist_db(&state).await
 }
 
-#[tauri::command]
-pub async fn export_config_json(id: String, state: State<'_, AppState>) -> Result<String, String> {
-    let guard = state.db.lock().map_err(|e| e.to_string())?;
-    let db = guard.as_ref().ok_or("Database not unlocked")?;
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+pub fn export_config_json_with_conn(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> Result<String, String> {
     let cfg = conn
         .query_row(
             "SELECT id,version_label,governed_by,bands_json,relief_caps_json,
@@ -125,13 +131,64 @@ pub async fn export_config_json(id: String, state: State<'_, AppState>) -> Resul
 }
 
 #[tauri::command]
+pub async fn export_config_json(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let guard = state.db.lock().map_err(|e| e.to_string())?;
+    let db = guard.as_ref().ok_or("Database not unlocked")?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    export_config_json_with_conn(&conn, &id)
+}
+
+pub fn import_config_json_with_conn(
+    conn: &rusqlite::Connection,
+    json: &str,
+) -> Result<TaxConfig, String> {
+    let parsed: TaxConfig =
+        serde_json::from_str(json).map_err(|e| format!("Invalid config JSON: {}", e))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Invalid config JSON: {}", e))?;
+
+    // If an exported config is imported onto a DB that already has the same label,
+    // disambiguate cleanly while preserving unique version labels.
+    let base_label = parsed.version_label.trim();
+    let base_label = if base_label.is_empty() {
+        "Imported Tax Config"
+    } else {
+        base_label
+    };
+    let mut candidate = base_label.to_string();
+    let mut suffix = 1u32;
+    while conn
+        .query_row(
+            "SELECT COUNT(1) FROM tax_config WHERE version_label = ?1",
+            params![candidate],
+            |r| r.get::<_, i32>(0),
+        )
+        .unwrap_or(0)
+        > 0
+    {
+        candidate = if suffix == 1 {
+            format!("{} (imported)", base_label)
+        } else {
+            format!("{} (imported {})", base_label, suffix)
+        };
+        suffix += 1;
+    }
+    value["versionLabel"] = serde_json::Value::String(candidate);
+
+    ConfigService::save_with_conn(conn, &value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn import_config_json(
     json: String,
     state: State<'_, AppState>,
 ) -> Result<TaxConfig, String> {
-    // Validate structure
-    let _: TaxConfig =
-        serde_json::from_str(&json).map_err(|e| format!("Invalid config JSON: {}", e))?;
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    save_config(value, state).await
+    let saved = {
+        let guard = state.db.lock().map_err(|e| e.to_string())?;
+        let db = guard.as_ref().ok_or("Database not unlocked")?;
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        import_config_json_with_conn(&conn, &json)?
+    };
+    persist_db(&state).await?;
+    Ok(saved)
 }

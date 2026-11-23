@@ -149,9 +149,9 @@ export class TopbarComponent {
 
   readonly currentYear = new Date().getFullYear();
 
-  private auth = inject(AuthService);
-  private router = inject(Router);
-  private toast = inject(ToastService);
+  private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
+  private readonly toast = inject(ToastService);
   readonly themeService = inject(ThemeService);
 
   private readonly themeCycle: Theme[] = ['light', 'dark', 'system'];
@@ -174,7 +174,7 @@ export class TopbarComponent {
     this.showMenu = false;
     try {
       await this.auth.lock();
-      this.router.navigate(['/unlock']);
+      void this.router.navigate(['/unlock']);
     } catch (err: unknown) {
       this.toast.error('Failed to lock app: ' + (err instanceof Error ? err.message : String(err)));
     }

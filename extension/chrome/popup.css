@@ -134,6 +134,40 @@ body {
   margin-bottom: 10px;
 }
 
+/* ── Enter manually section ─────────────────────────────── */
+
+.manual-section {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.manual-header {
+  padding: 7px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #92400E;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: #FEF3C7;
+}
+.manual-field {
+  padding: 6px 12px;
+  border-top: 1px solid #FDE68A;
+}
+.manual-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.manual-hint {
+  font-size: 10px;
+  color: #78350F;
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
 /* ── Copy section ───────────────────────────────────────── */
 
 .copy-section {

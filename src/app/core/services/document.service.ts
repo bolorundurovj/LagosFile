@@ -6,7 +6,7 @@ const MAX_FILE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 @Injectable({ providedIn: 'root' })
 export class DocumentService {
-  constructor(private tauri: TauriService) {}
+  constructor(private readonly tauri: TauriService) {}
 
   async attachDocument(
     parentEntryId: string,

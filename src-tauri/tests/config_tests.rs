@@ -14,7 +14,10 @@ fn test_get_and_save_config() {
     let new_config = json!({
         "versionLabel": "2026-v1",
         "governedBy": "NTA 2026",
-        "bands": "[]",
+        "bands": [
+            {"lower": 0, "upper": 800000, "rate": 0.0},
+            {"lower": 800000, "upper": null, "rate": 0.15}
+        ],
         "reliefCaps": "{}",
         "cgtThresholds": "{}",
         "allowanceRates": "{}"

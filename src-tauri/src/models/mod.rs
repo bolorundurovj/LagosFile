@@ -56,14 +56,18 @@ pub struct Filing {
     pub filing_reference: Option<String>,
     pub created_at: DateTime<Utc>,
     pub confirmed_at: Option<DateTime<Utc>>,
+    pub submitted_at: Option<DateTime<Utc>>,
     pub total_income_ngn: Option<f64>,
     pub chargeable_income: Option<f64>,
     pub tax_payable: Option<f64>,
     pub wht_credit: Option<f64>,
+    pub paye_credit: Option<f64>,
+    pub foreign_tax_credit: Option<f64>,
     pub net_tax_payable: Option<f64>,
     pub minimum_tax: Option<f64>,
     pub final_tax_payable: Option<f64>,
     pub tax_config_version: String,
+    pub tax_config_id: Option<Uuid>,
     pub payment_date: Option<NaiveDate>,
     pub payment_reference: Option<String>,
     pub amount_paid: Option<f64>,
@@ -89,6 +93,8 @@ pub struct IncomeEntry {
     pub is_cgt_exempt: bool,
     pub cgt_proceeds: Option<f64>,
     pub cgt_gain: Option<f64>,
+    pub bik_category: Option<String>,
+    pub bik_cost: Option<f64>,
     pub documents: Vec<Document>,
 }
 
@@ -100,7 +106,8 @@ pub struct CapitalAllowance {
     pub asset_description: String,
     pub asset_type: String,
     pub asset_cost: f64,
-    pub acquisition_date: NaiveDate,
+    #[serde(default)]
+    pub acquisition_date: Option<NaiveDate>,
     pub tax_written_down_value: f64,
     pub annual_allowance_rate: f64,
     pub annual_allowance_amount: f64,
@@ -156,11 +163,31 @@ pub struct TaxBand {
     pub rate: f64,
 }
 
+fn default_rent_relief_cap() -> f64 {
+    500_000.0
+}
+
+fn default_rent_relief_rate() -> f64 {
+    0.20
+}
+
+fn default_proceeds_threshold() -> f64 {
+    150_000_000.0
+}
+
+fn default_gain_threshold() -> f64 {
+    10_000_000.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReliefCaps {
+    #[serde(default = "default_rent_relief_cap")]
     pub rent_relief_cap: f64,
+    #[serde(default = "default_rent_relief_rate")]
     pub rent_relief_rate: f64,
+    #[serde(default)]
+    pub cra_enabled: bool,
     #[serde(default)]
     pub pension_cap: Option<f64>,
     #[serde(default)]
@@ -172,8 +199,9 @@ pub struct ReliefCaps {
 impl Default for ReliefCaps {
     fn default() -> Self {
         Self {
-            rent_relief_cap: 500_000.0,
-            rent_relief_rate: 0.20,
+            rent_relief_cap: default_rent_relief_cap(),
+            rent_relief_rate: default_rent_relief_rate(),
+            cra_enabled: false,
             pension_cap: None,
             nhis_cap: None,
             nhf_cap: None,
@@ -184,8 +212,19 @@ impl Default for ReliefCaps {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CgtThresholds {
+    #[serde(default = "default_proceeds_threshold")]
     pub proceeds_threshold: f64,
+    #[serde(default = "default_gain_threshold")]
     pub gain_threshold: f64,
+}
+
+impl Default for CgtThresholds {
+    fn default() -> Self {
+        Self {
+            proceeds_threshold: default_proceeds_threshold(),
+            gain_threshold: default_gain_threshold(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +274,10 @@ pub struct ComputationResult {
     pub band_breakdown: Vec<BandResult>,
     pub graduated_tax: f64,
     pub wht_credits: f64,
+    #[serde(default)]
+    pub paye_credits: f64,
+    #[serde(default)]
+    pub foreign_tax_credits: f64,
     pub net_tax_payable: f64,
     pub minimum_tax: f64,
     pub final_tax_payable: f64,
@@ -242,6 +285,8 @@ pub struct ComputationResult {
     pub digital_asset_loss_ringfenced: f64,
     pub config_version: String,
     pub rent_relief_applied: f64,
+    #[serde(default)]
+    pub consolidated_relief_allowance: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -274,8 +319,20 @@ pub struct PendingFilingForeignIncome {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct PendingFilingForeignCurrencySummary {
+    pub currency: String,
+    pub total_amount: f64,
+    pub fx_rate_used: f64,
+    pub fx_rate_source: String,
+    pub naira_equivalent: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingFilingIncome {
     pub employment: f64,
+    #[serde(rename = "benefitsInKind")]
+    pub benefits_in_kind: f64,
     pub business: f64,
     pub rental: f64,
     pub dividend: f64,
@@ -288,6 +345,8 @@ pub struct PendingFilingIncome {
     pub prize: f64,
     pub other: f64,
     pub foreign_income: PendingFilingForeignIncome,
+    #[serde(default)]
+    pub foreign_incomes: Vec<PendingFilingForeignCurrencySummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -312,6 +371,10 @@ pub struct PendingFilingDeductions {
     pub life_assurance: f64,
     #[serde(rename = "rentReliefApplied")]
     pub rent_relief_applied: f64,
+    #[serde(default, rename = "consolidatedReliefAllowance")]
+    pub consolidated_relief_allowance: f64,
+    #[serde(default, rename = "otherApproved")]
+    pub other_approved: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -327,6 +390,10 @@ pub struct PendingFilingComputation {
     pub graduated_tax: f64,
     #[serde(rename = "whtCredits")]
     pub wht_credits: f64,
+    #[serde(default, rename = "payeCredits")]
+    pub paye_credits: f64,
+    #[serde(default, rename = "foreignTaxCredits")]
+    pub foreign_tax_credits: f64,
     #[serde(rename = "netTaxPayable")]
     pub net_tax_payable: f64,
     #[serde(rename = "minimumTax")]
@@ -335,6 +402,21 @@ pub struct PendingFilingComputation {
     pub final_tax_payable: f64,
     #[serde(rename = "configVersion")]
     pub config_version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedPendingFiling {
+    pub filing_id: String,
+    pub year_of_assessment: i32,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingFilingBatch {
+    pub filings: Vec<PendingFiling>,
+    pub failures: Vec<FailedPendingFiling>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -363,4 +445,6 @@ pub struct LIRSAutomationResult {
     pub message: String,
     pub pending_filing_path: Option<String>,
     pub filing_id: String,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }

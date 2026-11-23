@@ -3,10 +3,10 @@ import { FormsModule } from '@angular/forms';
 import { FilingService } from '../../../../core/services/filing.service';
 import { ConfigService } from '../../../../core/services/config.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import { CapitalAllowance, AssetType } from '../../../../core/models';
+import { CapitalAllowance, AssetType, TaxConfig } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { FileDropzoneComponent, DropzoneFile } from '../../../../shared/components/file-dropzone/file-dropzone.component';
-import { queueDocument, flushDocuments } from '../pending-documents';
+import { queueDocument, flushDocuments, removeDocument } from '../pending-documents';
 import { NumericFormatDirective } from '../../../../shared/directives/numeric-format.directive';
 import { LucideAngularModule } from 'lucide-angular';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
@@ -90,7 +90,9 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
               <div class="form-group">
                 <label class="form-label">Cost (₦)</label>
                 <input type="number" class="form-input" [(ngModel)]="entry.assetCost"
-                  [name]="'acost_' + i" min="0" (change)="onCostChange(entry)" />
+                  [name]="'acost_' + i" min="0"
+                  (ngModelChange)="onCostChange(entry)"
+                  (change)="onCostChange(entry)" />
               </div>
               <div class="form-group">
                 <label class="form-label">Date of Acquisition</label>
@@ -143,7 +145,10 @@ const ASSET_TYPES: { value: AssetType; label: string }[] = [
               <label class="form-label" style="margin-bottom:var(--space-2)">Supporting Documents</label>
               <lf-file-dropzone label="Attach invoice or proof of purchase" (fileSelected)="onFileSelected($event, entry)" />
               @for (doc of entry.documents; track doc.id) {
-                <div class="doc-chip" style="display:flex;align-items:center;gap:4px"><lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}</div>
+                <div class="doc-chip" style="display:flex;align-items:center;gap:4px">
+                  <lucide-icon name="paperclip" [size]="13" [strokeWidth]="2"></lucide-icon> {{ doc.fileName }}
+                  <button type="button" class="btn btn--ghost btn--sm" aria-label="Remove attachment" (click)="onRemoveDocument(entry, doc.id)">×</button>
+                </div>
               }
             </div>
           </div>
@@ -209,21 +214,63 @@ export class StepAllowancesComponent implements OnInit {
   next = output<void>();
   back = output<void>();
 
-  private filingService = inject(FilingService);
-  private configService = inject(ConfigService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly configService = inject(ConfigService);
+  private readonly toast = inject(ToastService);
 
   entries = signal<CapitalAllowance[]>([]);
   saving = signal(false);
   loadingPrior = signal(false);
   priorYearLoaded = signal(false);
+  private filingConfig = signal<TaxConfig | null>(null);
   private removedIds: string[] = [];
+  private priorYearIds = new Set<string>();
+  private initialSnapshot = '';
+  private loaded = false;
 
   readonly assetTypes = ASSET_TYPES;
 
-  async ngOnInit(): Promise<void> {
-    const existing = await this.filingService.listAllowances(this.filingId());
-    this.entries.set(existing);
+  private snapshot(): string {
+    return JSON.stringify({ entries: this.entries(), removed: this.removedIds.length });
+  }
+
+  isDirty(): boolean {
+    return this.loaded && this.snapshot() !== this.initialSnapshot;
+  }
+
+  ngOnInit(): void {
+    void this.initialize();
+  }
+
+  private async initialize(): Promise<void> {
+    try {
+      try {
+        if (typeof this.configService.getForFiling === 'function') {
+          this.filingConfig.set(await this.configService.getForFiling(this.filingId()));
+        }
+      } catch { /* fall back to activeConfig */ }
+      const existing = await this.filingService.listAllowances(this.filingId());
+      for (const e of existing) {
+        if (!e.acquisitionDate || e.acquisitionDate === '1970-01-01') {
+          e.acquisitionDate = '';
+        }
+      }
+      this.entries.set(existing);
+      for (const e of existing) {
+        const acqYear = e.acquisitionDate ? Number(e.acquisitionDate.slice(0, 4)) : Number.NaN;
+        if (
+          (e.taxWrittenDownValue > 0 && e.taxWrittenDownValue < e.assetCost) ||
+          (Number.isFinite(acqYear) && acqYear > 1970 && acqYear < this.yearOfAssessment())
+        ) {
+          this.priorYearIds.add(e.id);
+        }
+      }
+    } catch (err) {
+      this.toast.error('Could not load capital allowances: ' + String(err));
+    } finally {
+      this.initialSnapshot = this.snapshot();
+      this.loaded = true;
+    }
   }
 
   labelFor(type: AssetType): string {
@@ -231,7 +278,7 @@ export class StepAllowancesComponent implements OnInit {
   }
 
   rateFor(type: AssetType): number {
-    const config = this.configService.activeConfig();
+    const config = this.filingConfig() ?? this.configService.activeConfig();
     return config?.allowanceRates?.[type] ?? 0.25;
   }
 
@@ -259,28 +306,44 @@ export class StepAllowancesComponent implements OnInit {
   /** Straight-line on cost, limited to the remaining written-down value. */
   recalculate(entry: CapitalAllowance): void {
     const rate = this.rateFor(entry.assetType);
+    const cost = Number(entry.assetCost ?? 0) || 0;
+    const wdv = Number(entry.taxWrittenDownValue ?? 0) || 0;
+    entry.assetCost = cost;
+    entry.taxWrittenDownValue = wdv;
     entry.annualAllowanceRate = rate;
-    const opening = entry.taxWrittenDownValue > 0 ? entry.taxWrittenDownValue : entry.assetCost;
-    entry.annualAllowanceAmount = Math.max(0, Math.min(entry.assetCost * rate, opening));
+    const opening = wdv > 0 ? wdv : cost;
+    entry.annualAllowanceAmount = Math.max(0, Math.min(cost * rate, opening));
   }
 
   onCostChange(entry: CapitalAllowance): void {
-    if (!this.isFromPriorYear(entry) && (!entry.taxWrittenDownValue || entry.taxWrittenDownValue > entry.assetCost)) {
-      entry.taxWrittenDownValue = entry.assetCost;
+    const cost = Number(entry.assetCost ?? 0) || 0;
+    entry.assetCost = cost;
+    if (!this.isFromPriorYear(entry)) {
+      entry.taxWrittenDownValue = cost;
     }
     this.recalculate(entry);
   }
 
   isFromPriorYear(entry: CapitalAllowance): boolean {
-    return !!(entry as any)._fromPriorYear;
+    return this.priorYearIds.has(entry.id);
   }
 
-  /** Fetch closing WDV entries from the prior confirmed filing. */
+  private assetKey(a: {
+    assetDescription?: string;
+    assetType?: string;
+    assetCost?: number;
+    acquisitionDate?: string;
+  }): string {
+    return [
+      (a.assetDescription ?? '').trim().toLowerCase(),
+      (a.assetType ?? '').trim().toLowerCase(),
+      String(Number(a.assetCost ?? 0)),
+      (a.acquisitionDate ?? '').trim(),
+    ].join('|');
+  }
+
+  /** Fetch closing WDV entries from the prior confirmed filing, skipping assets already present. */
   async loadFromPriorYear(): Promise<void> {
-    if (this.priorYearLoaded()) {
-      this.toast.info(`Prior-year allowances for YOA ${this.yearOfAssessment() - 1} were already loaded.`);
-      return;
-    }
     this.loadingPrior.set(true);
     try {
       const prior = await this.filingService.getPriorYearAllowances(this.yearOfAssessment());
@@ -288,21 +351,37 @@ export class StepAllowancesComponent implements OnInit {
         this.toast.info(`No confirmed capital allowances found for YOA ${this.yearOfAssessment() - 1}.`);
         return;
       }
-      const newEntries: CapitalAllowance[] = prior.map(p => ({
-        id: crypto.randomUUID(),
-        filingId: this.filingId(),
-        assetType: (p.assetType ?? 'other') as AssetType,
-        assetDescription: p.assetDescription ?? '',
-        assetCost: p.assetCost ?? 0,
-        acquisitionDate: p.acquisitionDate ?? '',
-        taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
-        annualAllowanceRate: p.annualAllowanceRate ?? 0,
-        annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
-        documents: [],
-        _fromPriorYear: true,
-      } as CapitalAllowance & { _fromPriorYear: boolean }));
-      this.entries.update(e => [...e, ...newEntries]);
+      const existingKeys = new Set(this.entries().map(e => this.assetKey(e)));
+      const newEntries: CapitalAllowance[] = [];
+      for (const p of prior) {
+        const normalizedDate = !p.acquisitionDate || p.acquisitionDate === '1970-01-01' ? '' : p.acquisitionDate;
+        const normalized = { ...p, acquisitionDate: normalizedDate };
+        const key = this.assetKey(normalized);
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        const id = crypto.randomUUID();
+        this.priorYearIds.add(id);
+        const newEntry: CapitalAllowance = {
+          id,
+          filingId: this.filingId(),
+          assetType: (p.assetType ?? 'other') as AssetType,
+          assetDescription: p.assetDescription ?? '',
+          assetCost: p.assetCost ?? 0,
+          acquisitionDate: normalizedDate,
+          taxWrittenDownValue: p.taxWrittenDownValue ?? 0,
+          annualAllowanceRate: p.annualAllowanceRate ?? 0,
+          annualAllowanceAmount: p.annualAllowanceAmount ?? 0,
+          documents: [],
+        };
+        this.recalculate(newEntry);
+        newEntries.push(newEntry);
+      }
       this.priorYearLoaded.set(true);
+      if (newEntries.length === 0) {
+        this.toast.info(`All prior-year assets for YOA ${this.yearOfAssessment() - 1} are already on this filing.`);
+        return;
+      }
+      this.entries.update(e => [...e, ...newEntries]);
       this.toast.success(`Loaded ${newEntries.length} asset(s) from YOA ${this.yearOfAssessment() - 1} with updated WDVs.`);
     } catch (err) {
       this.toast.error('Could not load prior year allowances: ' + String(err));
@@ -316,26 +395,47 @@ export class StepAllowancesComponent implements OnInit {
     if (error) this.toast.error(error);
   }
 
+  async onRemoveDocument(entry: CapitalAllowance, docId: string): Promise<void> {
+    const error = await removeDocument(this.filingService, entry, docId);
+    if (error) this.toast.error('Could not remove document: ' + error);
+  }
+
   readonly totalAllowance = () =>
     this.entries().reduce((s, e) => s + (e.annualAllowanceAmount ?? 0), 0);
 
-  async saveAndNext(): Promise<void> {
+  async save(): Promise<boolean> {
     this.saving.set(true);
     try {
-      for (const id of this.removedIds) await this.filingService.deleteAllowance(id);
-      this.removedIds = [];
-      const failed: string[] = [];
+      const fid = this.filingId();
+      const toSave: CapitalAllowance[] = [];
       for (const entry of this.entries()) {
         this.recalculate(entry);
-        await this.filingService.upsertAllowance({ ...entry, filingId: this.filingId() });
+        toSave.push({ ...entry, filingId: fid });
+      }
+      await this.filingService.saveAllowances(fid, toSave, [...this.removedIds]);
+      this.removedIds = [];
+
+      const failed: string[] = [];
+      for (const entry of this.entries()) {
         failed.push(...await flushDocuments(this.filingService, entry, 'capital_allowance'));
       }
-      if (failed.length) this.toast.error('Could not attach ' + failed.join('; '));
-      this.next.emit();
+      if (failed.length) {
+        this.toast.error('Could not attach ' + failed.join('; '));
+        return false;
+      }
+      this.initialSnapshot = this.snapshot();
+      return true;
     } catch (err) {
       this.toast.error('Could not save allowances: ' + String(err));
+      return false;
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  async saveAndNext(): Promise<void> {
+    if (await this.save()) {
+      this.next.emit();
     }
   }
 }

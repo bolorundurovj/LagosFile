@@ -50,10 +50,16 @@
     <div class="steps-grid">
       <button type="button" id="fill-income-btn"      class="btn btn--primary btn--full">Fill Income</button>
       <button type="button" id="fill-deductions-btn"  class="btn btn--secondary btn--full">Fill Deductions</button>
+      <button type="button" id="fill-adjustments-btn" class="btn btn--secondary btn--full">Fill Adjustments</button>
       <button type="button" id="fill-reliefs-btn"     class="btn btn--secondary btn--full">Fill Reliefs</button>
       <button type="button" id="fill-wht-btn"         class="btn btn--secondary btn--full">Fill Withheld Taxes</button>
-      <button type="button" id="fill-adjustments-btn" class="btn btn--secondary btn--full">Fill Adjustments</button>
+      <button type="button" id="fill-others-btn"      class="btn btn--secondary btn--full">Fill Others (PAYE / DTR)</button>
       <button type="button" id="fill-all-btn"         class="btn btn--accent btn--full">Auto-Fill All Tabs</button>
+    </div>
+
+    <div id="manual-section" class="manual-section hidden">
+      <div class="manual-header">Enter Manually</div>
+      <div id="manual-fields"></div>
     </div>
 
     <details class="copy-section">
@@ -70,9 +76,30 @@
   <!-- ── State: Offline / manual load ── -->
   <div id="state-offline" class="state hidden">
     <div class="state-icon">&#x26A0;</div>
-    <p class="state-title">LagosFile Not Detected</p>
-    <p class="state-desc">
+    <p id="offline-title" class="state-title">LagosFile Not Detected</p>
+    <p id="offline-desc" class="state-desc">
       Open LagosFile, then click <strong>File with LIRS</strong> on any confirmed filing.
       Then click Refresh below.
     </p>
-    <p class="state-desc state-desc--alt">Or load <code>pending_filing.json</code> manu
+    <p class="state-desc state-desc--alt">Or load <code>pending_filing.json</code> manually:</p>
+    <div class="input-group">
+      <textarea id="json-input" aria-label="Filing data JSON" placeholder='Paste JSON or click "Open File"…' rows="5"></textarea>
+    </div>
+    <div id="parse-error" class="error-text hidden"></div>
+    <div class="button-row">
+      <button type="button" id="load-file-btn"  class="btn btn--secondary">Open File</button>
+      <button type="button" id="parse-json-btn" class="btn btn--primary">Load Data</button>
+    </div>
+    <button type="button" id="offline-refresh-btn" class="btn btn--ghost btn--full" style="margin-top:6px">&#x21BB; Try Again</button>
+  </div>
+
+  <footer class="popup-footer">
+    <span>v1.3.0</span> <!-- x-release-please-version -->
+    <span id="status-text">Connecting…</span>
+  </footer>
+
+  <input type="file" id="file-input" accept=".json" class="hidden" aria-label="Load filing JSON file">
+  <script src="autofill-core.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

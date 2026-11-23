@@ -101,6 +101,30 @@ describe('FilingService', () => {
       expect(tauriSpy.invoke).toHaveBeenCalledWith('delete_income_entry', { id: 'id' });
     });
 
+    it('should batch save income entries, allowances, and relief entries', async () => {
+      tauriSpy.invoke.and.resolveTo(['e1']);
+      await service.saveIncomeEntries('f1', [{ id: 'e1', filingId: 'f1' }], ['old1']);
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('save_income_entries', {
+        filingId: 'f1',
+        upserts: [{ id: 'e1', filingId: 'f1' }],
+        deleteIds: ['old1'],
+      });
+
+      await service.saveAllowances('f1', [{ id: 'a1', filingId: 'f1' }], ['oldA']);
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('save_allowances', {
+        filingId: 'f1',
+        upserts: [{ id: 'a1', filingId: 'f1' }],
+        deleteIds: ['oldA'],
+      });
+
+      await service.saveReliefEntries('f1', [{ id: 'r1', filingId: 'f1' }], ['oldR']);
+      expect(tauriSpy.invoke).toHaveBeenCalledWith('save_relief_entries', {
+        filingId: 'f1',
+        upserts: [{ id: 'r1', filingId: 'f1' }],
+        deleteIds: ['oldR'],
+      });
+    });
+
     it('should list allowances', async () => {
       tauriSpy.invoke.and.resolveTo([]);
       await service.listAllowances('id');

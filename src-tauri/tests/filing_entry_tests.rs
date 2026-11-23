@@ -631,7 +631,7 @@ fn test_migration_adds_columns_to_existing_database() {
             .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
             .unwrap();
         assert!(
-            stmt.column_names().contains(&column),
+            stmt.column_names().any(|c| c == column),
             "{table}.{column} missing"
         );
     }
@@ -645,13 +645,15 @@ fn test_estimate_entries_use_config_allowance_rate() {
     use lagosfile_lib::services::computation::ComputationEngine;
 
     let db = AppDb::open_in_memory().unwrap();
-    let config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    let mut config = lagosfile_lib::services::config::ConfigService::get_active(&db).unwrap();
+    // NTA 2025 Class 3 software rate is 25% -> 300k * 0.25 = 75k
     let (income, allowances, reliefs) = build_estimate_entries(
         vec![EstimateIncome {
             income_type: "business".into(),
             gross_amount_ngn: 10_000_000.0,
             cgt_proceeds: None,
             cgt_gain: None,
+            ..Default::default()
         }],
         vec![EstimateAllowance {
             asset_type: "software_licence".into(),
@@ -665,6 +667,418 @@ fn test_estimate_entries_use_config_allowance_rate() {
         &config,
     );
     let r = ComputationEngine::compute(&income, &allowances, &reliefs, &config).unwrap();
-    assert!((r.total_capital_allowances - 99_000.0).abs() < 1e-6);
+    assert!((r.total_capital_allowances - 75_000.0).abs() < 1e-6);
     assert_eq!(r.total_deductions, 800_000.0);
+
+    // Custom config rate is respected instead of the 0.25 default
+    config
+        .allowance_rates
+        .insert("software_licence".to_string(), 0.33);
+    let (income2, allowances2, reliefs2) = build_estimate_entries(
+        vec![EstimateIncome {
+            income_type: "business".into(),
+            gross_amount_ngn: 10_000_000.0,
+            cgt_proceeds: None,
+            cgt_gain: None,
+            ..Default::default()
+        }],
+        vec![EstimateAllowance {
+            asset_type: "software_licence".into(),
+            asset_cost: 300_000.0,
+            tax_written_down_value: None,
+        }],
+        vec![],
+        &config,
+    );
+    let r2 = ComputationEngine::compute(&income2, &allowances2, &reliefs2, &config).unwrap();
+    assert!((r2.total_capital_allowances - 99_000.0).abs() < 1e-6);
+}
+
+#[test]
+fn test_s25_batch_saves_execute_one_vault_write_per_step_and_rollback_on_invalid_entry() {
+    use lagosfile_lib::{
+        commands::{
+            auth::{setup_pin_in_dir, unlock_db_in_dir},
+            filing::{
+                create_draft_filing_with_conn, save_allowances_in_dir_with_hook,
+                save_income_entries_in_dir_with_hook, save_relief_entries_in_dir_with_hook,
+            },
+        },
+        AppState,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-s25-{}", Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let filing_id = {
+        let guard = state.db.lock().unwrap();
+        let db = guard.as_ref().unwrap();
+        ProfileService::create(
+            db,
+            json!({ "fullName": "Batch User", "tin": "1234567890123" }),
+        )
+        .unwrap();
+        let conn = db.conn.lock().unwrap();
+        create_draft_filing_with_conn(&conn, 2025)
+            .unwrap()
+            .id
+            .to_string()
+    };
+
+    // Seed one income entry so we can test upsert + delete in one batch
+    let seed_inc_id = Uuid::new_v4().to_string();
+    let write_count = AtomicUsize::new(0);
+    save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[json!({
+            "id": seed_inc_id,
+            "filingId": filing_id,
+            "incomeType": "employment",
+            "grossAmountNgn": 1_000_000.0
+        })],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // 1. Batch with invalid entry must roll back BOTH the delete of seed_inc_id and the earlier valid insert,
+    //    and make ZERO vault writes.
+    write_count.store(0, Ordering::SeqCst);
+    let bad_income = save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({
+                "id": Uuid::new_v4().to_string(),
+                "filingId": filing_id,
+                "incomeType": "employment",
+                "grossAmountNgn": 2_000_000.0
+            }),
+            json!({
+                "id": Uuid::new_v4().to_string(),
+                "filingId": filing_id,
+                "incomeType": "employment",
+                "grossAmountNgn": -500.0
+            }),
+        ],
+        std::slice::from_ref(&seed_inc_id),
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    assert!(bad_income.is_err());
+    assert_eq!(
+        write_count.load(Ordering::SeqCst),
+        0,
+        "failed batch must not write vault"
+    );
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE filing_id=?1",
+                rusqlite::params![filing_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "rollback must leave only the original seeded entry"
+        );
+        let still_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE id=?1",
+                rusqlite::params![seed_inc_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_exists, 1, "rollback must restore the deleted entry");
+    }
+
+    // 2. Valid batch with 4 upserts + 1 delete executes EXACTLY 1 vault write
+    write_count.store(0, Ordering::SeqCst);
+    save_income_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "employment", "grossAmountNgn": 2_000_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "business", "grossAmountNgn": 1_500_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "dividend", "grossAmountNgn": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "incomeType": "interest", "grossAmountNgn": 100_000.0 }),
+        ],
+        &[seed_inc_id],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        write_count.load(Ordering::SeqCst),
+        1,
+        "income batch of 4 upserts + 1 delete must write vault exactly once"
+    );
+
+    // 3. Allowances: invalid rate rolls back (0 writes), valid batch of 3 upserts writes vault once
+    write_count.store(0, Ordering::SeqCst);
+    assert!(save_allowances_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 100_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 2.5, "annualAllowanceAmount": 100_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .is_err());
+    assert_eq!(write_count.load(Ordering::SeqCst), 0);
+
+    save_allowances_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "computer_laptop", "assetCost": 1_000_000.0, "taxWrittenDownValue": 1_000_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 250_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "assetType": "monitor", "assetCost": 400_000.0, "taxWrittenDownValue": 400_000.0, "annualAllowanceRate": 0.25, "annualAllowanceAmount": 100_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // 4. Reliefs: invalid negative amount rolls back (0 writes), valid batch of 4 upserts writes vault once
+    write_count.store(0, Ordering::SeqCst);
+    assert!(save_relief_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "pension", "claimedAmount": 300_000.0, "approvedAmount": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "nhf", "claimedAmount": -100.0, "approvedAmount": 0.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .is_err());
+    assert_eq!(write_count.load(Ordering::SeqCst), 0);
+
+    save_relief_entries_in_dir_with_hook(
+        &dir,
+        &filing_id,
+        &[
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "pension", "claimedAmount": 300_000.0, "approvedAmount": 300_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "nhf", "claimedAmount": 100_000.0, "approvedAmount": 100_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "rent", "claimedAmount": 1_500_000.0, "approvedAmount": 1_500_000.0 }),
+            json!({ "id": Uuid::new_v4().to_string(), "reliefType": "wht", "claimedAmount": 50_000.0, "approvedAmount": 50_000.0 }),
+        ],
+        &[],
+        &state,
+        |_| {
+            write_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(write_count.load(Ordering::SeqCst), 1);
+
+    // Reload from disk to confirm all batch writes persisted
+    let reloaded = AppState::default();
+    unlock_db_in_dir(&dir, "1234", &reloaded).unwrap();
+    let guard = reloaded.db.lock().unwrap();
+    let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+    let inc_cnt: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM income_entry WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let ca_cnt: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM capital_allowance WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let rel_cnt: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM relief_entry WHERE filing_id=?1",
+            rusqlite::params![filing_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(inc_cnt, 4);
+    assert_eq!(ca_cnt, 2);
+    assert_eq!(rel_cnt, 4);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_cross_table_and_cross_filing_delete_bypass_blocked() {
+    use lagosfile_lib::{
+        commands::{
+            auth::setup_pin_in_dir,
+            document::attach_document_in_dir,
+            filing::{
+                confirm_filing_with_conn, delete_income_entry_with_conn,
+                save_income_entries_in_dir_with_hook,
+            },
+        },
+        AppState,
+    };
+    use serde_json::json;
+
+    let dir = std::env::temp_dir().join(format!("lagosfile-xtable-{}", Uuid::new_v4()));
+    let state = AppState::default();
+    setup_pin_in_dir(&dir, "1234", &state).unwrap();
+
+    let draft_a = Uuid::new_v4().to_string();
+    let draft_b = Uuid::new_v4().to_string();
+    let filed_id = Uuid::new_v4().to_string();
+    let inc_a = Uuid::new_v4().to_string();
+    let inc_b = Uuid::new_v4().to_string();
+    let filed_relief_id = Uuid::new_v4().to_string();
+    let filed_inc_id = Uuid::new_v4().to_string();
+
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO taxpayer (id, full_name, tin, created_at) VALUES ('tp-1', 'Ada', '11111111-0001', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        for (fid, yr) in [(&draft_a, 2025), (&draft_b, 2024), (&filed_id, 2023)] {
+            conn.execute(
+                "INSERT INTO filing (id, taxpayer_id, year_of_assessment, status, tax_config_version, created_at)
+                 VALUES (?1, 'tp-1', ?2, 'Draft', 'v1', '2026-01-01T00:00:00Z')",
+                rusqlite::params![fid, yr],
+            ).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 1000000)",
+            rusqlite::params![inc_a, draft_a],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 2000000)",
+            rusqlite::params![inc_b, draft_b],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO income_entry (id, filing_id, income_type, gross_amount_ngn) VALUES (?1, ?2, 'employment', 3000000)",
+            rusqlite::params![filed_inc_id, filed_id],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO relief_entry (id, filing_id, relief_type, claimed_amount, approved_amount) VALUES (?1, ?2, 'pension', 200000, 200000)",
+            rusqlite::params![filed_relief_id, filed_id],
+        ).unwrap();
+    }
+
+    let doc_src = dir.join("pension.txt");
+    std::fs::write(&doc_src, b"pension proof").unwrap();
+    attach_document_in_dir(
+        &dir,
+        &filed_relief_id,
+        "relief_entry",
+        doc_src.to_str().unwrap(),
+        "pension.txt",
+        "txt",
+        13,
+        &state,
+    )
+    .unwrap();
+
+    // Confirm filed_id so its entries & documents are immutable.
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        confirm_filing_with_conn(&conn, &filed_id).unwrap();
+
+        // 1. Cross-table delete: passing a Confirmed filing's relief_entry ID to delete_income_entry MUST fail and keep its doc!
+        let err = delete_income_entry_with_conn(&conn, &filed_relief_id)
+            .expect_err("cross-table delete must be rejected");
+        assert!(err.contains("does not belong to table"));
+        let doc_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM document WHERE parent_entry_id=?1",
+                rusqlite::params![filed_relief_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            doc_count, 1,
+            "Confirmed filing's relief document must remain intact"
+        );
+    }
+
+    // 2. Cross-filing batch delete: saving Draft A with Draft B's income ID in delete_ids MUST reject the whole batch!
+    let batch_err = save_income_entries_in_dir_with_hook(
+        &dir,
+        &draft_a,
+        &[json!({ "id": inc_a, "incomeType": "employment", "grossAmountNgn": 1_500_000.0 })],
+        std::slice::from_ref(&inc_b),
+        &state,
+        |_| Ok(()),
+    )
+    .expect_err("cross-filing delete_id in batch save must fail");
+    assert!(batch_err.contains("different filing"));
+
+    // Both Draft A and Draft B remain untouched (batch rolled back).
+    {
+        let guard = state.db.lock().unwrap();
+        let conn = guard.as_ref().unwrap().conn.lock().unwrap();
+        let a_amt: f64 = conn
+            .query_row(
+                "SELECT gross_amount_ngn FROM income_entry WHERE id=?1",
+                rusqlite::params![inc_a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let b_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM income_entry WHERE id=?1",
+                rusqlite::params![inc_b],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(a_amt, 1_000_000.0);
+        assert_eq!(b_exists, 1);
+    }
+
+    // 3. Cross-filing batch upsert hijack: trying to overwrite Draft B's entry ID inside Draft A's batch MUST fail!
+    let hijack_err = save_income_entries_in_dir_with_hook(
+        &dir,
+        &draft_a,
+        &[json!({ "id": inc_b, "incomeType": "employment", "grossAmountNgn": 999.0 })],
+        &[],
+        &state,
+        |_| Ok(()),
+    )
+    .expect_err("cross-filing upsert ID hijack must fail");
+    assert!(hijack_err.contains("different filing"));
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

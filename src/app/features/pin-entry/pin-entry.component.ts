@@ -112,7 +112,7 @@ export class PinEntryComponent {
   errorMsg = '';
 
   auth = inject(AuthService);
-  private router = inject(Router);
+  private readonly router = inject(Router);
   readonly lockedForIdle = inject(ActivatedRoute).snapshot.queryParamMap.get('reason') === 'idle';
 
   async submit(): Promise<void> {
@@ -122,7 +122,7 @@ export class PinEntryComponent {
     try {
       const result = await this.auth.unlock(this.pin);
       if (result.success) {
-        this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
+        void this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
       } else {
         this.errorMsg = result.error ?? 'Incorrect PIN. Please try again.';
       }
@@ -137,7 +137,7 @@ export class PinEntryComponent {
     try {
       const result = await this.auth.unlockWithBiometric();
       if (result.success) {
-        this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
+        void this.router.navigate([this.auth.state() === 'needs_profile' ? '/profile-setup' : '/dashboard']);
       } else {
         this.errorMsg = result.error ?? 'Biometric authentication failed.';
       }

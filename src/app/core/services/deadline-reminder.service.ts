@@ -47,7 +47,7 @@ export function buildDeadlineIcs(yearOfAssessment: number, now = new Date()): st
 /** Raises a desktop notification, at most once a day, while the deadline is near and unfiled. */
 @Injectable({ providedIn: 'root' })
 export class DeadlineReminderService {
-  private filingService = inject(FilingService);
+  private readonly filingService = inject(FilingService);
 
   async check(today = new Date()): Promise<void> {
     const days = daysUntilMarch31(today.getFullYear(), today);

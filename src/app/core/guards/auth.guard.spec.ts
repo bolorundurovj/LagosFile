@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { authGuard, publicGuard } from './auth.guard';
+import { authGuard, firstRunGuard, publicGuard } from './auth.guard';
 import { AuthService } from '../services/auth.service';
 import { TauriService } from '../services/tauri.service';
 
@@ -101,5 +101,57 @@ describe('publicGuard', () => {
     const result = TestBed.runInInjectionContext(() => publicGuard({} as any, {} as any));
 
     expect(result).toBeTrue();
+  });
+});
+
+describe('firstRunGuard', () => {
+  let authService: jasmine.SpyObj<AuthService>;
+  let router: jasmine.SpyObj<Router>;
+
+  beforeEach(() => {
+    const spy = jasmine.createSpyObj('AuthService', ['isUnlocked', 'hasExistingDb']);
+    const routerSpy = jasmine.createSpyObj('Router', ['createUrlTree']);
+
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: AuthService, useValue: spy },
+        { provide: Router, useValue: routerSpy },
+      ],
+    });
+
+    authService = TestBed.inject(AuthService) as jasmine.SpyObj<AuthService>;
+    router = TestBed.inject(Router) as jasmine.SpyObj<Router>;
+  });
+
+  it('allows access when locked and no DB exists', async () => {
+    authService.isUnlocked.and.returnValue(false);
+    authService.hasExistingDb.and.resolveTo(false);
+
+    const result = await TestBed.runInInjectionContext(() => firstRunGuard({} as any, {} as any));
+
+    expect(result).toBeTrue();
+  });
+
+  it('redirects to /unlock when a DB already exists', async () => {
+    const tree = {} as any;
+    authService.isUnlocked.and.returnValue(false);
+    authService.hasExistingDb.and.resolveTo(true);
+    router.createUrlTree.and.returnValue(tree);
+
+    const result = await TestBed.runInInjectionContext(() => firstRunGuard({} as any, {} as any));
+
+    expect(router.createUrlTree).toHaveBeenCalledWith(['/unlock']);
+    expect(result).toBe(tree);
+  });
+
+  it('redirects to /dashboard when already unlocked', async () => {
+    const tree = {} as any;
+    authService.isUnlocked.and.returnValue(true);
+    router.createUrlTree.and.returnValue(tree);
+
+    const result = await TestBed.runInInjectionContext(() => firstRunGuard({} as any, {} as any));
+
+    expect(router.createUrlTree).toHaveBeenCalledWith(['/dashboard']);
+    expect(result).toBe(tree);
   });
 });

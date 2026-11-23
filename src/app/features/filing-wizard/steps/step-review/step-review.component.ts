@@ -1,20 +1,15 @@
 import { Component, input, output, inject, OnInit, signal, computed } from '@angular/core';
 import { FilingService } from '../../../../core/services/filing.service';
-import { LIRSService } from '../../../../core/services/lirs.service';
 import { ToastService } from '../../../../core/services/toast.service';
-import {
-  ComputationResult, LIRSFieldGroup,
-  Filing,
-} from '../../../../core/models';
+import { ComputationResult, Filing } from '../../../../core/models';
 import { NairaPipe } from '../../../../shared/pipes/naira.pipe';
 import { HelpTooltipComponent } from '../../../../shared/components/help-tooltip/help-tooltip.component';
-import { LIRSReferencePanelComponent } from '../../../../shared/components/lirs-reference-panel/lirs-reference-panel.component';
 import { LucideAngularModule } from 'lucide-angular';
 
 @Component({
   selector: 'lf-step-review',
   standalone: true,
-  imports: [NairaPipe, LucideAngularModule, HelpTooltipComponent, LIRSReferencePanelComponent],
+  imports: [NairaPipe, LucideAngularModule, HelpTooltipComponent],
   template: `
     <div class="step-page">
       <div class="step-page__header">
@@ -26,43 +21,6 @@ import { LucideAngularModule } from 'lucide-angular';
 
       @if (loading()) {
         <div class="skeleton" style="height:500px;border-radius:var(--radius-xl)"></div>
-      } @else if (confirmedFiling()) {
-        <!-- Post-confirmation: success state -->
-        <div class="card" style="text-align:center;padding:var(--space-8)">
-          <div style="font-size:3rem;margin-bottom:var(--space-4);color:var(--color-success)">
-            <lucide-icon name="check" [size]="48" [strokeWidth]="2.5"></lucide-icon>
-          </div>
-          <h2 class="headline-sm" style="margin-bottom:var(--space-2)">Filing Confirmed</h2>
-          <p class="body-md" style="margin-bottom:var(--space-4)">
-            Reference: <strong>{{ confirmedFiling()!.filingReference }}</strong>
-          </p>
-
-          <div class="computation-total" style="margin-bottom:var(--space-5)">
-            <div class="total-label">Final Tax Payable</div>
-            <div class="total-value">{{ confirmedFiling()!.finalTaxPayable ?? 0 | naira }}</div>
-          </div>
-
-          <p class="body-sm text-muted" style="margin-bottom:var(--space-6)">
-            Your filing is ready to submit to LIRS. Click below to open the LIRS e-Tax portal.
-            The extension will read your filing data from <code>~/LagosFile/pending_filing.json</code>.
-          </p>
-
-          <div class="flex gap-3 justify-center" style="flex-wrap:wrap;margin-bottom:var(--space-4)">
-            <button class="btn btn--ghost" (click)="onGoToHistory()">Go to History</button>
-            <button
-              class="btn btn--primary btn--lg"
-              (click)="fileWithLirs()"
-              [disabled]="filingWithLirs()"
-            >
-              @if (filingWithLirs()) {
-                Opening Portal...
-              } @else {
-                <lucide-icon name="send" [size]="16" [strokeWidth]="2" style="vertical-align:middle;margin-right:6px"></lucide-icon>
-                File with LIRS
-              }
-            </button>
-          </div>
-        </div>
       } @else if (result()) {
         <!-- Tax breakdown card -->
         <div class="card">
@@ -77,8 +35,14 @@ import { LucideAngularModule } from 'lucide-angular';
               <span>Less: Capital Allowances<lf-help text="Annual allowances on qualifying professional assets, prorated to the taxable period (NTA 2025, Fourth Schedule)."></lf-help></span>
               <span class="financial-value">({{ result()!.proratedCapitalAllowances | naira }})</span>
             </div>
+            @if ((result()!.consolidatedReliefAllowance ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Includes: Consolidated Relief Allowance (PITA)<lf-help text="Higher of ₦200,000 or 1% of gross income plus 20% of gross income after tax-exempt items (PITA / Finance Act 2020)."></lf-help></span>
+                <span class="financial-value">({{ result()!.consolidatedReliefAllowance | naira }})</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: Deductions &amp; Reliefs<lf-help text="Total of pension, NHIS, NHF, life assurance, rent relief, WHT credits and other approved deductions."></lf-help></span>
+              <span>Less: Deductions &amp; Reliefs<lf-help text="Total of pension, NHIS, NHF, life assurance, rent relief (NTA 2025) or CRA (PITA), and other approved deductions."></lf-help></span>
               <span class="financial-value">({{ result()!.totalDeductions | naira }})</span>
             </div>
             <div class="breakdown-row breakdown-row--subtotal">
@@ -90,7 +54,7 @@ import { LucideAngularModule } from 'lucide-angular';
           <!-- Band breakdown -->
           <div style="margin:var(--space-5) 0">
             <div class="label-sm" style="margin-bottom:var(--space-3)">TAX BY BAND</div>
-            @for (band of result()!.bandBreakdown; track band.lower) {
+            @for (band of result()!.bandBreakdown; track band.lower; let idx = $index) {
               <div class="band-row">
                 <span class="band-label">
                   {{ band.lower | naira }} – {{ band.upper != null ? (band.upper | naira) : 'above' }}
@@ -99,7 +63,7 @@ import { LucideAngularModule } from 'lucide-angular';
                 <div class="band-bar-wrapper">
                   <div class="band-bar"
                     [style.width.%]="bandPct(band.taxableAmount)"
-                    [style.background]="bandColor(band.rate)">
+                    [style.background]="bandColor(idx)">
                   </div>
                 </div>
                 <span class="financial-value band-amount">{{ band.taxAmount | naira }}</span>
@@ -109,42 +73,55 @@ import { LucideAngularModule } from 'lucide-angular';
 
           <div class="breakdown-table" style="margin-top:var(--space-3)">
             <div class="breakdown-row">
-              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
+              <span>Graduated Tax<lf-help [text]="graduatedTaxTooltip()"></lf-help></span>
               <span class="financial-value">{{ result()!.graduatedTax | naira }}</span>
             </div>
+            @if (result()!.minimumTax > 0) {
+              <div class="breakdown-row">
+                <span>Minimum Tax Floor<lf-help text="Minimum tax liability floor configured for this return's tax regime, applied before subtracting tax credits."></lf-help></span>
+                <span class="financial-value">{{ result()!.minimumTax | naira }}</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--deduct">
-              <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable."></lf-help></span>
+              <span>Less: WHT Credits<lf-help text="Withholding Tax already deducted at source by payers and evidenced by WHT receipts. Directly reduces tax payable after any minimum tax floor."></lf-help></span>
               <span class="financial-value">({{ result()!.whtCredits | naira }})</span>
             </div>
+            @if ((result()!.payeCredits ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: PAYE Credits<lf-help text="PAYE tax already withheld by your employer(s) during the income year. Directly reduces tax payable."></lf-help></span>
+                <span class="financial-value">({{ result()!.payeCredits | naira }})</span>
+              </div>
+            }
+            @if ((result()!.foreignTaxCredits ?? 0) > 0) {
+              <div class="breakdown-row breakdown-row--deduct">
+                <span>Less: Foreign Tax Credits<lf-help text="Double-taxation credit for foreign tax paid on foreign income, capped per entry at the Nigerian tax attributable to that entry."></lf-help></span>
+                <span class="financial-value">({{ result()!.foreignTaxCredits | naira }})</span>
+              </div>
+            }
             <div class="breakdown-row breakdown-row--subtotal">
-              <span>Net Tax Payable<lf-help text="Graduated tax after subtracting WHT credits. Compared against minimum tax — the higher figure becomes the final liability."></lf-help></span>
+              <span>Net Tax Payable<lf-help text="Tax liability after applying any minimum tax floor and subtracting tax credits (floored at zero)."></lf-help></span>
               <span class="financial-value">{{ result()!.netTaxPayable | naira }}</span>
             </div>
           </div>
 
-          <!-- Minimum tax comparison -->
-          <div class="min-tax-panel">
-            <div class="min-tax-panel__title">Minimum Tax Comparison<lf-help text="NTA 2025 s.43 may require a minimum tax of 1% of gross income regardless of deductions. Applicability to individuals is unconfirmed — verify with LIRS." align="left"></lf-help></div>
-            <div class="min-tax-panel__row">
-              <span>Graduated Tax<lf-help text="Tax computed by applying the progressive rate bands (7% → 11% → 15% → 19% → 21% → 24%) to slices of chargeable income."></lf-help></span>
-              <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
-                {{ result()!.netTaxPayable | naira }}
-              </span>
-            </div>
-            <div class="min-tax-panel__row">
-              <span>1% Minimum Tax (of gross income)</span>
-              <span [class.highlighted]="result()!.minimumTax > result()!.graduatedTax">
-                {{ result()!.minimumTax | naira }}
-              </span>
-            </div>
-            <div class="alert alert--warning" style="margin-top:var(--space-3)">
-              <span class="alert__icon"><lucide-icon name="alert-triangle" [size]="16" [strokeWidth]="2"></lucide-icon></span>
-              <div class="alert__content">
-                The applicability of the 1% minimum tax rule to individuals under NTA 2025 is unconfirmed.
-                This computation applies the rule as configured. Verify with LIRS or a tax advisor.
+          <!-- Minimum tax comparison (shown only when a minimum tax floor applies) -->
+          @if (result()!.minimumTax > 0) {
+            <div class="min-tax-panel">
+              <div class="min-tax-panel__title">Minimum Tax Floor Comparison<lf-help text="The higher of graduated tax and the configured minimum tax floor is used before tax credits are deducted." align="left"></lf-help></div>
+              <div class="min-tax-panel__row">
+                <span>Graduated Tax<lf-help [text]="graduatedTaxTooltip()"></lf-help></span>
+                <span [class.highlighted]="result()!.graduatedTax >= result()!.minimumTax">
+                  {{ result()!.graduatedTax | naira }}
+                </span>
+              </div>
+              <div class="min-tax-panel__row">
+                <span>Minimum Tax Floor ({{ minTaxRateLabel() }} of gross income)</span>
+                <span [class.highlighted]="result()!.minimumTax > result()!.graduatedTax">
+                  {{ result()!.minimumTax | naira }}
+                </span>
               </div>
             </div>
-          </div>
+          }
 
           @if (result()!.cgtExemptAmount > 0) {
             <div class="alert alert--success" style="margin-top:var(--space-4)">
@@ -170,7 +147,7 @@ import { LucideAngularModule } from 'lucide-angular';
 
         <!-- Final total -->
         <div class="computation-total">
-          <div class="total-label">Final Tax Payable<lf-help text="The higher of net graduated tax and minimum tax. This is the amount you owe LIRS for the year of assessment." align="left"></lf-help></div>
+          <div class="total-label">Final Tax Payable<lf-help text="Graduated tax (or minimum tax floor, if higher) less WHT, PAYE, and foreign tax credits. This is the amount you owe LIRS for the year of assessment." align="left"></lf-help></div>
           <div class="total-value">{{ result()!.finalTaxPayable | naira }}</div>
           <div style="font-size:var(--text-label-sm);opacity:0.7;margin-top:var(--space-2)">
             Tax Config: {{ result()!.configVersion }}
@@ -213,7 +190,7 @@ import { LucideAngularModule } from 'lucide-angular';
       }
 
       <!-- incomplete filing validation warning -->
-      @if (!confirmedFiling() && !loading() && validationIssues().length > 0) {
+      @if (!loading() && validationIssues().length > 0) {
         <div class="alert alert--warning">
           <span class="alert__icon">
             <lucide-icon name="triangle-alert" [size]="18" [strokeWidth]="2"></lucide-icon>
@@ -229,34 +206,22 @@ import { LucideAngularModule } from 'lucide-angular';
         </div>
       }
 
-      <!-- Nav buttons (pre-confirmation) -->
-      @if (!confirmedFiling()) {
-        <div class="step-nav">
-          <button class="btn btn--ghost btn--lg" (click)="back.emit()">← Back</button>
-          <div class="flex gap-3">
-            <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
-              Save for Later
-            </button>
-            <button class="btn btn--primary btn--lg" (click)="confirm()"
-              [disabled]="confirming() || loading() || validationIssues().length > 0"
-              [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
-              @if (confirming()) { Confirming… } @else {
-                <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
-              }
-            </button>
-          </div>
+      <!-- Nav buttons -->
+      <div class="step-nav">
+        <button class="btn btn--ghost btn--lg" (click)="back.emit()">← Back</button>
+        <div class="flex gap-3">
+          <button class="btn btn--secondary btn--lg" (click)="saveDraft()" [disabled]="confirming()">
+            Save for Later
+          </button>
+          <button class="btn btn--primary btn--lg" (click)="confirm()"
+            [disabled]="confirming() || loading() || validationIssues().length > 0"
+            [title]="validationIssues().length > 0 ? 'Resolve the issues above before confirming' : ''">
+            @if (confirming()) { Confirming… } @else {
+              <lucide-icon name="check" [size]="16" [strokeWidth]="2.5" style="vertical-align:middle;margin-right:4px"></lucide-icon>Confirm Filing
+            }
+          </button>
         </div>
-      }
-
-      <!-- Reference Panel -->
-      <lf-lirs-reference-panel
-        [visible]="showReferencePanel()"
-        [fieldGroups]="referenceFields()"
-        [statusMessage]="referenceStatus()"
-        [showMarkSubmitted]="true"
-        (closePanel)="showReferencePanel.set(false)"
-        (markSubmitted)="onMarkSubmitted()"
-      />
+      </div>
     </div>
   `,
   styles: [`
@@ -378,20 +343,33 @@ export class StepReviewComponent implements OnInit {
   back = output<void>();
   confirmed = output<void>();
 
-  private filingService = inject(FilingService);
-  private lirsService = inject(LIRSService);
-  private toast = inject(ToastService);
+  private readonly filingService = inject(FilingService);
+  private readonly toast = inject(ToastService);
 
   result = signal<ComputationResult | null>(null);
   loading = signal(true);
   confirming = signal(false);
+  hasExemptOrDigitalIncome = signal(false);
+
+  isDirty(): boolean {
+    return false;
+  }
+
+  save(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
 
   // Validation — list of human-readable issues before user can confirm
   validationIssues = computed<string[]>(() => {
     const r = this.result();
     if (!r) return ['Tax computation has not been loaded yet.'];
     const issues: string[] = [];
-    if (r.totalGrossIncome <= 0) {
+    const hasAnyIncome =
+      r.totalGrossIncome > 0 ||
+      r.cgtExemptAmount > 0 ||
+      r.digitalAssetLossRingfenced > 0 ||
+      this.hasExemptOrDigitalIncome();
+    if (!hasAnyIncome) {
       issues.push('No income entries found. Add at least one income source in Step 1.');
     }
     if (r.chargeableIncome < 0) {
@@ -421,17 +399,23 @@ export class StepReviewComponent implements OnInit {
     return { priorYoa: p.yearOfAssessment, rows, flagged: rows.some(x => x.flagged) };
   });
 
-  confirmedFiling = signal<Filing | null>(null);
-  filingWithLirs = signal(false);
-  showReferencePanel = signal(false);
-  referenceFields = signal<LIRSFieldGroup[]>([]);
-  referenceStatus = signal('');
+  ngOnInit(): void {
+    void this.initialize();
+  }
 
-  async ngOnInit(): Promise<void> {
+  private async initialize(): Promise<void> {
     try {
-      const r = await this.filingService.compute(this.filingId());
+      const [r, entries] = await Promise.all([
+        this.filingService.compute(this.filingId()),
+        this.filingService.listIncomeEntries(this.filingId()).catch(() => []),
+      ]);
       this.result.set(r);
+      this.hasExemptOrDigitalIncome.set(
+        entries.some(e => e.incomeType === 'capital_gain_shares' || e.incomeType === 'digital_asset'),
+      );
       void this.loadPrior();
+    } catch (err: unknown) {
+      this.toast.error('Failed to compute tax: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.loading.set(false);
     }
@@ -452,25 +436,33 @@ export class StepReviewComponent implements OnInit {
     }
   }
 
+  graduatedTaxTooltip = computed(() => {
+    const bands = this.result()?.bandBreakdown ?? [];
+    if (bands.length === 0) {
+      return 'Tax computed by applying the configured progressive rate bands to slices of chargeable income.';
+    }
+    const rates = bands.map(b => `${(b.rate * 100).toFixed(0)}%`).join(' → ');
+    return `Tax computed by applying this filing's progressive rate bands (${rates}) to slices of chargeable income.`;
+  });
+
+  minTaxRateLabel = computed(() => {
+    const r = this.result();
+    if (!r || r.totalGrossIncome <= 0 || r.minimumTax <= 0) return '0%';
+    const pct = (r.minimumTax / r.totalGrossIncome) * 100;
+    return `${Number(pct.toFixed(2))}%`;
+  });
+
   bandPct(amount: number): number {
     const total = this.result()?.chargeableIncome ?? 1;
-    return Math.min((amount / total) * 100, 100);
+    return total > 0 ? Math.min((amount / total) * 100, 100) : 0;
   }
 
-  bandColor(rate: number): string {
-    const shades: Record<string, string> = {
-      '0':    '#cce0ff',
-      '0.07': '#99c2ff',
-      '0.11': '#5599ff',
-      '0.15': '#2277ee',
-      '0.19': '#0055cc',
-      '0.21': '#003da0',
-      '0.24': '#002880',
-    };
-    return shades[String(rate)] ?? '#5599ff';
+  bandColor(index: number): string {
+    const palette = ['#cce0ff', '#99c2ff', '#5599ff', '#2277ee', '#0055cc', '#003da0', '#002880'];
+    return palette[Math.min(index, palette.length - 1)];
   }
 
-  async saveDraft(): Promise<void> {
+  saveDraft(): void {
     this.back.emit();
   }
 
@@ -479,71 +471,13 @@ export class StepReviewComponent implements OnInit {
     if (!r) return;
     this.confirming.set(true);
     try {
-      const filing = await this.filingService.confirmFiling(this.filingId(), r);
-      this.confirmedFiling.set(filing);
+      await this.filingService.confirmFiling(this.filingId(), r);
+      this.toast.success('Filing confirmed.');
       this.confirmed.emit();
+    } catch (err: unknown) {
+      this.toast.error('Failed to confirm filing: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       this.confirming.set(false);
-    }
-  }
-
-  onGoToHistory(): void {
-    this.confirmed.emit();
-  }
-
-  async fileWithLirs(): Promise<void> {
-    this.filingWithLirs.set(true);
-    try {
-      const res = await this.lirsService.fileWithLirs(this.filingId());
-      if (res.fallbackActive) {
-        this.showReferencePanel.set(true);
-        this.referenceStatus.set(res.message);
-        this.loadReferenceFields();
-      } else {
-        this.toast.success(res.message);
-      }
-    } catch (err: unknown) {
-      this.toast.error(
-        'Failed to open LIRS portal: ' + (err instanceof Error ? err.message : String(err))
-      );
-      this.showReferencePanel.set(true);
-      this.referenceStatus.set('Could not open LIRS portal automatically. Use the values below to fill Form A manually.');
-      this.loadReferenceFields();
-    } finally {
-      this.filingWithLirs.set(false);
-    }
-  }
-
-  private async loadReferenceFields(): Promise<void> {
-    try {
-      const filing = this.confirmedFiling();
-      if (!filing) return;
-      const [incomeEntries, allowances, reliefs] = await Promise.all([
-        this.filingService.listIncomeEntries(filing.id),
-        this.filingService.listAllowances(filing.id),
-        this.filingService.listReliefEntries(filing.id),
-      ]);
-      const fields = this.lirsService.buildReferenceFields(
-        filing, incomeEntries, allowances, reliefs, this.result() ?? undefined,
-      );
-      this.referenceFields.set(fields);
-    } catch {
-      this.referenceFields.set([]);
-    }
-  }
-
-  async onMarkSubmitted(): Promise<void> {
-    const f = this.confirmedFiling();
-    if (!f) return;
-    try {
-      await this.filingService.markSubmitted(f.id);
-      this.toast.success('Filing marked as Submitted.');
-      this.showReferencePanel.set(false);
-      this.confirmed.emit();
-    } catch (err: unknown) {
-      this.toast.error(
-        'Failed to mark as submitted: ' + (err instanceof Error ? err.message : String(err))
-      );
     }
   }
 }

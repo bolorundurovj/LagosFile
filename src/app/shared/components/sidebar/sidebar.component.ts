@@ -67,9 +67,11 @@ const NAV_ITEMS: NavItem[] = [
     </nav>
   `,
   styles: [`
+    :host { display: block; flex: none; }
+
     .sidebar {
       width: var(--sidebar-width);
-      height: 100vh;
+      height: 100%;
       background: var(--color-sidebar-bg);
       display: flex;
       flex-direction: column;
@@ -171,7 +173,7 @@ export class SidebarComponent {
   taxpayer = input<Taxpayer | null>(null);
   readonly navItems = NAV_ITEMS;
 
-  private router = inject(Router);
+  private readonly router = inject(Router);
 
   /** Reactive current URL — updates on every navigation. */
   readonly currentUrl = toSignal(
@@ -186,6 +188,6 @@ export class SidebarComponent {
   isExtraActive(item: NavItem): boolean {
     const url = this.currentUrl() ?? '';
     if (!item.alsoActiveFor) return false;
-    return url.startsWith(item.alsoActiveFor) && !url.startsWith(item.route);
+    return url.startsWith(item.alsoActiveFor) && !NAV_ITEMS.some(other => url.startsWith(other.route));
   }
 }

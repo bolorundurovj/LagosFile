@@ -36,7 +36,7 @@ export class NumericFormatDirective implements OnInit {
   onFocus(): void {
     const val = this.model?.value;
     this.el.nativeElement.value =
-      val != null && val !== '' && !isNaN(+val) && +val !== 0
+      val != null && val !== '' && !Number.isNaN(+val) && +val !== 0
         ? String(val)
         : '';
   }
@@ -50,16 +50,16 @@ export class NumericFormatDirective implements OnInit {
   onInput(event: Event): void {
     const raw = (event.target as HTMLInputElement | null)?.value ?? '';
     // Strip commas and anything that isn't a digit, minus or decimal point
-    const cleaned = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '');
-    const num     = cleaned === '' || cleaned === '-' ? null : parseFloat(cleaned);
-    const value   = num == null || isNaN(num) ? null : num;
+    const cleaned = raw.replaceAll(',', '').replace(/[^0-9.-]/g, '');
+    const num     = cleaned === '' || cleaned === '-' ? null : Number.parseFloat(cleaned);
+    const value   = num == null || Number.isNaN(num) ? null : num;
     this.model?.control?.setValue(value, { emitModelToViewChange: false });
     this.model?.viewToModelUpdate(value);
   }
 
   private applyFormat(): void {
     const val = this.model?.value;
-    if (val == null || val === '' || isNaN(+val)) {
+    if (val == null || val === '' || Number.isNaN(+val)) {
       this.el.nativeElement.value = '';
       return;
     }

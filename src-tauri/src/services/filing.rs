@@ -23,14 +23,18 @@ impl FilingService {
             filing_reference: None,
             created_at: Utc::now(),
             confirmed_at: None,
+            submitted_at: None,
             total_income_ngn: None,
             chargeable_income: None,
             tax_payable: None,
             wht_credit: None,
+            paye_credit: None,
+            foreign_tax_credit: None,
             net_tax_payable: None,
             minimum_tax: None,
             final_tax_payable: None,
             tax_config_version: config_version.to_string(),
+            tax_config_id: None,
             payment_date: None,
             payment_reference: None,
             amount_paid: None,
@@ -57,7 +61,8 @@ impl FilingService {
         let mut stmt = conn.prepare(
             "SELECT id, taxpayer_id, parent_filing_id, year_of_assessment, status, filing_reference, 
                     created_at, confirmed_at, total_income_ngn, chargeable_income, tax_payable, 
-                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version 
+                    wht_credit, net_tax_payable, minimum_tax, final_tax_payable, tax_config_version, tax_config_id, submitted_at,
+                    paye_credit, foreign_tax_credit 
              FROM filing ORDER BY year_of_assessment DESC, created_at DESC"
         )?;
 
@@ -79,14 +84,23 @@ impl FilingService {
                     .get::<_, Option<String>>(7)?
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                     .map(|d| d.with_timezone(&Utc)),
+                submitted_at: row
+                    .get::<_, Option<String>>(17)?
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|d| d.with_timezone(&Utc)),
                 total_income_ngn: row.get(8)?,
                 chargeable_income: row.get(9)?,
                 tax_payable: row.get(10)?,
                 wht_credit: row.get(11)?,
+                paye_credit: row.get(18)?,
+                foreign_tax_credit: row.get(19)?,
                 net_tax_payable: row.get(12)?,
                 minimum_tax: row.get(13)?,
                 final_tax_payable: row.get(14)?,
                 tax_config_version: row.get(15)?,
+                tax_config_id: row
+                    .get::<_, Option<String>>(16)?
+                    .and_then(|s| Uuid::parse_str(&s).ok()),
                 payment_date: None,
                 payment_reference: None,
                 amount_paid: None,
@@ -116,8 +130,8 @@ impl FilingService {
     pub fn mark_submitted(db: &AppDb, id: &str) -> Result<()> {
         let conn = db.conn.lock().unwrap();
         conn.execute(
-            "UPDATE filing SET status='Submitted' WHERE id=?1",
-            params![id],
+            "UPDATE filing SET status='Submitted', submitted_at=?1 WHERE id=?2",
+            params![Utc::now().to_rfc3339(), id],
         )?;
         Ok(())
     }

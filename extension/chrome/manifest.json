@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LagosFile for LIRS",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Auto-populate the LIRS e-Tax Tax Calculator from LagosFile computed filing data",
   "permissions": [
     "storage",
@@ -33,6 +33,17 @@
         "https://etax.lirs.net/*"
       ],
       "js": [
+        "token-capture.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://etax.lirs.gov.ng/*",
+        "https://etax.lirs.net/*"
+      ],
+      "js": [
+        "autofill-core.js",
         "content-script.js"
       ],
       "run_at": "document_idle"
