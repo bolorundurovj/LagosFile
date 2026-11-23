@@ -4,6 +4,83 @@ All notable changes to LagosFile are documented here.
 Versions follow [Semantic Versioning](https://semver.org/).
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [1.3.0](https://github.com/bolorundurovj/LagosFile/compare/v1.2.0...v1.3.0) (2026-11-23)
+
+
+### Features
+
+* add a tax calculator ([e0db7e3](https://github.com/bolorundurovj/LagosFile/commit/e0db7e32ced2200c3ede457e46be9d951a5b4996))
+* add configurable caps for pension, NHIS and NHF ([0b939cd](https://github.com/bolorundurovj/LagosFile/commit/0b939cd0da4b93846a4ddd11929ec800d6599c93))
+* add custom Windows installer using PolyInstall ([8566b1c](https://github.com/bolorundurovj/LagosFile/commit/8566b1c59707693a4eee1d206f3d74a4b8fb7fc6))
+* add deadline notifications and a calendar export ([83f14e1](https://github.com/bolorundurovj/LagosFile/commit/83f14e158f63125aef34028e83fd49d2ebd37817))
+* add offline help and guides ([0d491b7](https://github.com/bolorundurovj/LagosFile/commit/0d491b7f1f959c089002625e35ef787f90d49421))
+* **db:** add migrations for relief descriptions and payment details ([f4bd176](https://github.com/bolorundurovj/LagosFile/commit/f4bd176cdbd5427d6e21d5e96a857918377607aa))
+* enable capital allowance carryforward and prior-year WDV loading ([83c358e](https://github.com/bolorundurovj/LagosFile/commit/83c358ec9ae392c31defa4d6c9c385b08d89ed6f))
+* **export:** add a print option to the export dialog ([082b453](https://github.com/bolorundurovj/LagosFile/commit/082b453850c0fc91a886e77f99d6eb615c3e605a))
+* implement update checking functionality and UI notification ([36c7392](https://github.com/bolorundurovj/LagosFile/commit/36c73929dd5e60a9dc2a6561baf51530c7768988))
+* record tax payments against filings ([d6b6f02](https://github.com/bolorundurovj/LagosFile/commit/d6b6f02cad10e6eefc4f15af34af2c6f80b700a8))
+* **review:** compare the filing with the previous year ([6cdf0fb](https://github.com/bolorundurovj/LagosFile/commit/6cdf0fb9f680f592c00b00abee9d3afe51909b3b))
+* **security:** lock the app after a period of inactivity ([fcd663f](https://github.com/bolorundurovj/LagosFile/commit/fcd663fc93d332996e39c5338f7ae537679b9c08))
+
+
+### Bug Fixes
+
+* address SonarCloud reliability and maintainability issues ([680b0d9](https://github.com/bolorundurovj/LagosFile/commit/680b0d978c7d753ad164c3cc0f1be045fc54c069))
+* **auth:** make PIN change/reset atomic with keyring sync and recovery gate ([407430e](https://github.com/bolorundurovj/LagosFile/commit/407430eb59886329d4babaca1387c41844efbe57))
+* **auth:** refuse to overwrite existing vault ([f96a8ea](https://github.com/bolorundurovj/LagosFile/commit/f96a8eaef34689d403c6fb1de04e82c91f7dc55f))
+* **auth:** tie idle lock lifecycle to vault state instead of shell ([f13cc71](https://github.com/bolorundurovj/LagosFile/commit/f13cc711b1cf1cbf198f276cf55e018d243152a7))
+* **config:** pin each filing to its tax_config_id and require unique labels ([1e2a26f](https://github.com/bolorundurovj/LagosFile/commit/1e2a26f1ff3a39c2154eeeb253706eeb7a62795f))
+* **config:** validate bands transactionally on save and fix JSON export and import ([88bba49](https://github.com/bolorundurovj/LagosFile/commit/88bba49451cb8aebe6c93a4130b4d62c1a9031af))
+* **deps:** patch Rust security advisories ([087eb36](https://github.com/bolorundurovj/LagosFile/commit/087eb3627507543121818ce6ab23d8dbb3204bd1))
+* **documents:** support removing attachments, clean up files safely, sweep orphans, and set parent_filing_id ON DELETE SET NULL ([f42cc88](https://github.com/bolorundurovj/LagosFile/commit/f42cc88907c6f55f8ce98c8db8537a9fbf124261))
+* **export:** fix Unix printing, PDF governed-by label, LIRS bind cleanup, and 400 status text ([cc13b58](https://github.com/bolorundurovj/LagosFile/commit/cc13b586a2786d921eb54b85be32dcd4bf640d8a))
+* **export:** include PITA CRA and submitted_at in exports, dynamic act label, harden DCT JPEG and LIRS bridge ([45956f3](https://github.com/bolorundurovj/LagosFile/commit/45956f3a1e3e457b2f34ea4f70a0be93835c6819))
+* **export:** RFC 4180 CSV with allowances/reliefs, complete JSON, kobo rounding, paginated PDF appendix, and safe open_file ([a281415](https://github.com/bolorundurovj/LagosFile/commit/a2814159a5970d974d639a64e2bfdba00971bf6c))
+* **extension:** add per-session bridge token, fix exact visible autofill, restore Firefox popup, proxy Chrome fetches, and add Vitest suite ([d6514f1](https://github.com/bolorundurovj/LagosFile/commit/d6514f1f0519fe9578975126bfeec44b57061fd9))
+* **extension:** capture bridge token at document_start, use session-only storage, distinguish 403, and prioritize tab selectors ([cfbf915](https://github.com/bolorundurovj/LagosFile/commit/cfbf915b0be4861013d1e2ce86b8f119e3481414))
+* **extension:** fix token capture race, validate hex token, and guard Firefox sendResponse ([da2ec14](https://github.com/bolorundurovj/LagosFile/commit/da2ec147947fcc49528c0ad2f2ae01a92ee9b396))
+* **filing:** copy entries and attachments on amend, validate duplicate years, standardize RFC 3339 timestamps ([4c5abc2](https://github.com/bolorundurovj/LagosFile/commit/4c5abc2a96b24d91122bfdf4a22d35cfa753eb89))
+* **filing:** lock filed returns, recompute on confirm, add ref counter and submitted_at ([1cccbeb](https://github.com/bolorundurovj/LagosFile/commit/1cccbebd6e9fa493a6bee91d6786121e218c1bf9))
+* **fx:** cache by currency pair and date, persist cache mutations, validate dates, and add timeouts ([f0e870b](https://github.com/bolorundurovj/LagosFile/commit/f0e870ba3e7e0d9d3b61d1dac5ce9765b4f42201))
+* handle prerelease versions in the update check ([109b755](https://github.com/bolorundurovj/LagosFile/commit/109b7556c6d309ccc800908a1ef28975a871ed9b))
+* **lirs:** distinguish income year from LIRS year of assessment ([2cd5afd](https://github.com/bolorundurovj/LagosFile/commit/2cd5afdd91e5183db76b334eefd529afd4ba86b2))
+* **lirs:** fix accommodation, approved/capped deductions, multi-currency foreign income, extra fields, and batch failure reporting ([f177336](https://github.com/bolorundurovj/LagosFile/commit/f17733651da612bb7de36f9c264508994a2318c0))
+* **lirs:** harden bridge socket and payload immutability, fix PDF and CSV exports, and skip unrecorded parity rows ([1f2ea9e](https://github.com/bolorundurovj/LagosFile/commit/1f2ea9e492b3152462375c77cabfe43ec70f1bfb))
+* **lirs:** lock down bridge, stop on lock, and fix empty batch panic ([6af3941](https://github.com/bolorundurovj/LagosFile/commit/6af394142ba81fc600f7516114af25232d76783e))
+* resolve SonarCloud reliability issues ([f55343a](https://github.com/bolorundurovj/LagosFile/commit/f55343a5149f687c1d9e45112b917203ffdb3fd5))
+* **rust:** apply the CGT exemption to total disposals and use straight-line allowances ([dc8a174](https://github.com/bolorundurovj/LagosFile/commit/dc8a1746adab686e617c42a170de1fed621f8a12))
+* **rust:** fix duplicating a filing and loading prior-year assets ([7afc8b5](https://github.com/bolorundurovj/LagosFile/commit/7afc8b50809851ddcc95a0d8bfcac3fdb5fcf932))
+* **security:** encrypt attached documents and bundle them in backups ([c9fc2b0](https://github.com/bolorundurovj/LagosFile/commit/c9fc2b083b9032ee4c1c66e9a380238e414ba046))
+* **security:** sanitize attachment paths, enforce entry ownership on deletes, and offload remaining I/O ([5b72c4d](https://github.com/bolorundurovj/LagosFile/commit/5b72c4dc845c9f8bb4011f29027052225b616eeb))
+* **tax:** add PAYE and per-entry limited foreign tax credits ([211e492](https://github.com/bolorundurovj/LagosFile/commit/211e4923edeb112890cf6269b6cb18004aa5aad2))
+* **tax:** add PITA Consolidated Relief Allowance, fix FTC and CGT edge cases, and harden config validation and migrations ([7a564f3](https://github.com/bolorundurovj/LagosFile/commit/7a564f3d7e7cbfb45dcf1cbab7afb3c6a79a9adf))
+* **tax:** preserve PITA config immutability, harden amendments, migrations, and tax validation ([23143b0](https://github.com/bolorundurovj/LagosFile/commit/23143b011c0acc402c922800b3bccd3db7d85a80))
+* **tax:** update NTA 2025 rates, add PITA &lt;=2025 config, apply minimum tax before credits ([2cb4a94](https://github.com/bolorundurovj/LagosFile/commit/2cb4a94b17d89c4f3d17c37aee9bcbca8d7ad6b9))
+* **tax:** value benefits-in-kind per NTA 2025 s.14 and persist category and cost ([172cf2f](https://github.com/bolorundurovj/LagosFile/commit/172cf2fb6bf7bae7c2b52d804d9e9a75d74eac3f))
+* **ui:** fix history pagination, dashboard dedup and deadline banner, and profile/TIN updates ([30733d4](https://github.com/bolorundurovj/LagosFile/commit/30733d4de20fb9dd83b07424cc84391ef3202631))
+* **ui:** fix numeric coercion, lock leave guard, migration notices, LIRS warnings, CRA display, and filing config previews ([65f2d57](https://github.com/bolorundurovj/LagosFile/commit/65f2d571555905a3faf88fa4131b9374aa5f8874))
+* **ui:** guard concurrent FX lookups, harden restore refresh, and clean up PITA and share-gain state ([d56881b](https://github.com/bolorundurovj/LagosFile/commit/d56881b90a40e0039248afe8c51099f0a9009cf9))
+* **ui:** highlight only one sidebar item on /filing/new ([f3a7fab](https://github.com/bolorundurovj/LagosFile/commit/f3a7fab6257c5211d0ae08f2cacdf4f43e33be17))
+* **ui:** keep sidebar fixed and allow full page scrolling ([cd51763](https://github.com/bolorundurovj/LagosFile/commit/cd517630532e38355b11886c8b6be8666c306bd3))
+* **ui:** use pinned config in income and allowance steps, fix CRA/PITA UX, and reload migration notices on restore ([11010b9](https://github.com/bolorundurovj/LagosFile/commit/11010b9ea6f89cf063b94f0a59f47785776be485))
+* update copyright holder name in LICENSE and enable macOS build in release.yml ([5944288](https://github.com/bolorundurovj/LagosFile/commit/5944288a1ec7af4156e906e16707b7df585e2acb))
+* **vault:** harden lock atomicity, crash-safe restore recovery, and backup integrity ([4318b6e](https://github.com/bolorundurovj/LagosFile/commit/4318b6ece6df3ff4d8f74a59d181195575ce643f))
+* **vault:** increase Windows atomic rename retry budget for transient locks ([8a6da97](https://github.com/bolorundurovj/LagosFile/commit/8a6da978dd23907af33e7dc39bf90e9d785cb233))
+* **vault:** prevent cross-process stale overwrites, align restore outcome with journal, and harden doc checks ([162ffa0](https://github.com/bolorundurovj/LagosFile/commit/162ffa0f77a30b631482386391f877efcebdb08e))
+* **vault:** retry atomic renames on transient Windows PermissionDenied ([44ce5cb](https://github.com/bolorundurovj/LagosFile/commit/44ce5cb3e64d3b39e0fa0f49083139f4b4969025))
+* **vault:** serialize async vault writes, stage atomic restores, and harden unlock and salt checks ([1b85297](https://github.com/bolorundurovj/LagosFile/commit/1b8529750aa4a75fccf4a1be9544825bc75084aa))
+* **vault:** use self-describing vault format and portable backup/restore ([774bfa9](https://github.com/bolorundurovj/LagosFile/commit/774bfa935da27b01b8c5cd138a88f66499977876))
+* **wizard:** fix WHT total reactivity, zero reliefs, new asset WDV, prior-year dedup, and exempt return confirmation ([9c5a7d6](https://github.com/bolorundurovj/LagosFile/commit/9c5a7d6577eecaa005330e93b4068a54558c00a0))
+* **wizard:** recalculate foreign amounts and tax share gains on cgt_gain ([46b9540](https://github.com/bolorundurovj/LagosFile/commit/46b954022e651f11e80cfe8ad3a0fcc852277811))
+* **wizard:** save attachments and deleted entries in the filing steps ([18b3ab9](https://github.com/bolorundurovj/LagosFile/commit/18b3ab9ca27ee7896983b0936ec314962e1efffb))
+* **wizard:** save dirty steps on navigation, add leave guard, surface errors, remove dead post-confirm view ([8ec9d46](https://github.com/bolorundurovj/LagosFile/commit/8ec9d46f42994a72e4d083fb83afa052b40fe3c4))
+
+
+### Performance
+
+* **backend:** offload PBKDF2, vault writes, and PDF rendering to spawn_blocking, embed JPEGs via DCT, and add SQLite indexes ([3f070b0](https://github.com/bolorundurovj/LagosFile/commit/3f070b03a4fe94b12f8847f91ab89dc85cecdb14))
+* **wizard:** batch step upserts and deletes into one transaction and single vault save ([307bf33](https://github.com/bolorundurovj/LagosFile/commit/307bf33f5a2e8bd7b990deb3f165d6e600973c5d))
+
 ## [1.1.1] - 2026-05-31
 
 ### Bug Fixes
@@ -412,7 +489,3 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 
 - Add property tests for JSON export round-trip and CSV required columns (Properties 21, 22) ([`46b0485`](https://github.com/bolorundurovj/LagosFile/commit/46b0485b5748a6890d11fc181227303a1f8d3e56))
-
-
-
-
